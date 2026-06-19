@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "verity-core"
+version = "0.2.0.dev0"
+description = "Shared Core for Verity and PhishFinder: Gemini transport, technical intel, storage, scraping."
+requires-python = ">=3.10"
+dependencies = [
+    "requests",
+    "python-whois",
+    "dnspython",
+    "beautifulsoup4",
+    "google-cloud-storage",
+]
+
+# nodriver is an OPTIONAL extra. scraping.py imports it lazily inside the
+# advanced-scrape function, so merely importing verity_core never requires the
+# heavy headless-browser dependency. Verity installs verity-core[scraping];
+# PhishFinder installs plain verity-core and never pulls nodriver.
+[project.optional-dependencies]
+scraping = ["nodriver"]
+
+[tool.setuptools.packages.find]
+include = ["verity_core*"]

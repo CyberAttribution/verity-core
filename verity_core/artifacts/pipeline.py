@@ -29,7 +29,7 @@ _LIMITATIONS_BASE = [
 
 
 def analyze_artifacts(artifacts: list, router, profile_mode: str = "smb",
-                      status_cb=None) -> FusedReport:
+                      status_cb=None, case_context: str = "") -> FusedReport:
     """Run the full pipeline. Never raises on model/parse failures —
     degradation is recorded honestly in the report."""
     def status(msg):
@@ -85,7 +85,8 @@ def analyze_artifacts(artifacts: list, router, profile_mode: str = "smb",
     fusion_result = router.generate(prompts.build_fusion_prompt(
         json.dumps(compact, indent=1),
         json.dumps(corr, indent=1),
-        len(analyses), profile_mode)) or {}
+        len(analyses), profile_mode,
+        case_context=case_context)) or {}
     fusion = parse.parse_fusion(fusion_result.get("response") or "")
     if not fusion_result.get("ok", True):
         limitations.append(

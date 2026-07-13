@@ -208,3 +208,21 @@ def test_pipeline_caps_artifacts():
     router, calls = make_scripted_router()
     rpt = pipeline.analyze_artifacts(arts, router)
     assert len(rpt.artifact_analyses) == pipeline.MAX_ARTIFACTS
+
+
+def test_case_context_flows_to_fusion_prompt_as_untrusted():
+    from verity_core.artifacts import prompts
+    p = prompts.build_fusion_prompt("[]", "{}", 1, "smb",
+                                    case_context="Ticket #4411: CFO reported")
+    assert "Ticket #4411" in p and "untrusted operator input" in p
+    seen = {}
+
+    def gen(prompt):
+        if "fusion engine" in prompt:
+            seen["fusion_prompt"] = prompt
+            return {"ok": True, "response": FUSION_OUT}
+        return {"ok": True, "response": ARTIFACT_OUT}
+    arts = [normalize.make_artifact("evidence", label="A")]
+    pipeline.analyze_artifacts(arts, CallableRouter(gen),
+                               case_context="Ticket #4411")
+    assert "Ticket #4411" in seen["fusion_prompt"]

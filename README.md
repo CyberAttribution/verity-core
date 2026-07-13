@@ -9,6 +9,8 @@ Shared Core package for **Verity** (AttributionAgent Jr. backend) and
 | `technical_intel` | WHOIS + DNS — rich `get_technical_intel` (Verity) and lightweight `get_domain_creation_date` / `has_mx_records` (PhishFinder) |
 | `storage` | GCS auth + raw upload, dual credential modes (service-account file or ADC) |
 | `model_router` | unified Gemini transport — **NOT extracted yet (Sprint 1 step 11)** |
+| `artifacts` | v0.1.5 analytical layer: evidence schemas, normalization, deterministic correlation/campaign clustering, two-stage multi-artifact pipeline, bounded attribution parsing, Atlas graph feed |
+| `routers` | ModelRouter protocol + adapters: `openclaw` (governed local runtime, injected callable) and `gemini` (wraps `model_router.call_gemini`) |
 
 ## Versioning / install
 

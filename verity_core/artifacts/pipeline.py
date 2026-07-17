@@ -29,7 +29,8 @@ _LIMITATIONS_BASE = [
 
 
 def analyze_artifacts(artifacts: list, router, profile_mode: str = "smb",
-                      status_cb=None, case_context: str = "") -> FusedReport:
+                      status_cb=None, case_context: str = "",
+                      workflow: str = "general_evidence") -> FusedReport:
     """Run the full pipeline. Never raises on model/parse failures —
     degradation is recorded honestly in the report."""
     def status(msg):
@@ -54,7 +55,7 @@ def analyze_artifacts(artifacts: list, router, profile_mode: str = "smb",
         indicators = normalize.extract_indicators(art.text,
                                                   art.claimed_sender)
         result = router.generate(prompts.build_artifact_prompt(
-            art, profile_mode)) or {}
+            art, profile_mode, workflow=workflow)) or {}
         analyses.append(parse.parse_artifact_analysis(
             result.get("response") or "",
             artifact_id=art.id,
@@ -86,7 +87,7 @@ def analyze_artifacts(artifacts: list, router, profile_mode: str = "smb",
         json.dumps(compact, indent=1),
         json.dumps(corr, indent=1),
         len(analyses), profile_mode,
-        case_context=case_context)) or {}
+        case_context=case_context, workflow=workflow)) or {}
     fusion = parse.parse_fusion(fusion_result.get("response") or "")
     if not fusion_result.get("ok", True):
         limitations.append(

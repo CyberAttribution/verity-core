@@ -11,10 +11,25 @@ The artifacts pipeline depends only on this shape. Adapters:
 class ModelRouter:
     """Duck-typed protocol. generate(prompt) -> dict with at least:
     ok: bool, response: str, and optionally event_id, error, model,
-    provider. Implementations must not raise on transport failure."""
+    provider. Implementations must not raise on transport failure.
+
+    v0.5.0 additive — media capability (approved D1/D5): routers that can
+    accept image/audio parts set supports_media = True and implement
+    generate_multimodal. The default honestly declines, so pipelines
+    running on text-only runtimes (local 7B via OpenClaw, older cores)
+    record 'signal-level review not performed by this runtime' instead of
+    failing — no provider is ever hard-coded."""
+
+    supports_media = False
 
     def generate(self, prompt: str) -> dict:  # pragma: no cover - interface
         raise NotImplementedError
+
+    def generate_multimodal(self, prompt: str, parts: list) -> dict:
+        """parts: [{"mime": str, "data": bytes} or {"mime": str,
+        "path": str}]. Default: declared unsupported (fail-soft)."""
+        return {"ok": False, "response": "",
+                "error": "this runtime does not support media input"}
 
 
 class CallableRouter(ModelRouter):

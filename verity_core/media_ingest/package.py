@@ -124,13 +124,59 @@ def record_event(pkg, step, outcome, tool=None, inputs=None, outputs=None,
     })
 
 
-def _observe(pkg, statement, basis, relevance=""):
-    pkg["observations"].append({
+# Epistemic vocabulary (S3, approved): one observation model for evidence
+# from metadata, frames, audio, transcripts, or context — so Origin,
+# Beacon, and Node workflows consume the same structure regardless of the
+# evidence modality.
+#   direct_observation    what a tool or deterministic check read
+#   inference             deterministic reasoning over observations
+#   model_interpretation  a model's reading of media/text (untrusted,
+#                         bounded; always carries competing explanations)
+OBSERVATION_BASES = ("direct_observation", "inference",
+                     "model_interpretation")
+
+
+def _observe(pkg, statement, basis, relevance="", competing=None,
+             modality="metadata", source=None):
+    obs = {
         "id": _new_id("obs"),
         "statement": str(statement)[:600],
-        "basis": basis,                     # direct_observation | inference
+        "basis": basis,
+        "modality": modality,       # metadata|visual|audio|transcript|context
         "attribution_relevance": str(relevance)[:400],
-    })
+        "competing_explanations": [str(c)[:300] for c in (competing or [])],
+    }
+    if source:
+        obs["source"] = source      # e.g. {"model": ..., "artifacts": [...]}
+    pkg["observations"].append(obs)
+    return obs["id"]
+
+
+# public alias for consumers (backend runner, Node) recording their own
+# direct observations / inferences into the shared evidence model
+observe = _observe
+
+
+def add_model_observation(pkg, statement, model, modality,
+                          competing_explanations, relevance="",
+                          artifact_ids=None):
+    """Record a MODEL INTERPRETATION of media evidence. Required to carry
+    competing explanations — a vision/audio model reading is never a
+    finding of manipulation or authenticity by itself. Also folded into
+    metadata_by_origin.model_observations for the four-way classification."""
+    oid = _observe(pkg, statement, "model_interpretation",
+                   relevance=relevance,
+                   competing=competing_explanations or [
+                       "The model's reading may be mistaken; media review "
+                       "by a qualified examiner is the check."],
+                   modality=modality,
+                   source={"model": str(model)[:120],
+                           "artifacts": list(artifact_ids or [])})
+    mo = pkg["metadata_by_origin"]["model_observations"]
+    mo.setdefault(modality, []).append(
+        {"observation_id": oid, "statement": str(statement)[:600],
+         "model": str(model)[:120]})
+    return oid
 
 
 # ---- attaching tool results -------------------------------------------------

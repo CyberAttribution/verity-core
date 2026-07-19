@@ -455,6 +455,89 @@ def evidence_digest(pkg, max_chars=6000):
     return text
 
 
+_HEX = set("0123456789abcdef")
+
+
+def validate(pkg):
+    """S6: internal-consistency validation of a finalized evidence
+    package. Returns a list of issue strings (empty = valid). Callers
+    must FAIL SAFELY on issues — withhold the report rather than emit
+    one built on inconsistent evidence. Purely structural; never
+    raises."""
+    issues = []
+    try:
+        arts = pkg.get("artifacts") or []
+        ids = [a.get("artifact_id") for a in arts]
+        idset = set(ids)
+        if len(ids) != len(idset):
+            issues.append("duplicate artifact ids")
+        for a in arts:
+            aid = a.get("artifact_id") or "?"
+            parent = a.get("parent_artifact")
+            if parent and parent not in idset:
+                issues.append(f"artifact {aid}: parent {parent} does "
+                              "not exist")
+            sha = a.get("sha256")
+            if sha is not None and (
+                    not isinstance(sha, str) or len(sha) != 64
+                    or not set(sha) <= _HEX):
+                issues.append(f"artifact {aid}: malformed sha256")
+        for e in pkg.get("processing_events") or []:
+            for ref in list(e.get("input_artifacts") or []) + \
+                    list(e.get("output_artifacts") or []):
+                if ref not in idset:
+                    issues.append(f"event '{e.get('step')}' references "
+                                  f"missing artifact {ref}")
+        obs_ids = set()
+        for o in pkg.get("observations") or []:
+            obs_ids.add(o.get("id"))
+            if o.get("basis") not in OBSERVATION_BASES:
+                issues.append(f"observation {o.get('id')}: invalid "
+                              f"basis '{o.get('basis')}'")
+            for ref in (o.get("source") or {}).get("artifacts") or []:
+                if ref not in idset:
+                    issues.append(f"observation {o.get('id')} "
+                                  f"references missing artifact {ref}")
+        for did in (pkg.get("cleanup") or {}).get(
+                "deleted_artifacts") or []:
+            if did not in idset:
+                issues.append(f"cleanup references missing artifact "
+                              f"{did}")
+        mo = pkg.get("metadata_by_origin", {}).get(
+            "model_observations") or {}
+        for modality, entries in mo.items():
+            for entry in entries if isinstance(entries, list) else []:
+                if entry.get("observation_id") not in obs_ids:
+                    issues.append(f"model observation ({modality}) "
+                                  "references missing observation "
+                                  f"{entry.get('observation_id')}")
+    except Exception as e:   # validation itself must never crash a job
+        issues.append(f"validation error: {e.__class__.__name__}")
+    return issues
+
+
+def record_rejection(pkg, reason, stage, sha256=None, tool_outcome=""):
+    """S6: rejected media keeps its provenance — hash, reason, stage,
+    and tool outcome are preserved even though analysis cannot
+    continue."""
+    pkg["rejection"] = {
+        "reason": str(reason)[:300],
+        "stage": str(stage)[:100],
+        "sha256_received": sha256,
+        "tool_outcome": str(tool_outcome)[:300],
+        "at_utc": _utc(),
+    }
+    record_event(pkg, "rejection", "rejected",
+                 note=f"{stage}: {reason}"[:400])
+    _observe(pkg, f"The submission was rejected at {stage}: {reason}. "
+                  "Recorded provenance (hashes, events, tool outcomes) "
+                  "is preserved.", "direct_observation",
+             relevance="No analysis conclusions exist for this "
+                       "submission; the record documents what was "
+                       "received and why processing stopped.")
+    return pkg
+
+
 def finalize(pkg, cleanup_status, deleted_artifact_ids=None):
     pkg["cleanup"]["status"] = cleanup_status
     pkg["cleanup"]["deleted_artifacts"] = list(deleted_artifact_ids or [])

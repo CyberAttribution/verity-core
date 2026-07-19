@@ -22,6 +22,8 @@ Tool availability is capability data, not an error: a missing tool is
 recorded honestly in the evidence package so downstream analysis and the
 report can state what was not examined.
 """
-from . import audio, exif, frames, package, probe, tools  # noqa: F401
+from . import (audio, exif, frames, package, probe,  # noqa: F401
+               remote, tools, youtube)
 
-__all__ = ["tools", "probe", "exif", "frames", "audio", "package"]
+__all__ = ["tools", "probe", "exif", "frames", "audio", "package",
+           "remote", "youtube"]

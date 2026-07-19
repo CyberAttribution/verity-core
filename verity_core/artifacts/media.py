@@ -55,6 +55,15 @@ class MediaEvidenceBundle:
     # provenance of the retrieval itself
     adapter: str = ""
     adapter_status: str = ""   # supported|metadata_only|manual_import|blocked|failed
+    # v0.5.0 additive: populated by verity_core.media_ingest (S2+).
+    # `extraction` holds a media_evidence_package/v1 dict (four-way
+    # metadata-origin classification, artifact chain, processing events,
+    # observations); the fields below surface its headline provenance.
+    extraction: dict = field(default_factory=dict)
+    processing_events: list = field(default_factory=list)
+    cleanup_status: str = ""
+    source_kind: str = ""      # upload | youtube
+    limits_applied: dict = field(default_factory=dict)
 
     def to_dict(self):
         d = {}
@@ -90,6 +99,7 @@ def summarize_bundle(bundle) -> dict:
         "has_frames": bool(b.derived_frames),
         "has_audio": bool(b.extracted_audio and b.extracted_audio.value),
         "has_comparison": bool(b.comparison_media),
+        "has_extraction": bool(b.extraction),
         "adapter_status": b.adapter_status or "n/a",
         "claimed_date": b.claimed_date,
         "claimed_place": b.claimed_place,

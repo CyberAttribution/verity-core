@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "verity-core"
-version = "0.4.0"
+version = "0.5.0"
 description = "Shared Core for Verity and PhishFinder: Gemini transport, technical intel, storage, scraping."
 requires-python = ">=3.10"
 dependencies = [
@@ -21,6 +21,11 @@ dependencies = [
 # PhishFinder installs plain verity-core and never pulls nodriver.
 [project.optional-dependencies]
 scraping = ["nodriver"]
+# media: evidence extraction + (later stage) YouTube retrieval. System
+# packages ffmpeg/ffprobe and exiftool are required at runtime and are
+# installed by the consuming service's image (see backend Dockerfile);
+# missing tools are reported honestly in the evidence package.
+media = ["yt-dlp"]
 
 [tool.setuptools.packages.find]
 include = ["verity_core*"]

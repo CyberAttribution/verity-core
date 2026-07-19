@@ -104,14 +104,66 @@ Respond with ONLY a JSON object, no markdown:
 }}"""
 
 
+MEDIA_CONCLUSIONS = (
+    "no_material_indicators_observed", "inconclusive", "suspicious",
+    "likely_manipulated", "insufficient_media_evidence",
+    "technical_review_recommended")
+
+MEDIA_DOMAINS = ("technical", "provenance", "contextual", "narrative",
+                 "corroboration")
+
+# v0.5.0: epistemic rules for media analysis, shared across modalities.
+_MEDIA_EPISTEMIC_RULES = """Media evidence rules (all modalities):
+- Distinguish what you directly observe in attached media from your
+  interpretation of it; interpretations MUST carry competing explanations.
+- Describe ONLY media parts actually attached to this request. If no
+  frames are attached, visual_findings.status is "no_visual_evidence";
+  if no audio is attached, audio_findings.status is "no_audio_evidence".
+  Never invent frame or audio content.
+- Your visual review is a vision-model reading, NOT validated pixel-level
+  deepfake detection. Your audio review is model listening, NOT biometric
+  speaker identification or validated synthetic-voice detection. Say so.
+- assessment_conclusion is a graded judgment, never a real/fake binary.
+  Use insufficient_media_evidence when the media basis is too thin, and
+  technical_review_recommended when findings warrant a qualified examiner.
+- recommended_corroboration is guidance for EVIDENCE COLLECTION (the
+  highest-value next evidence to strengthen or weaken the competing
+  hypotheses: original media, hashes, earlier uploads, alternate footage,
+  authoritative records, eyewitness media). It is not a conclusion.
+"""
+
 _MEDIA_PROMPT_EXTRA = """,
   "media_assessment": {
+    "assessment_conclusion": "no_material_indicators_observed|inconclusive|suspicious|likely_manipulated|insufficient_media_evidence|technical_review_recommended",
+    "conclusion_rationale": "two or three sentences grounding the graded conclusion in the evidence",
+    "confidence_by_domain": {
+      "technical": {"confidence": 0-100, "basis": "what technical evidence supports this"},
+      "provenance": {"confidence": 0-100, "basis": "..."},
+      "contextual": {"confidence": 0-100, "basis": "..."},
+      "narrative": {"confidence": 0-100, "basis": "..."},
+      "corroboration": {"confidence": 0-100, "basis": "how corroborated the account is by independent evidence"}
+    },
     "technical_authenticity": {
       "metadata_codec_findings": ["finding from metadata/codec history as text evidence", "..."],
       "original_file_available": "yes|no|unknown",
       "derivative_or_repost_indicators": ["...", "..."],
-      "signal_level_analysis": "not performed - visual/audio signal analysis pending an approved vision runtime"
+      "signal_level_analysis": "one sentence: what signal-level review was actually performed on attached media, or 'not performed' with the reason"
     },
+    "visual_findings": {
+      "status": "reviewed|no_visual_evidence",
+      "frame_observations": [{"observation": "what is directly visible", "interpretation": "what it may indicate", "competing_explanations": ["...", "..."]}],
+      "visible_text": ["on-screen text/captions observed", "..."],
+      "visual_discontinuities": ["apparent inconsistencies warranting review", "..."],
+      "limitations": "vision-model review of sampled frames; not validated pixel-level deepfake detection"
+    },
+    "audio_findings": {
+      "status": "reviewed|no_audio_evidence",
+      "transcript": "best-effort transcription of attached audio, or empty",
+      "speaker_observations": [{"observation": "...", "interpretation": "...", "competing_explanations": ["..."]}],
+      "discontinuities": ["interruptions/transitions/sync concerns", "..."],
+      "limitations": "model listening; no biometric speaker identification or validated synthetic-voice detection"
+    },
+    "recommended_corroboration": [{"item": "the evidence to obtain", "rationale": "why it is high-value", "bearing": "which hypothesis it would strengthen or weaken"}],
     "source_provenance": {
       "submitted_source": "the URL or origin as submitted",
       "apparent_platform": "platform if determinable from evidence, else unknown",
@@ -138,8 +190,31 @@ _MEDIA_PROMPT_EXTRA = """,
   }"""
 
 
+def describe_attachments(media_evidence) -> str:
+    """Deterministic description of which media parts accompany the
+    request, so the model knows exactly what it may describe."""
+    if not media_evidence:
+        return ""
+    lines = ["Attached media evidence for this artifact:"]
+    n = media_evidence.get("n_frames") or 0
+    if n:
+        lines.append(f"- {n} sampled video frame(s) "
+                     f"({media_evidence.get('frame_note') or 'scene/interval sampling'})")
+    else:
+        lines.append("- no frames attached (visual_findings.status must be "
+                     "'no_visual_evidence')")
+    if media_evidence.get("has_audio"):
+        lines.append(f"- one extracted mono audio track "
+                     f"({media_evidence.get('audio_mime') or 'audio'})")
+    else:
+        lines.append("- no audio attached (audio_findings.status must be "
+                     "'no_audio_evidence')")
+    return "\n".join(lines) + "\n\n"
+
+
 def build_artifact_prompt(artifact, profile_mode: str = "smb",
-                          workflow: str = "general_evidence") -> str:
+                          workflow: str = "general_evidence",
+                          media_evidence=None) -> str:
     ctx_lines = []
     if artifact.claimed_sender:
         ctx_lines.append(f"- Claimed sender: {artifact.claimed_sender}")
@@ -151,14 +226,17 @@ def build_artifact_prompt(artifact, profile_mode: str = "smb",
     if ctx_lines:
         context_block = ("Operator-supplied context (also untrusted claims):\n"
                          + "\n".join(ctx_lines) + "\n\n")
+    rules = _COMMON_RULES
     extra = EMERGING_TECH_EXTRA if profile_mode == "emerging_tech" else ""
     if workflow == "media_authenticity":
         extra += _MEDIA_PROMPT_EXTRA
+        rules = _MEDIA_EPISTEMIC_RULES + "\n" + _COMMON_RULES
+        context_block = describe_attachments(media_evidence) + context_block
     return ARTIFACT_PROMPT.format(
         profile_label=PROFILE_LABELS.get(profile_mode, "SMB"),
         evidence_type=artifact.evidence_type,
         event_category=artifact.event_category or "general",
-        rules=_COMMON_RULES,
+        rules=rules,
         context_block=context_block,
         artifact_id=artifact.id,
         text=artifact.text,
@@ -169,10 +247,15 @@ def build_artifact_prompt(artifact, profile_mode: str = "smb",
 _MEDIA_FUSION_NOTE = (
     "Workflow: Media Evidence (Deepfake Defender). Media is analyzed as "
     "technical, contextual, narrative, economic, social, and behavioral "
-    "evidence. Signal-level analysis (visual/audio forensics) is NOT "
-    "available in this version; never imply it ran. Never conclude simply "
-    "'real' or 'fake'; use bounded language such as 'the available evidence "
-    "is consistent with...'.\n")
+    "evidence; where per-artifact analyses report visual/audio findings, "
+    "they came from vision-model frame review and model listening — NOT "
+    "validated pixel-level deepfake detection or biometric voice "
+    "identification; never overstate them. Where no signal-level review "
+    "ran, never imply it did. Never conclude simply 'real' or 'fake'; "
+    "use graded, bounded language such as 'the available evidence is "
+    "consistent with...'. Weigh evidence by domain (technical, "
+    "provenance, contextual, narrative, corroboration) and let "
+    "contradictions between domains lower confidence.\n")
 
 
 def build_fusion_prompt(analyses_json: str, correlation_json: str,

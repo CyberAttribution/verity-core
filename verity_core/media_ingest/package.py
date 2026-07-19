@@ -345,6 +345,116 @@ def derive_observations(pkg, declared_extension=None):
         ]
 
 
+def derive_recommended_corroboration(pkg):
+    """Deterministic evidence-collection guidance (S4, approved): the
+    highest-value NEXT evidence that would strengthen or weaken the
+    competing hypotheses. Guidance only — never conclusions. Stored on
+    the package and merged (labeled) into the report."""
+    recs = []
+    se = pkg["metadata_by_origin"]["source_embedded"]
+    declared = pkg["source"].get("declared_untrusted") or {}
+    kind = pkg["source"].get("kind")
+
+    def rec(item, rationale, bearing):
+        recs.append({"item": item, "rationale": rationale,
+                     "bearing": bearing, "origin": "deterministic"})
+
+    if kind == "youtube":
+        rec("The original camera/source file from the claimed creator",
+            "Platform-retrieved media is re-encoded; the original carries "
+            "metadata and signal characteristics the platform copy lost.",
+            "Strengthens or weakens the claimed-origin hypothesis "
+            "directly.")
+        rec("Earlier or alternate uploads of the same content",
+            "Upload chronology can reveal the earliest known appearance "
+            "and cross-platform provenance.",
+            "Bears on whether this posting is the origin or a repost.")
+    else:
+        rec("Confirmation that the uploaded file is the original, "
+            "un-re-encoded capture",
+            "A first-generation file preserves device metadata and "
+            "signal characteristics that derivatives lose.",
+            "Raises or lowers the weight of all technical findings.")
+    if not (se.get("embedded_timestamps") or {}):
+        rec("Any sidecar, platform, or account records establishing "
+            "capture/upload time",
+            "The file carries no usable embedded timestamps.",
+            "Restores timing evidence for or against the claimed date.")
+    if declared.get("claimed_date") or declared.get("claimed_place"):
+        rec("Authoritative records for the claimed time and place "
+            "(weather, schedules, official records, corroborating "
+            "eyewitness media)",
+            "Claimed time/place is currently supported only by the "
+            "submitter's statement.",
+            "Independently corroborates or contradicts the claimed "
+            "context.")
+    rec("Cryptographic hashes of any other copies in circulation",
+        "Hash comparison distinguishes identical redistribution from "
+        "re-encoded or altered variants.",
+        "Separates distribution questions from alteration questions.")
+    pkg["recommended_corroboration"] = recs
+    return recs
+
+
+def evidence_digest(pkg, max_chars=6000):
+    """Deterministic, bounded text digest of the evidence package — the
+    textual form the analysis pipeline receives. Same digest for hosted
+    and Node consumption."""
+    lines = []
+    src = pkg["source"]
+    lines.append(f"MEDIA EVIDENCE PACKAGE ({pkg['schema']})")
+    lines.append(f"Source kind: {src['kind']} | identifier: "
+                 f"{src['identifier']} | acquired: "
+                 f"{src['acquisition_time_utc']}")
+    d = src.get("declared_untrusted") or {}
+    if any(d.values()):
+        lines.append("Submitter-declared (UNTRUSTED CLAIMS): "
+                     + "; ".join(f"{k}={v}" for k, v in d.items() if v))
+    for a in pkg["artifacts"]:
+        lines.append(f"Artifact {a['artifact_id']} [{a['kind']}/"
+                     f"{a['role']}] sha256={a['sha256']} "
+                     f"size={a.get('size_bytes')} "
+                     f"parent={a.get('parent_artifact') or '-'} "
+                     f"step={a.get('created_by_step')}")
+    se = pkg["metadata_by_origin"]["source_embedded"]
+    c = se.get("container") or {}
+    if c:
+        lines.append(f"Container (observed): {c.get('format_name')} "
+                     f"duration={c.get('duration_s')}s "
+                     f"size={c.get('size_bytes')} "
+                     f"bit_rate={c.get('bit_rate')}")
+    for s in se.get("streams") or []:
+        lines.append("Stream (observed): " + ", ".join(
+            f"{k}={v}" for k, v in s.items() if v is not None
+            and k != "stream_tags"))
+    for label, key in (("Container tags", "container_tags"),
+                       ("Embedded timestamps", "embedded_timestamps"),
+                       ("Device/software", "device_software")):
+        vals = se.get(key) or {}
+        if vals:
+            lines.append(f"{label} (source-embedded, forgeable): "
+                         + "; ".join(f"{k}={v}" for k, v in vals.items()))
+    rg = pkg["metadata_by_origin"]["retrieval_generated"]
+    if rg:
+        lines.append("Retrieval-generated metadata (from the platform "
+                     "adapter, NOT the uploader's original): "
+                     + "; ".join(f"{k}={v}" for k, v in
+                                 sorted(rg.items())[:20]))
+    lines.append("Processing events: " + " -> ".join(
+        f"{e['step']}({e['outcome']})" for e in pkg["processing_events"]))
+    for o in pkg["observations"]:
+        tag = o["basis"].upper()
+        lines.append(f"[{tag}/{o.get('modality', 'metadata')}] "
+                     f"{o['statement']}")
+        if o.get("competing_explanations"):
+            lines.append("  competing: "
+                         + " | ".join(o["competing_explanations"]))
+    text = "\n".join(lines)
+    if len(text) > max_chars:
+        text = text[:max_chars - 22] + "\n[digest truncated]"
+    return text
+
+
 def finalize(pkg, cleanup_status, deleted_artifact_ids=None):
     pkg["cleanup"]["status"] = cleanup_status
     pkg["cleanup"]["deleted_artifacts"] = list(deleted_artifact_ids or [])

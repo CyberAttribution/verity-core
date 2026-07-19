@@ -13,7 +13,7 @@ event id; the pipeline preserves them for the Keel trace.
 """
 import json
 
-from . import fuse, normalize, parse, prompts
+from . import fuse, media_assessment, normalize, parse, prompts
 from .schemas import FusedReport
 
 MAX_ARTIFACTS = 6
@@ -30,9 +30,17 @@ _LIMITATIONS_BASE = [
 
 def analyze_artifacts(artifacts: list, router, profile_mode: str = "smb",
                       status_cb=None, case_context: str = "",
-                      workflow: str = "general_evidence") -> FusedReport:
+                      workflow: str = "general_evidence",
+                      attachments: dict = None) -> FusedReport:
     """Run the full pipeline. Never raises on model/parse failures —
-    degradation is recorded honestly in the report."""
+    degradation is recorded honestly in the report.
+
+    v0.5.0 additive `attachments`: {artifact_id: [{"mime", "path"|"data",
+    "label"}]} media parts for that artifact. Sent via the router's
+    generate_multimodal when it declares supports_media; on a text-only
+    runtime (or a failed multimodal call) the pipeline degrades to the
+    text prompt and records the limitation — behind the router
+    abstraction, so only a router implementation ever needs to change."""
     def status(msg):
         if status_cb:
             try:
@@ -54,14 +62,63 @@ def analyze_artifacts(artifacts: list, router, profile_mode: str = "smb",
         status(f"Analyzing artifact {i}/{len(artifacts)}: {art.label}")
         indicators = normalize.extract_indicators(art.text,
                                                   art.claimed_sender)
-        result = router.generate(prompts.build_artifact_prompt(
-            art, profile_mode, workflow=workflow)) or {}
-        analyses.append(parse.parse_artifact_analysis(
+        atts = list((attachments or {}).get(art.id) or [])
+        media_evidence = None
+        if workflow == "media_authenticity":
+            frames_n = sum(1 for a in atts
+                           if (a.get("mime") or "").startswith("image/"))
+            audio_parts = [a for a in atts
+                           if (a.get("mime") or "").startswith("audio/")]
+            media_evidence = {
+                "n_frames": frames_n,
+                "has_audio": bool(audio_parts),
+                "audio_mime": audio_parts[0]["mime"] if audio_parts
+                else "",
+            }
+        prompt = prompts.build_artifact_prompt(
+            art, profile_mode, workflow=workflow,
+            media_evidence=media_evidence)
+        if atts and getattr(router, "supports_media", False):
+            result = router.generate_multimodal(prompt, atts) or {}
+            if not result.get("ok"):
+                limitations.append(
+                    f"Artifact {art.id}: media parts could not be "
+                    f"analyzed ({result.get('error', 'unknown error')}); "
+                    "degraded to text-only analysis.")
+                media_evidence = {"n_frames": 0, "has_audio": False,
+                                  "audio_mime": ""}
+                atts = []
+                prompt = prompts.build_artifact_prompt(
+                    art, profile_mode, workflow=workflow,
+                    media_evidence=media_evidence)
+                result = router.generate(prompt) or {}
+        else:
+            if atts:
+                limitations.append(
+                    f"Artifact {art.id}: this runtime does not support "
+                    "media input; signal-level review was not performed.")
+                media_evidence = {"n_frames": 0, "has_audio": False,
+                                  "audio_mime": ""}
+                atts = []
+                prompt = prompts.build_artifact_prompt(
+                    art, profile_mode, workflow=workflow,
+                    media_evidence=media_evidence)
+            result = router.generate(prompt) or {}
+        analysis = parse.parse_artifact_analysis(
             result.get("response") or "",
             artifact_id=art.id,
             indicators=indicators,
             event_id=str(result.get("event_id") or ""),
-        ))
+        )
+        if workflow == "media_authenticity" and \
+                "media_assessment" in analysis.extra:
+            analysis.extra["media_assessment"] = media_assessment.normalize(
+                analysis.extra.get("media_assessment"),
+                has_frames=bool(media_evidence
+                                and media_evidence["n_frames"]),
+                has_audio=bool(media_evidence
+                               and media_evidence["has_audio"]))
+        analyses.append(analysis)
         if not result.get("ok", True):
             limitations.append(
                 f"Artifact {art.id} analysis failed at the runtime "

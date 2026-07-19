@@ -29,11 +29,15 @@ def test_media_workflow_prompt_extension():
     a = normalize.make_artifact("transcript", label="Clip",
                                 evidence_type="media_bundle")
     p = prompts.build_artifact_prompt(a, "smb", workflow="media_authenticity")
-    assert '"media_assessment"' in p and "pending an approved vision runtime" in p
+    assert '"media_assessment"' in p and "assessment_conclusion" in p
+    # D1: graded conclusions + honest signal-level reporting replace
+    # the former blanket "pending an approved vision runtime" text
+    assert "what signal-level review was actually performed" in p
+    assert "not validated pixel-level" in p
     assert '"media_assessment"' not in prompts.build_artifact_prompt(a, "smb")
     f = prompts.build_fusion_prompt("[]", "{}", 1, "smb",
                                     workflow="media_authenticity")
-    assert "never imply it ran" in f and "consistent with" in f
+    assert "never imply it did" in f and "consistent with" in f
 
 
 def test_case_context_still_flows():   # regression: case_context preserved
@@ -58,4 +62,4 @@ def test_pipeline_threads_workflow():
     pipeline.analyze_artifacts([a], CallableRouter(gen),
                                workflow="media_authenticity")
     assert '"media_assessment"' in seen["artifact"]
-    assert "never imply it ran" in seen["fusion"]
+    assert "never imply it did" in seen["fusion"]

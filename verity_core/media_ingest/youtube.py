@@ -65,15 +65,21 @@ def _configured_extractor_args():
 
 
 def _client_plan():
-    """[(label, client-string-or-empty), ...] — primary then at most one
-    bot_challenge fallback. Deterministic and bounded."""
+    """[(label, client-string-or-empty), ...] — primary then a small
+    deterministic sequence of anonymous fallback clients used ONLY on
+    bot_challenge. Default sequence: yt-dlp defaults -> tv -> mweb.
+    Bounded (max 3 attempts), never unbounded retries."""
     primary = os.environ.get("VERITY_YTDLP_PLAYER_CLIENTS", "").strip()
-    fallback = os.environ.get("VERITY_YTDLP_FALLBACK_CLIENTS", "tv")
-    fallback = (fallback or "").strip()
+    fallbacks = os.environ.get("VERITY_YTDLP_FALLBACK_CLIENTS",
+                               "tv,mweb")
     plan = [(primary or "default", primary)]
-    if fallback and fallback != primary:
-        plan.append((fallback, fallback))
-    return plan
+    seen = {primary}
+    for fb in (fallbacks or "").split(","):
+        fb = fb.strip()
+        if fb and fb not in seen:
+            plan.append((fb, fb))
+            seen.add(fb)
+    return plan[:3]
 
 _ALLOWED_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com",
                   "youtu.be"}
@@ -240,6 +246,14 @@ class YouTubeAdapter:
         height = int(limits.get("max_resolution") or 720)
         size_mb = int(limits.get("max_filesize_mb") or 100)
         fmt = (f"bv*[height<={height}]+ba/b[height<={height}]/b")
+        # Tool-side governance filters (approved D: keeps duration/live
+        # limits enforced even when the metadata probe was bypassed
+        # after a bot challenge — controls are never weakened).
+        filters = ["!is_live"]
+        max_dur = limits.get("max_duration_s")
+        if max_dur:
+            filters.append(f"duration<={int(max_dur)}")
+        match_filter = " & ".join(filters)
         attempts = []
         out = None
         category = "retrieval_error"
@@ -248,6 +262,7 @@ class YouTubeAdapter:
                 ["yt-dlp", "--no-playlist", "--no-warnings",
                  "--socket-timeout", "15", "--retries", "2",
                  "--no-cache-dir", "--max-filesize", f"{size_mb}M",
+                 "--match-filters", match_filter,
                  "-f", fmt, "--no-part",
                  "-o", os.path.join(dest_dir, "source.%(ext)s")]
                 + _client_args(clients) + _configured_extractor_args()
@@ -273,6 +288,11 @@ class YouTubeAdapter:
             if "max-filesize" in stderr.lower() or \
                     "file is larger than max" in stderr.lower():
                 category = "oversize"
+            low = stderr.lower()
+            if ("does not pass filter" in low or
+                    "skipping" in low and "match-filter" in low):
+                category = "over_duration" if "duration" in low \
+                    else "live_stream"
             attempts.append({"client": label, "outcome": category})
             if category != "bot_challenge":
                 break              # fallback client only for bot checks

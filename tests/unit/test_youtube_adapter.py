@@ -227,7 +227,7 @@ def test_probe_no_fallback_for_non_bot_categories(monkeypatch):
     assert len(calls) == 1                    # no second attempt
 
 
-def test_probe_bot_challenge_both_clients_reported(monkeypatch):
+def test_probe_bot_challenge_all_clients_reported(monkeypatch):
     monkeypatch.setattr(tools, "run_tool",
                         lambda argv, timeout_s=60, **k:
                         {"ok": False, "returncode": 1, "stdout": "",
@@ -235,8 +235,66 @@ def test_probe_bot_challenge_both_clients_reported(monkeypatch):
     monkeypatch.setattr(tools, "tool_version", lambda n: "v")
     out = A.probe(CANON)
     assert out["category"] == "bot_challenge"
-    assert [a["client"] for a in out["attempts"]] == ["default", "tv"]
+    # bounded deterministic plan: default -> tv -> mweb, then stop
+    assert [a["client"] for a in out["attempts"]] == \
+        ["default", "tv", "mweb"]
     assert all(a["outcome"] == "bot_challenge" for a in out["attempts"])
+
+
+def test_probe_third_client_mweb_can_succeed(monkeypatch):
+    calls = []
+
+    def fake(argv, timeout_s=60, **k):
+        calls.append(argv)
+        if len(calls) < 3:
+            return {"ok": False, "returncode": 1, "stdout": "",
+                    "stderr": "confirm you're not a bot"}
+        return {"ok": True, "returncode": 0,
+                "stdout": json.dumps(PROBE_JSON), "stderr": ""}
+    monkeypatch.setattr(tools, "run_tool", fake)
+    monkeypatch.setattr(tools, "tool_version", lambda n: "v")
+    out = A.probe(CANON)
+    assert out["ok"] and len(calls) == 3
+    assert "youtube:player_client=mweb" in calls[2]
+    assert out["attempts"][-1] == {"client": "mweb", "outcome": "ok"}
+
+
+def test_retrieve_match_filters_enforce_duration_and_live(monkeypatch,
+                                                          tmp_path):
+    dest = str(tmp_path / "s")
+    seen = {}
+
+    def fake(argv, timeout_s=60, **k):
+        seen["argv"] = argv
+        return {"ok": False, "returncode": 1, "stdout": "",
+                "stderr": "video does not pass filter (duration<=900)"}
+    monkeypatch.setattr(tools, "run_tool", fake)
+    monkeypatch.setattr(tools, "tool_version", lambda n: "v")
+    out = A.retrieve(CANON, dest, {"max_duration_s": 900})
+    i = seen["argv"].index("--match-filters")
+    assert seen["argv"][i + 1] == "!is_live & duration<=900"
+    assert out["category"] == "over_duration"
+
+
+def test_pot_provider_config_passthrough_fails_safely(monkeypatch,
+                                                      tmp_path):
+    """PO-token provider unavailable: extractor args still pass through,
+    failure is categorized — never a crash, never token material."""
+    monkeypatch.setenv("VERITY_YTDLP_EXTRACTOR_ARGS",
+                       "youtube:getpot_bgutil_baseurl=http://pot:4416")
+    seen = []
+    monkeypatch.setattr(tools, "run_tool",
+                        lambda argv, timeout_s=60, **k:
+                        (seen.append(argv) or
+                         {"ok": False, "returncode": 1, "stdout": "",
+                          "stderr": "Unable to download webpage: "
+                                    "Name or service not known"}))
+    monkeypatch.setattr(tools, "tool_version", lambda n: "v")
+    out = A.probe(CANON)
+    assert out["ok"] is False
+    assert out["category"] == "network_failure"
+    assert all("youtube:getpot_bgutil_baseurl=http://pot:4416" in a
+               for a in seen)
 
 
 def test_env_configured_clients_and_extractor_args(monkeypatch):

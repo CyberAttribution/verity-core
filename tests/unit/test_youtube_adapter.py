@@ -181,6 +181,110 @@ def test_retrieve_failure_categorized_and_partials_removed(monkeypatch,
     assert not os.path.exists(f"{dest}/source.mp4")   # partial removed
 
 
+# ---------------- retrieval-reliability fix (client plan + diag) ----------
+def test_sanitize_diag_strips_urls_and_tokens():
+    dirty = ("ERROR at https://rr1.googlevideo.com/videoplayback?sig="
+             + "x" * 120 + "&ip=1.2.3.4 plus token " + "T" * 90)
+    clean = youtube.sanitize_diag(dirty)
+    assert "googlevideo" not in clean and "ip=1.2.3.4" not in clean
+    assert "x" * 40 not in clean and "T" * 40 not in clean
+    assert "[url]" in clean and len(clean) <= 300
+
+
+def test_probe_bot_challenge_falls_back_once_to_tv(monkeypatch):
+    calls = []
+
+    def fake(argv, timeout_s=60, **k):
+        calls.append(argv)
+        if len(calls) == 1:
+            return {"ok": False, "returncode": 1, "stdout": "",
+                    "stderr": "Sign in to confirm you're not a bot"}
+        return {"ok": True, "returncode": 0,
+                "stdout": json.dumps(PROBE_JSON), "stderr": ""}
+    monkeypatch.setattr(tools, "run_tool", fake)
+    monkeypatch.setattr(tools, "tool_version", lambda n: "v")
+    out = A.probe(CANON)
+    assert out["ok"] and len(calls) == 2
+    # first attempt: yt-dlp defaults (no player_client override)
+    assert not any("player_client" in a for a in calls[0])
+    # bounded deterministic fallback: exactly one retry, tv client
+    assert "youtube:player_client=tv" in calls[1]
+    assert out["attempts"] == [
+        {"client": "default", "outcome": "bot_challenge"},
+        {"client": "tv", "outcome": "ok"}]
+
+
+def test_probe_no_fallback_for_non_bot_categories(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tools, "run_tool",
+                        lambda argv, timeout_s=60, **k:
+                        (calls.append(argv) or
+                         {"ok": False, "returncode": 1, "stdout": "",
+                          "stderr": "ERROR: Private video"}))
+    monkeypatch.setattr(tools, "tool_version", lambda n: "v")
+    out = A.probe(CANON)
+    assert out["ok"] is False and out["category"] == "unavailable"
+    assert len(calls) == 1                    # no second attempt
+
+
+def test_probe_bot_challenge_both_clients_reported(monkeypatch):
+    monkeypatch.setattr(tools, "run_tool",
+                        lambda argv, timeout_s=60, **k:
+                        {"ok": False, "returncode": 1, "stdout": "",
+                         "stderr": "confirm you're not a bot"})
+    monkeypatch.setattr(tools, "tool_version", lambda n: "v")
+    out = A.probe(CANON)
+    assert out["category"] == "bot_challenge"
+    assert [a["client"] for a in out["attempts"]] == ["default", "tv"]
+    assert all(a["outcome"] == "bot_challenge" for a in out["attempts"])
+
+
+def test_env_configured_clients_and_extractor_args(monkeypatch):
+    monkeypatch.setenv("VERITY_YTDLP_PLAYER_CLIENTS", "tv,web")
+    monkeypatch.setenv("VERITY_YTDLP_FALLBACK_CLIENTS", "")
+    monkeypatch.setenv("VERITY_YTDLP_EXTRACTOR_ARGS",
+                       "youtube:getpot_bgutil_baseurl=http://pot:4416")
+    calls = []
+    monkeypatch.setattr(tools, "run_tool",
+                        lambda argv, timeout_s=60, **k:
+                        (calls.append(argv) or
+                         {"ok": True, "returncode": 0,
+                          "stdout": json.dumps(PROBE_JSON),
+                          "stderr": ""}))
+    monkeypatch.setattr(tools, "tool_version", lambda n: "v")
+    out = A.probe(CANON)
+    assert out["ok"] and len(calls) == 1
+    assert "youtube:player_client=tv,web" in calls[0]
+    assert "youtube:getpot_bgutil_baseurl=http://pot:4416" in calls[0]
+
+
+def test_retrieve_bot_challenge_falls_back_and_cleans_partials(
+        monkeypatch, tmp_path):
+    dest = str(tmp_path / "src")
+    calls = []
+
+    def fake(argv, timeout_s=60, **k):
+        calls.append(argv)
+        import os
+        os.makedirs(dest, exist_ok=True)
+        if len(calls) == 1:
+            with open(f"{dest}/source.mp4", "wb") as fh:
+                fh.write(b"partial")
+            return {"ok": False, "returncode": 1, "stdout": "",
+                    "stderr": "confirm you're not a bot"}
+        with open(f"{dest}/source.mp4", "wb") as fh:
+            fh.write(b"\x00\x00\x00\x18ftypmp42")
+        return {"ok": True, "returncode": 0, "stdout": "", "stderr": ""}
+    monkeypatch.setattr(tools, "run_tool", fake)
+    monkeypatch.setattr(tools, "tool_version", lambda n: "v")
+    out = A.retrieve(CANON, dest)
+    assert out["ok"] and len(calls) == 2
+    assert "youtube:player_client=tv" in calls[1]
+    assert out["attempts"][0]["outcome"] == "bot_challenge"
+    import os
+    assert os.path.getsize(f"{dest}/source.mp4") > 7   # not the partial
+
+
 def test_retrieve_oversize_category(monkeypatch, tmp_path):
     monkeypatch.setattr(tools, "run_tool",
                         lambda argv, timeout_s=60, **k:

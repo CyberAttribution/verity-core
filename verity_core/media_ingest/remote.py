@@ -77,6 +77,36 @@ def confidence_effect(category):
         category, CATEGORY_CONFIDENCE_EFFECT["retrieval_error"])
 
 
+# User-facing guidance per failure category (approved wording for
+# bot_challenge). Always truthful: the media was NOT analyzed.
+_UPLOAD_SUGGESTION = ("The audiovisual content was not analyzed. Upload "
+                      "the media file directly for a full assessment.")
+_USER_MESSAGES = {
+    "bot_challenge": "YouTube prevented server-side media retrieval. "
+                     + _UPLOAD_SUGGESTION,
+    "geo_restricted": "The video is region-blocked from this service. "
+                      + _UPLOAD_SUGGESTION,
+    "age_restricted": "The video requires authenticated access, which "
+                      "this service does not use. " + _UPLOAD_SUGGESTION,
+    "unavailable": "The video is private, removed, or does not exist. "
+                   "If you have the media, upload the media file "
+                   "directly for a full assessment.",
+    "policy_disabled": "Remote retrieval is disabled on this service. "
+                       + _UPLOAD_SUGGESTION,
+    "over_duration": "The video exceeds this service's duration limit. "
+                     + _UPLOAD_SUGGESTION,
+    "live_stream": "Live streams are not retrieved. Once the stream has "
+                   "ended and a normal video exists, submit that URL, "
+                   "or upload the media file directly.",
+}
+
+
+def user_message(category):
+    return _USER_MESSAGES.get(
+        category, "The media could not be retrieved. "
+                  + _UPLOAD_SUGGESTION)
+
+
 def get_adapter(url):
     """Return the first adapter claiming the URL, else None. Import is
     lazy so the registry never drags optional tooling in unnecessarily."""

@@ -24,6 +24,57 @@ from urllib.parse import parse_qs, urlparse
 
 from . import tools
 
+# ---- retrieval-reliability configuration (2026.x yt-dlp guidance) ----
+# Player-client selection and extractor args are OPERATOR CONFIGURATION,
+# never hard-coded tokens. A single deterministic fallback attempt with
+# an alternate client runs only on bot_challenge — never aggressive
+# retries. PO-token support, when needed, is supplied externally via
+# VERITY_YTDLP_EXTRACTOR_ARGS (e.g. a maintained provider's base URL);
+# nothing secret ever enters this code or its logs.
+#   VERITY_YTDLP_PLAYER_CLIENTS   optional, e.g. "tv,web" (primary)
+#   VERITY_YTDLP_FALLBACK_CLIENTS optional, default "tv" (bot_challenge
+#                                 fallback; empty string disables)
+#   VERITY_YTDLP_EXTRACTOR_ARGS   optional, ';'-separated raw
+#                                 --extractor-args values
+
+_URL_RE = re.compile(r"https?://\S+")
+_LONGTOKEN_RE = re.compile(r"\S{80,}")
+
+
+def sanitize_diag(text, cap=300):
+    """Strip URLs (which may carry signed params) and long token-like
+    strings from diagnostic text; bound length."""
+    t = _URL_RE.sub("[url]", str(text or ""))
+    t = _LONGTOKEN_RE.sub("[redacted]", t)
+    return t[:cap]
+
+
+def _client_args(clients):
+    return ["--extractor-args", f"youtube:player_client={clients}"] \
+        if clients else []
+
+
+def _configured_extractor_args():
+    out = []
+    raw = os.environ.get("VERITY_YTDLP_EXTRACTOR_ARGS", "")
+    for arg in raw.split(";"):
+        arg = arg.strip()
+        if arg:
+            out += ["--extractor-args", arg]
+    return out
+
+
+def _client_plan():
+    """[(label, client-string-or-empty), ...] — primary then at most one
+    bot_challenge fallback. Deterministic and bounded."""
+    primary = os.environ.get("VERITY_YTDLP_PLAYER_CLIENTS", "").strip()
+    fallback = os.environ.get("VERITY_YTDLP_FALLBACK_CLIENTS", "tv")
+    fallback = (fallback or "").strip()
+    plan = [(primary or "default", primary)]
+    if fallback and fallback != primary:
+        plan.append((fallback, fallback))
+    return plan
+
 _ALLOWED_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com",
                   "youtu.be"}
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
@@ -120,28 +171,44 @@ class YouTubeAdapter:
         return "retrieval_error"
 
     # ---- metadata probe (no media) ----
+    def _probe_once(self, canonical_url, clients, timeout_s):
+        argv = (["yt-dlp", "--no-playlist", "--skip-download",
+                 "--dump-single-json", "--no-warnings",
+                 "--socket-timeout", "15", "--retries", "1",
+                 "--no-cache-dir"]
+                + _client_args(clients) + _configured_extractor_args()
+                + ["--", canonical_url])
+        return tools.run_tool(argv, timeout_s=timeout_s)
+
     def probe(self, canonical_url, timeout_s=60):
         tool = {"name": self.tool_name,
                 "version": tools.tool_version("yt-dlp")}
-        out = tools.run_tool(
-            ["yt-dlp", "--no-playlist", "--skip-download",
-             "--dump-single-json", "--no-warnings",
-             "--socket-timeout", "15", "--retries", "1",
-             "--no-cache-dir", "--", canonical_url],
-            timeout_s=timeout_s)
-        if not out.get("ok"):
+        attempts = []
+        out = None
+        for label, clients in _client_plan():
+            out = self._probe_once(canonical_url, clients, timeout_s)
+            if out.get("ok"):
+                attempts.append({"client": label, "outcome": "ok"})
+                break
             category = self.categorize_failure(
                 (out.get("stderr") or "") + (out.get("error") or ""),
                 timed_out="timed out" in (out.get("error") or ""),
                 tool_missing=bool(out.get("tool_missing")))
-            return {"ok": False, "tool": tool, "category": category,
-                    "error": (out.get("stderr") or out.get("error")
-                              or "probe failed")[:300]}
+            attempts.append({"client": label, "outcome": category})
+            if category != "bot_challenge":
+                break              # fallback client only for bot checks
+        if not out.get("ok"):
+            return {"ok": False, "tool": tool,
+                    "category": attempts[-1]["outcome"],
+                    "attempts": attempts,
+                    "error": sanitize_diag(out.get("stderr")
+                                           or out.get("error")
+                                           or "probe failed")}
         try:
             data = json.loads(out.get("stdout") or "null") or {}
         except ValueError:
             return {"ok": False, "tool": tool,
-                    "category": "retrieval_error",
+                    "category": "retrieval_error", "attempts": attempts,
                     "error": "probe returned non-JSON metadata"}
         md = {
             "video_id": str(data.get("id") or "")[:20],
@@ -158,7 +225,8 @@ class YouTubeAdapter:
             "view_count": data.get("view_count"),
             "resolution_max": data.get("height"),
         }
-        return {"ok": True, "tool": tool, "metadata": md}
+        return {"ok": True, "tool": tool, "metadata": md,
+                "attempts": attempts}
 
     # ---- bounded retrieval ----
     def retrieve(self, canonical_url, dest_dir, limits=None,
@@ -172,30 +240,43 @@ class YouTubeAdapter:
         height = int(limits.get("max_resolution") or 720)
         size_mb = int(limits.get("max_filesize_mb") or 100)
         fmt = (f"bv*[height<={height}]+ba/b[height<={height}]/b")
-        out = tools.run_tool(
-            ["yt-dlp", "--no-playlist", "--no-warnings",
-             "--socket-timeout", "15", "--retries", "2",
-             "--no-cache-dir", "--max-filesize", f"{size_mb}M",
-             "-f", fmt, "--no-part",
-             "-o", os.path.join(dest_dir, "source.%(ext)s"),
-             "--", canonical_url],
-            timeout_s=timeout_s)
-        files = [n for n in sorted(os.listdir(dest_dir))
-                 if n.startswith("source.")]
-        if out.get("ok") and files:
-            return {"ok": True, "tool": tool, "filename": files[0]}
-        # cleanup partial output on failure
-        for n in files:
-            try:
-                os.unlink(os.path.join(dest_dir, n))
-            except OSError:
-                pass
+        attempts = []
+        out = None
+        category = "retrieval_error"
+        for label, clients in _client_plan():
+            out = tools.run_tool(
+                ["yt-dlp", "--no-playlist", "--no-warnings",
+                 "--socket-timeout", "15", "--retries", "2",
+                 "--no-cache-dir", "--max-filesize", f"{size_mb}M",
+                 "-f", fmt, "--no-part",
+                 "-o", os.path.join(dest_dir, "source.%(ext)s")]
+                + _client_args(clients) + _configured_extractor_args()
+                + ["--", canonical_url],
+                timeout_s=timeout_s)
+            files = [n for n in sorted(os.listdir(dest_dir))
+                     if n.startswith("source.")]
+            if out.get("ok") and files:
+                attempts.append({"client": label, "outcome": "ok"})
+                return {"ok": True, "tool": tool,
+                        "filename": files[0], "attempts": attempts}
+            # cleanup partial output before any further attempt
+            for n in files:
+                try:
+                    os.unlink(os.path.join(dest_dir, n))
+                except OSError:
+                    pass
+            stderr = (out.get("stderr") or "") + (out.get("error") or "")
+            category = self.categorize_failure(
+                stderr,
+                timed_out="timed out" in (out.get("error") or ""),
+                tool_missing=bool(out.get("tool_missing")))
+            if "max-filesize" in stderr.lower() or \
+                    "file is larger than max" in stderr.lower():
+                category = "oversize"
+            attempts.append({"client": label, "outcome": category})
+            if category != "bot_challenge":
+                break              # fallback client only for bot checks
         stderr = (out.get("stderr") or "") + (out.get("error") or "")
-        category = self.categorize_failure(
-            stderr, timed_out="timed out" in (out.get("error") or ""),
-            tool_missing=bool(out.get("tool_missing")))
-        if "max-filesize" in stderr.lower() or \
-                "file is larger than max" in stderr.lower():
-            category = "oversize"
         return {"ok": False, "tool": tool, "category": category,
-                "error": stderr[:300] or "retrieval failed"}
+                "attempts": attempts,
+                "error": sanitize_diag(stderr) or "retrieval failed"}

@@ -209,9 +209,8 @@ def test_probe_bot_challenge_falls_back_once_to_tv(monkeypatch):
     assert not any("player_client" in a for a in calls[0])
     # bounded deterministic fallback: exactly one retry, tv client
     assert "youtube:player_client=tv" in calls[1]
-    assert out["attempts"] == [
-        {"client": "default", "outcome": "bot_challenge"},
-        {"client": "tv", "outcome": "ok"}]
+    assert [(a["client"], a["outcome"]) for a in out["attempts"]] \
+        == [("default", "bot_challenge"), ("tv", "ok")]
 
 
 def test_probe_no_fallback_for_non_bot_categories(monkeypatch):
@@ -256,7 +255,8 @@ def test_probe_third_client_mweb_can_succeed(monkeypatch):
     out = A.probe(CANON)
     assert out["ok"] and len(calls) == 3
     assert "youtube:player_client=mweb" in calls[2]
-    assert out["attempts"][-1] == {"client": "mweb", "outcome": "ok"}
+    assert (out["attempts"][-1]["client"],
+            out["attempts"][-1]["outcome"]) == ("mweb", "ok")
 
 
 def test_retrieve_match_filters_enforce_duration_and_live(monkeypatch,
@@ -274,6 +274,25 @@ def test_retrieve_match_filters_enforce_duration_and_live(monkeypatch,
     i = seen["argv"].index("--match-filters")
     assert seen["argv"][i + 1] == "!is_live & duration<=900"
     assert out["category"] == "over_duration"
+
+
+def test_attempts_carry_sanitized_argv(monkeypatch):
+    monkeypatch.setenv("VERITY_YTDLP_EXTRACTOR_ARGS",
+                       "youtubepot-bgutilhttp:base_url="
+                       "http://pot:4416;youtube:fetch_pot=always")
+    monkeypatch.setattr(tools, "run_tool",
+                        lambda argv, timeout_s=60, **k:
+                        {"ok": False, "returncode": 1, "stdout": "",
+                         "stderr": "ERROR: Private video"})
+    monkeypatch.setattr(tools, "tool_version", lambda n: "v")
+    out = A.probe(CANON)
+    argv = out["attempts"][0]["argv"]
+    assert "youtube:fetch_pot=always" in argv
+    assert "youtubepot-bgutilhttp:base_url=" in argv
+    # strict no-URL log policy: canonical URL and provider URL redacted
+    # ("http" appears only inside the provider NAME 'bgutilhttp')
+    assert "http://" not in argv and "pot:4416" not in argv
+    assert "[url]" in argv
 
 
 def test_pot_provider_config_passthrough_fails_safely(monkeypatch,

@@ -177,14 +177,19 @@ class YouTubeAdapter:
         return "retrieval_error"
 
     # ---- metadata probe (no media) ----
-    def _probe_once(self, canonical_url, clients, timeout_s):
-        argv = (["yt-dlp", "--no-playlist", "--skip-download",
+    @staticmethod
+    def _probe_once_argv(canonical_url, clients):
+        return (["yt-dlp", "--no-playlist", "--skip-download",
                  "--dump-single-json", "--no-warnings",
                  "--socket-timeout", "15", "--retries", "1",
                  "--no-cache-dir"]
                 + _client_args(clients) + _configured_extractor_args()
                 + ["--", canonical_url])
-        return tools.run_tool(argv, timeout_s=timeout_s)
+
+    def _probe_once(self, canonical_url, clients, timeout_s):
+        return tools.run_tool(
+            self._probe_once_argv(canonical_url, clients),
+            timeout_s=timeout_s)
 
     def probe(self, canonical_url, timeout_s=60):
         tool = {"name": self.tool_name,
@@ -193,14 +198,19 @@ class YouTubeAdapter:
         out = None
         for label, clients in _client_plan():
             out = self._probe_once(canonical_url, clients, timeout_s)
+            argv_diag = sanitize_diag(
+                " ".join(self._probe_once_argv(canonical_url, clients)),
+                cap=400)
             if out.get("ok"):
-                attempts.append({"client": label, "outcome": "ok"})
+                attempts.append({"client": label, "outcome": "ok",
+                                 "argv": argv_diag})
                 break
             category = self.categorize_failure(
                 (out.get("stderr") or "") + (out.get("error") or ""),
                 timed_out="timed out" in (out.get("error") or ""),
                 tool_missing=bool(out.get("tool_missing")))
-            attempts.append({"client": label, "outcome": category})
+            attempts.append({"client": label, "outcome": category,
+                             "argv": argv_diag})
             if category != "bot_challenge":
                 break              # fallback client only for bot checks
         if not out.get("ok"):
@@ -258,20 +268,22 @@ class YouTubeAdapter:
         out = None
         category = "retrieval_error"
         for label, clients in _client_plan():
-            out = tools.run_tool(
-                ["yt-dlp", "--no-playlist", "--no-warnings",
-                 "--socket-timeout", "15", "--retries", "2",
-                 "--no-cache-dir", "--max-filesize", f"{size_mb}M",
-                 "--match-filters", match_filter,
-                 "-f", fmt, "--no-part",
-                 "-o", os.path.join(dest_dir, "source.%(ext)s")]
-                + _client_args(clients) + _configured_extractor_args()
-                + ["--", canonical_url],
-                timeout_s=timeout_s)
+            argv = (["yt-dlp", "--no-playlist", "--no-warnings",
+                     "--socket-timeout", "15", "--retries", "2",
+                     "--no-cache-dir", "--max-filesize", f"{size_mb}M",
+                     "--match-filters", match_filter,
+                     "-f", fmt, "--no-part",
+                     "-o", os.path.join(dest_dir, "source.%(ext)s")]
+                    + _client_args(clients)
+                    + _configured_extractor_args()
+                    + ["--", canonical_url])
+            argv_diag = sanitize_diag(" ".join(argv), cap=400)
+            out = tools.run_tool(argv, timeout_s=timeout_s)
             files = [n for n in sorted(os.listdir(dest_dir))
                      if n.startswith("source.")]
             if out.get("ok") and files:
-                attempts.append({"client": label, "outcome": "ok"})
+                attempts.append({"client": label, "outcome": "ok",
+                                 "argv": argv_diag})
                 return {"ok": True, "tool": tool,
                         "filename": files[0], "attempts": attempts}
             # cleanup partial output before any further attempt
@@ -293,7 +305,8 @@ class YouTubeAdapter:
                     "skipping" in low and "match-filter" in low):
                 category = "over_duration" if "duration" in low \
                     else "live_stream"
-            attempts.append({"client": label, "outcome": category})
+            attempts.append({"client": label, "outcome": category,
+                             "argv": argv_diag})
             if category != "bot_challenge":
                 break              # fallback client only for bot checks
         stderr = (out.get("stderr") or "") + (out.get("error") or "")

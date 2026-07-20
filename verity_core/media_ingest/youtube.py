@@ -54,6 +54,13 @@ def _client_args(clients):
         if clients else []
 
 
+def _cookie_args(cookie_file):
+    """--cookies FILE when an authenticated pass is requested. The file
+    is caller-managed (written from a secret at startup); this module
+    only references its path, never its contents."""
+    return ["--cookies", cookie_file] if cookie_file else []
+
+
 def _configured_extractor_args():
     out = []
     raw = os.environ.get("VERITY_YTDLP_EXTRACTOR_ARGS", "")
@@ -178,41 +185,56 @@ class YouTubeAdapter:
 
     # ---- metadata probe (no media) ----
     @staticmethod
-    def _probe_once_argv(canonical_url, clients):
+    def _probe_once_argv(canonical_url, clients, cookie_file=None):
         return (["yt-dlp", "--no-playlist", "--skip-download",
                  "--dump-single-json", "--no-warnings",
                  "--socket-timeout", "15", "--retries", "1",
                  "--no-cache-dir"]
+                + _cookie_args(cookie_file)
                 + _client_args(clients) + _configured_extractor_args()
                 + ["--", canonical_url])
 
-    def _probe_once(self, canonical_url, clients, timeout_s):
-        return tools.run_tool(
-            self._probe_once_argv(canonical_url, clients),
-            timeout_s=timeout_s)
-
-    def probe(self, canonical_url, timeout_s=60):
-        tool = {"name": self.tool_name,
-                "version": tools.tool_version("yt-dlp")}
+    def _probe_plan(self, canonical_url, timeout_s, cookie_file=None,
+                    authenticated=False):
+        """Run the bounded client plan once (anonymous or authenticated).
+        Returns (out, attempts). --cookies never exposes contents; the
+        diag argv shows the flag + path only."""
         attempts = []
         out = None
         for label, clients in _client_plan():
-            out = self._probe_once(canonical_url, clients, timeout_s)
-            argv_diag = sanitize_diag(
-                " ".join(self._probe_once_argv(canonical_url, clients)),
-                cap=400)
+            argv = self._probe_once_argv(canonical_url, clients,
+                                         cookie_file)
+            out = tools.run_tool(argv, timeout_s=timeout_s)
+            entry = {"client": label, "authenticated": authenticated,
+                     "argv": sanitize_diag(" ".join(argv), cap=400)}
             if out.get("ok"):
-                attempts.append({"client": label, "outcome": "ok",
-                                 "argv": argv_diag})
+                entry["outcome"] = "ok"
+                attempts.append(entry)
                 break
-            category = self.categorize_failure(
+            entry["outcome"] = self.categorize_failure(
                 (out.get("stderr") or "") + (out.get("error") or ""),
                 timed_out="timed out" in (out.get("error") or ""),
                 tool_missing=bool(out.get("tool_missing")))
-            attempts.append({"client": label, "outcome": category,
-                             "argv": argv_diag})
-            if category != "bot_challenge":
+            attempts.append(entry)
+            if entry["outcome"] != "bot_challenge":
                 break              # fallback client only for bot checks
+        return out, attempts
+
+    def probe(self, canonical_url, timeout_s=60, cookie_file=None):
+        tool = {"name": self.tool_name,
+                "version": tools.tool_version("yt-dlp")}
+        out, attempts = self._probe_plan(canonical_url, timeout_s)
+        # authenticated escalation: only after an anonymous bot_challenge,
+        # only if a cookie file is available (approved requirement 4/5).
+        if (not out.get("ok") and attempts
+                and attempts[-1]["outcome"] == "bot_challenge"
+                and cookie_file):
+            out2, att2 = self._probe_plan(canonical_url, timeout_s,
+                                          cookie_file=cookie_file,
+                                          authenticated=True)
+            attempts += att2
+            if out2.get("ok"):
+                out = out2
         if not out.get("ok"):
             return {"ok": False, "tool": tool,
                     "category": attempts[-1]["outcome"],
@@ -245,25 +267,11 @@ class YouTubeAdapter:
                 "attempts": attempts}
 
     # ---- bounded retrieval ----
-    def retrieve(self, canonical_url, dest_dir, limits=None,
-                 timeout_s=300):
-        """limits: {max_filesize_mb, max_resolution}. Writes
-        source.<ext> inside dest_dir only."""
-        limits = limits or {}
-        tool = {"name": self.tool_name,
-                "version": tools.tool_version("yt-dlp")}
-        os.makedirs(dest_dir, exist_ok=True)
-        height = int(limits.get("max_resolution") or 720)
-        size_mb = int(limits.get("max_filesize_mb") or 100)
-        fmt = (f"bv*[height<={height}]+ba/b[height<={height}]/b")
-        # Tool-side governance filters (approved D: keeps duration/live
-        # limits enforced even when the metadata probe was bypassed
-        # after a bot challenge — controls are never weakened).
-        filters = ["!is_live"]
-        max_dur = limits.get("max_duration_s")
-        if max_dur:
-            filters.append(f"duration<={int(max_dur)}")
-        match_filter = " & ".join(filters)
+    def _retrieve_plan(self, canonical_url, dest_dir, size_mb, fmt,
+                       match_filter, timeout_s, cookie_file=None,
+                       authenticated=False):
+        """Run the bounded client plan once. Returns (ok_result_or_None,
+        attempts, last_category, last_out)."""
         attempts = []
         out = None
         category = "retrieval_error"
@@ -274,6 +282,7 @@ class YouTubeAdapter:
                      "--match-filters", match_filter,
                      "-f", fmt, "--no-part",
                      "-o", os.path.join(dest_dir, "source.%(ext)s")]
+                    + _cookie_args(cookie_file)
                     + _client_args(clients)
                     + _configured_extractor_args()
                     + ["--", canonical_url])
@@ -283,11 +292,10 @@ class YouTubeAdapter:
                      if n.startswith("source.")]
             if out.get("ok") and files:
                 attempts.append({"client": label, "outcome": "ok",
+                                 "authenticated": authenticated,
                                  "argv": argv_diag})
-                return {"ok": True, "tool": tool,
-                        "filename": files[0], "attempts": attempts}
-            # cleanup partial output before any further attempt
-            for n in files:
+                return files[0], attempts, "ok", out
+            for n in files:                # cleanup partial before retry
                 try:
                     os.unlink(os.path.join(dest_dir, n))
                 except OSError:
@@ -306,9 +314,44 @@ class YouTubeAdapter:
                 category = "over_duration" if "duration" in low \
                     else "live_stream"
             attempts.append({"client": label, "outcome": category,
+                             "authenticated": authenticated,
                              "argv": argv_diag})
             if category != "bot_challenge":
                 break              # fallback client only for bot checks
+        return None, attempts, category, out
+
+    def retrieve(self, canonical_url, dest_dir, limits=None,
+                 timeout_s=300, cookie_file=None):
+        """limits: {max_filesize_mb, max_resolution, max_duration_s}.
+        Writes source.<ext> inside dest_dir only. Anonymous first; on a
+        bot_challenge, retries the same bounded plan with cookies (+ the
+        existing PO-token provider) when a cookie file is available."""
+        limits = limits or {}
+        tool = {"name": self.tool_name,
+                "version": tools.tool_version("yt-dlp")}
+        os.makedirs(dest_dir, exist_ok=True)
+        height = int(limits.get("max_resolution") or 720)
+        size_mb = int(limits.get("max_filesize_mb") or 100)
+        fmt = (f"bv*[height<={height}]+ba/b[height<={height}]/b")
+        # Tool-side governance filters (approved D: duration/live limits
+        # stay enforced even when the probe was bypassed — never weakened).
+        filters = ["!is_live"]
+        max_dur = limits.get("max_duration_s")
+        if max_dur:
+            filters.append(f"duration<={int(max_dur)}")
+        match_filter = " & ".join(filters)
+
+        fname, attempts, category, out = self._retrieve_plan(
+            canonical_url, dest_dir, size_mb, fmt, match_filter,
+            timeout_s)
+        if fname is None and category == "bot_challenge" and cookie_file:
+            fname, att2, category, out = self._retrieve_plan(
+                canonical_url, dest_dir, size_mb, fmt, match_filter,
+                timeout_s, cookie_file=cookie_file, authenticated=True)
+            attempts += att2
+        if fname is not None:
+            return {"ok": True, "tool": tool, "filename": fname,
+                    "attempts": attempts}
         stderr = (out.get("stderr") or "") + (out.get("error") or "")
         return {"ok": False, "tool": tool, "category": category,
                 "attempts": attempts,

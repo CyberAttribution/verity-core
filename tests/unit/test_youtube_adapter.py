@@ -295,6 +295,114 @@ def test_attempts_carry_sanitized_argv(monkeypatch):
     assert "[url]" in argv
 
 
+# ---------------- authenticated (cookie) escalation ----------------
+def test_anonymous_success_no_cookie_use(monkeypatch, tmp_path):
+    """Anonymous probe succeeds -> cookies never used even if present."""
+    seen = []
+    monkeypatch.setattr(tools, "run_tool",
+                        lambda argv, timeout_s=60, **k:
+                        (seen.append(argv) or
+                         {"ok": True, "returncode": 0,
+                          "stdout": json.dumps(PROBE_JSON),
+                          "stderr": ""}))
+    monkeypatch.setattr(tools, "tool_version", lambda n: "v")
+    out = A.probe(CANON, cookie_file="/tmp/ck.txt")
+    assert out["ok"] and len(seen) == 1
+    assert "--cookies" not in seen[0]
+    assert out["attempts"][0]["authenticated"] is False
+
+
+def test_bot_challenge_then_authenticated_retry_probe(monkeypatch):
+    calls = []
+
+    def fake(argv, timeout_s=60, **k):
+        calls.append(argv)
+        authed = "--cookies" in argv
+        if authed:
+            return {"ok": True, "returncode": 0,
+                    "stdout": json.dumps(PROBE_JSON), "stderr": ""}
+        return {"ok": False, "returncode": 1, "stdout": "",
+                "stderr": "confirm you're not a bot"}
+    monkeypatch.setattr(tools, "run_tool", fake)
+    monkeypatch.setattr(tools, "tool_version", lambda n: "v")
+    out = A.probe(CANON, cookie_file="/tmp/ck.txt")
+    assert out["ok"]
+    # anonymous plan (3 clients) all bot_challenge, then authenticated
+    anon = [a for a in out["attempts"] if not a["authenticated"]]
+    authed = [a for a in out["attempts"] if a["authenticated"]]
+    assert len(anon) == 3 and all(a["outcome"] == "bot_challenge"
+                                  for a in anon)
+    assert authed and authed[-1]["outcome"] == "ok"
+    # the authenticated argv carries --cookies with the path only
+    assert "--cookies /tmp/ck.txt" in authed[0]["argv"]
+
+
+def test_no_cookie_no_authenticated_attempt(monkeypatch):
+    monkeypatch.setattr(tools, "run_tool",
+                        lambda argv, timeout_s=60, **k:
+                        {"ok": False, "returncode": 1, "stdout": "",
+                         "stderr": "confirm you're not a bot"})
+    monkeypatch.setattr(tools, "tool_version", lambda n: "v")
+    out = A.probe(CANON)                      # no cookie_file
+    assert out["ok"] is False
+    assert all(a["authenticated"] is False for a in out["attempts"])
+
+
+def test_authenticated_retrieve_retry_and_cleanup(monkeypatch, tmp_path):
+    dest = str(tmp_path / "src")
+    calls = []
+
+    def fake(argv, timeout_s=60, **k):
+        calls.append(argv)
+        os.makedirs(dest, exist_ok=True)
+        if "--cookies" in argv:
+            with open(f"{dest}/source.mp4", "wb") as fh:
+                fh.write(b"\x00\x00\x00\x18ftypmp42")
+            return {"ok": True, "returncode": 0, "stdout": "",
+                    "stderr": ""}
+        with open(f"{dest}/source.mp4", "wb") as fh:
+            fh.write(b"partial")              # anon partial, must be cleaned
+        return {"ok": False, "returncode": 1, "stdout": "",
+                "stderr": "confirm you're not a bot"}
+    import os
+    monkeypatch.setattr(tools, "run_tool", fake)
+    monkeypatch.setattr(tools, "tool_version", lambda n: "v")
+    out = A.retrieve(CANON, dest, {"max_duration_s": 900},
+                     cookie_file="/tmp/ck.txt")
+    assert out["ok"]
+    assert any(a["authenticated"] for a in out["attempts"])
+    assert os.path.getsize(f"{dest}/source.mp4") > 7   # authed file, not partial
+
+
+def test_authenticated_bot_challenge_still_fails_truthfully(monkeypatch,
+                                                            tmp_path):
+    monkeypatch.setattr(tools, "run_tool",
+                        lambda argv, timeout_s=60, **k:
+                        {"ok": False, "returncode": 1, "stdout": "",
+                         "stderr": "confirm you're not a bot"})
+    monkeypatch.setattr(tools, "tool_version", lambda n: "v")
+    out = A.retrieve(CANON, str(tmp_path / "s"),
+                     cookie_file="/tmp/ck.txt")
+    assert out["ok"] is False and out["category"] == "bot_challenge"
+    assert any(a["authenticated"] for a in out["attempts"])   # tried both
+
+
+def test_cookie_path_only_never_contents_in_diag(monkeypatch, tmp_path):
+    monkeypatch.setattr(tools, "run_tool",
+                        lambda argv, timeout_s=60, **k:
+                        {"ok": False, "returncode": 1, "stdout": "",
+                         "stderr": "confirm you're not a bot"})
+    monkeypatch.setattr(tools, "tool_version", lambda n: "v")
+    out = A.probe(CANON, cookie_file="/tmp/secret_ck.txt")
+    blob = json.dumps(out)
+    assert "/tmp/secret_ck.txt" in blob        # path is fine to show
+    # no cookie header/value tokens (there are none to leak here, but
+    # assert the flag form is exactly path-only)
+    for a in out["attempts"]:
+        if a["authenticated"]:
+            assert "--cookies /tmp/secret_ck.txt" in a["argv"]
+
+
 def test_pot_provider_config_passthrough_fails_safely(monkeypatch,
                                                       tmp_path):
     """PO-token provider unavailable: extractor args still pass through,

@@ -1,15 +1,29 @@
-"""Minimal offline inspection CLI for trust media bundles.
+"""Minimal offline CLI for trust media bundles.
 
-    python -m verity_core.trust verify BUNDLE.json
+    python -m verity_core.trust create FILE --out BUNDLE.json [--overwrite]
+    python -m verity_core.trust verify BUNDLE.json [--source FILE]
     python -m verity_core.trust demo [--out PATH] [--overwrite] [--corrupt]
+
+`create` reads the source file read-only in a single streaming pass (full
+SHA-256 plus actual byte count), folds in real ffprobe/exiftool output when
+those optional binaries are present, and truthfully records their absence
+otherwise (integrity generation never depends on them). The package is
+validated and the canonical full-package hash is bound into the trust
+record exactly as in media_bundle; the bundle is then published atomically
+and `--out` is never allowed to be the source file itself.
 
 The verify command reports three verdicts separately — package validity,
 record chain integrity, and package binding — and exits nonzero unless all
-three hold. It never claims to verify authorship or media authenticity.
+three hold. With --source it additionally compares the file's bytes against
+the digest bound in the bundle; a mismatch is reported as a content
+mismatch, never as a verdict about authenticity. Nothing here verifies
+authorship or media authenticity.
 """
 
 import argparse
+import hashlib
 import os
+import stat
 import sys
 import tempfile
 
@@ -23,26 +37,251 @@ _LABELS = (
 )
 
 
-def _print_report(report, bundle_path=None):
-    if bundle_path:
-        print(f"bundle: {bundle_path}")
+def _print_verdicts(report):
     for key, label in _LABELS:
         status = "ok" if not report["issues"][key] else "FAIL"
         print(f"{label:<24} {status}")
         for issue in report["issues"][key]:
             print(f"  - {issue}")
+
+
+def _print_report(report, bundle_path=None):
+    if bundle_path:
+        print(f"bundle: {bundle_path}")
+    _print_verdicts(report)
     print(("VERIFIED: " if report["verified"] else "NOT VERIFIED: ")
           + media_bundle.DISCLAIMER)
 
 
 def _cmd_verify(args):
     try:
-        report = media_bundle.verify_file(args.bundle)
+        bundle = media_bundle.load_bundle(args.bundle)
     except (OSError, ValueError) as exc:
         print(f"cannot inspect {args.bundle}: {exc}")
         return 1
+    report = media_bundle.verify_bundle(bundle)
+    if args.source:
+        return _verify_with_source(bundle, report, args)
     _print_report(report, bundle_path=args.bundle)
     return 0 if report["verified"] else 1
+
+
+def _verify_with_source(bundle, report, args):
+    """Bundle checks and source status are clearly scoped: no overall
+    verdict is printed until the --source comparison has been made."""
+    print(f"bundle: {args.bundle}")
+    _print_verdicts(report)
+    if not report["verified"]:
+        print("source not evaluated because the bundle does not verify")
+        print("NOT VERIFIED: " + media_bundle.DISCLAIMER)
+        return 1
+    rc, message = _check_bound_source(bundle, args.source)
+    print(message)
+    if rc == 0:
+        print("VERIFIED (bundle and bound source): "
+              + media_bundle.DISCLAIMER)
+        return 0
+    print("NOT VERIFIED: " + media_bundle.DISCLAIMER)
+    return 1
+
+
+def _check_source_input(path):
+    """Clear rejection of nonexistent, unreadable, and nonregular inputs."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False, f"no such file: {path}"
+    if not stat.S_ISREG(st.st_mode):
+        return False, f"not a regular file: {path}"
+    if not os.access(path, os.R_OK):
+        return False, f"not readable: {path}"
+    return True, None
+
+
+def _same_path(a, b):
+    if os.path.exists(a) and os.path.exists(b):
+        try:
+            return os.path.samefile(a, b)
+        except OSError:
+            pass
+    return os.path.abspath(a) == os.path.abspath(b)
+
+
+def _stat_signature(path):
+    st = os.stat(path)
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def _stream_identity(path, chunk=1024 * 256):
+    """Single read-only pass: full SHA-256 plus the actual number of bytes
+    read (not what the directory entry claims)."""
+    h = hashlib.sha256()
+    total = 0
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(chunk), b""):
+            h.update(block)
+            total += len(block)
+    return h.hexdigest(), total
+
+
+def _cmd_create(args):
+    from verity_core.media_ingest import exif, package, probe
+
+    source = args.source
+    ok, err = _check_source_input(source)
+    if not ok:
+        print(f"create: {err}")
+        return 1
+    if _same_path(source, args.out):
+        print(f"create: --out {args.out} is the source file itself; "
+              f"refusing to overwrite the original")
+        return 1
+    try:
+        st_before = _stat_signature(source)
+        digest, size = _stream_identity(source)
+        st_after = _stat_signature(source)
+    except OSError as exc:
+        print(f"create: cannot read {source}: {exc}")
+        return 1
+    if st_before != st_after or size != st_after[2]:
+        print("create: source changed during hashing; refusing to bind "
+              "an unstable file")
+        return 1
+
+    basename = os.path.basename(source)
+    ext = os.path.splitext(basename)[1].lstrip(".").lower() or None
+    pkg = package.new_package(
+        "local_file",
+        basename,
+        declared={"original_filename": basename},
+    )
+    artifact_id = package.add_artifact(
+        pkg,
+        "source_media",
+        sha256=digest,
+        size_bytes=size,
+        step="intake",
+        label="locally supplied source file",
+    )
+    probe_result = probe.probe_media(source)
+    package.attach_probe(pkg, probe_result, artifact_id)
+    exif_result = exif.extract_exif(source)
+    package.attach_exif(pkg, exif_result, artifact_id)
+    try:
+        unchanged = _stat_signature(source) == st_after
+    except OSError as exc:
+        print(f"create: source vanished during metadata collection "
+              f"({exc.__class__.__name__}); refusing to bind")
+        return 1
+    if not unchanged:
+        print("create: source changed during ingestion; refusing to bind")
+        return 1
+    package.derive_observations(pkg, declared_extension=ext)
+    package.derive_recommended_corroboration(pkg)
+    package.finalize(pkg, "completed", deleted_artifact_ids=[])
+
+    issues = package.validate(pkg)
+    if issues:
+        print("create: package validation failed:")
+        for issue in issues:
+            print(f"  - {issue}")
+        return 1
+    rec = media_bundle.bind_package(pkg)
+    try:
+        media_bundle.save_bundle(args.out, pkg, rec,
+                                 overwrite=args.overwrite)
+    except FileExistsError:
+        print(f"create: {args.out} already exists; pass --overwrite "
+              f"to replace it")
+        return 1
+    except OSError as exc:
+        print(f"create: cannot write {args.out}: {exc}")
+        return 1
+    print(f"create: wrote bundle {args.out}")
+    print(f"create: source identity: sha256={digest} size={size} bytes")
+    for name, result in (("ffprobe", probe_result),
+                         ("exiftool", exif_result)):
+        if result.get("ok"):
+            version = (result.get("tool") or {}).get("version") \
+                or "unknown version"
+            print(f"create: {name}: metadata recorded ({version})")
+        elif result.get("tool_missing"):
+            print(f"create: {name}: not available on PATH; that evidence "
+                  f"was not examined (recorded in the package)")
+        else:
+            print(f"create: {name}: failed ({result.get('error')}); "
+                  f"recorded in the package")
+    report = media_bundle.verify_file(args.out)
+    _print_report(report)
+    return 0 if report["verified"] else 1
+
+
+def _bound_source_artifact(bundle):
+    """The exact artifact pinned by the evidence_recorded binding payload
+    (packages can contain multiple source artifacts; the first one in the
+    list is not necessarily the bound one)."""
+    payload = None
+    for entry in (bundle.get("record") or {}).get("entries") or []:
+        if entry.get("entry_type") == "evidence_recorded":
+            p = entry.get("payload")
+            if (isinstance(p, dict)
+                    and media_bundle._valid_sha256(
+                        p.get("package_identity_sha256"))):
+                payload = p
+                break
+    if payload is None:
+        return None, None
+    art_id = payload.get("source_artifact_id")
+    if not isinstance(art_id, str):
+        return None, None
+    for art in (bundle.get("package") or {}).get("artifacts") or []:
+        if (art.get("artifact_id") == art_id
+                and art.get("role") == "source"
+                and media_bundle._valid_sha256(art.get("sha256"))):
+            return art_id, art
+    return art_id, None
+
+
+def _check_bound_source(bundle, source):
+    """Compare a file's actual bytes against the digest bound in the
+    bundle. Returns (exit_code, message); message may be multiline."""
+    ok, err = _check_source_input(source)
+    if not ok:
+        return 1, f"source: {err}"
+    art_id, art = _bound_source_artifact(bundle)
+    if art is None:
+        return 1, ("source: bundle contains no valid evidence_recorded "
+                   "binding with a source artifact digest; --source "
+                   "cannot be checked")
+    size = art.get("size_bytes")
+    if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+        return 1, (f"source: bound artifact {art_id} has no valid integer "
+                   f"byte size; --source cannot be checked")
+    try:
+        st_before = _stat_signature(source)
+        actual_digest, actual_size = _stream_identity(source)
+        st_after = _stat_signature(source)
+    except OSError as exc:
+        return 1, f"source: cannot read {source}: {exc}"
+    if st_before != st_after or actual_size != st_after[2]:
+        return 1, ("source: file changed while being read; cannot "
+                   "compare it against the bound digest")
+    digest_ok = actual_digest == art["sha256"]
+    size_ok = actual_size == size
+    if digest_ok and size_ok:
+        return 0, (f"source: matches the digest bound in the bundle "
+                   f"(sha256={art['sha256']}, {actual_size} bytes)")
+    lines = ["source: DOES NOT match the digest bound in the bundle:"]
+    if not digest_ok:
+        lines.append(f"  - sha256 expected {art['sha256']}, "
+                     f"actual {actual_digest}")
+    if not size_ok:
+        lines.append(f"  - size expected {size} bytes, "
+                     f"actual {actual_size} bytes")
+    lines.append("  the file's bytes differ from what was bound at "
+                 "creation; this is a content mismatch, not a finding "
+                 "about the file's authenticity")
+    return 1, "\n".join(lines)
 
 
 def _build_demo_package():
@@ -128,8 +367,19 @@ def main(argv=None):
         description=__doc__,
     )
     sub = parser.add_subparsers(dest="command", required=True)
+    create = sub.add_parser(
+        "create", help="ingest a real file and save a bound bundle")
+    create.add_argument("source", help="path to the source media file")
+    create.add_argument("--out", required=True,
+                        help="output bundle path (must differ from source)")
+    create.add_argument("--overwrite", action="store_true",
+                        help="replace an existing output file")
+    create.set_defaults(func=_cmd_create)
     verify = sub.add_parser("verify", help="verify a bundle file")
     verify.add_argument("bundle", help="path to a trust media bundle JSON")
+    verify.add_argument("--source", default=None,
+                        help="optional file to compare against the bound "
+                             "source digest")
     verify.set_defaults(func=_cmd_verify)
     demo = sub.add_parser("demo", help="build, bind, save, and verify a demo bundle")
     demo.add_argument("--out", default=None,

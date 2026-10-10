@@ -36,14 +36,38 @@ canonical JSON, carried in the `evidence_recorded` entry payload (header
 refs hold an advisory copy).
 
 ```
+python -m verity_core.trust create IMG_3295.MOV --out img.trust.json
+python -m verity_core.trust create FILE --out BUNDLE.json --overwrite  # replace existing bundle
+python -m verity_core.trust verify img.trust.json --source IMG_3295.MOV
+python -m verity_core.trust verify BUNDLE.json
 python -m verity_core.trust demo [--out PATH] [--overwrite] [--corrupt]
-python -m verity_core.trust verify BUNDLE.json   # nonzero exit if not verified
 ```
 
+`create` ingests a real file: the source is read read-only in a single
+streaming pass (full SHA-256 plus actual byte count, with a before/after
+stat check that rejects files mutated during ingestion); real ffprobe and
+exiftool output is folded in when those binaries are present, and their
+absence is recorded as a capability fact — integrity generation never
+depends on them and nothing is fabricated. The package is validated, the
+canonical full-package hash is bound into the trust record, and the bundle
+is published atomically. `--out` must not be the source file itself;
+existing bundles are only replaced with explicit `--overwrite`.
+
 The verifier reports three verdicts separately — package validity, record
-chain integrity, and package binding — and never claims to verify
-authorship or media authenticity: it establishes consistency against the
-hashes embedded in the bundle only.
+chain integrity, and package binding — and with `--source` additionally
+compares the given file's bytes against the digest bound in the bundle.
+The comparison targets the exact source artifact pinned by the bundle's
+`evidence_recorded` binding payload (a package may contain several source
+artifacts; only the bound one counts). No overall verdict is printed
+until the `--source` comparison has been made, and the bundle checks and
+source status are reported as separately scoped results. Exit is nonzero
+on any failure.
+
+Limits: verification is relative to the hashes embedded in the bundle. A
+`--source` mismatch means the file's bytes differ from what was bound at
+creation — a content mismatch, never a judgement about the file's
+authenticity (it is not, and is never reported as, a deepfake finding).
+Nothing here verifies authorship or media authenticity.
 
 ## Sprint 1 status
 

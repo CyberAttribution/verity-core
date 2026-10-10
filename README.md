@@ -69,6 +69,36 @@ creation — a content mismatch, never a judgement about the file's
 authenticity (it is not, and is never reported as, a deepfake finding).
 Nothing here verifies authorship or media authenticity.
 
+### Comparing two bundles
+
+`verity_core.trust compare` produces a bounded, deterministic Markdown
+report of what two bundles each recorded — no AI judgment, no network,
+no claims about which file is an original or a copy:
+
+```
+python -m verity_core.trust compare A.trust.json B.trust.json
+python -m verity_core.trust compare A.trust.json B.trust.json \
+    --left-source A.MOV --right-source B.MOV   # optional byte recheck
+python -m verity_core.trust compare A.trust.json B.trust.json --out report.md
+```
+
+Rows are emitted only for fields the packages actually recorded; anything
+absent (or recorded but never examined, e.g. when exiftool was missing at
+creation) is reported as UNKNOWN, never as a difference. Streams pair by
+recorded type and ordinal — display alignment only, not proof that paired
+streams correspond. Container durations are compared with an exact
+arithmetic delta when both sides recorded finite numbers. With
+`--left-source`/`--right-source`, each file's bytes are hashed and checked
+against the digest bound in its bundle. `--out` publishes atomically and
+refuses to replace an existing report unless `--overwrite` is given; any
+publish error fails closed and leaves the target untouched.
+
+Untrusted recorded values (filenames, tag values) are escaped and bounded
+in the report; the exact values remain unchanged in the input bundles.
+The report says what each bundle records and whether the recordings
+agree — identical sha256 digests mean identical byte content, nothing
+about provenance or authenticity.
+
 ## Sprint 1 status
 
 Extraction order (golden suites in each service must stay byte-identical green

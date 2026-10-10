@@ -333,6 +333,49 @@ def _binding_issues(pkg, record_dict):
     return issues
 
 
+def bound_source_artifact(bundle):
+    """The exact source artifact pinned by the evidence_recorded entry
+    payload (a package can contain several source artifacts; the first
+    one in the list is not necessarily the bound one). Returns
+    (artifact_id, artifact); artifact is None when the payload is
+    missing, malformed, or does not resolve to a source artifact with a
+    valid sha256. Never raises (unexpected recorded shapes yield
+    (None, None) or (id, None) rather than an exception)."""
+    if not isinstance(bundle, dict):
+        return None, None
+    rec = bundle.get("record")
+    entries = rec.get("entries") if isinstance(rec, dict) else None
+    if not isinstance(entries, list):
+        return None, None
+    payload = None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("entry_type") == "evidence_recorded":
+            p = entry.get("payload")
+            if (isinstance(p, dict)
+                    and _valid_sha256(p.get("package_identity_sha256"))):
+                payload = p
+                break
+    if payload is None:
+        return None, None
+    art_id = payload.get("source_artifact_id")
+    if not isinstance(art_id, str):
+        return None, None
+    pkg = bundle.get("package")
+    artifacts = pkg.get("artifacts") if isinstance(pkg, dict) else None
+    if not isinstance(artifacts, list):
+        return art_id, None
+    for art in artifacts:
+        if not isinstance(art, dict):
+            continue
+        if (art.get("artifact_id") == art_id
+                and art.get("role") == "source"
+                and _valid_sha256(art.get("sha256"))):
+            return art_id, art
+    return art_id, None
+
+
 def binding_for_package(pkg):
     """The binding values for pkg: payload fields plus the advisory refs
     copy. Raises ValueError if pkg is not bindable."""

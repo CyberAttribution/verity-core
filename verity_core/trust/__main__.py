@@ -2,6 +2,9 @@
 
     python -m verity_core.trust create FILE --out BUNDLE.json [--overwrite]
     python -m verity_core.trust verify BUNDLE.json [--source FILE]
+    python -m verity_core.trust compare LEFT.json RIGHT.json
+        [--left-source FILE --right-source FILE] [--out REPORT.md]
+        [--overwrite]
     python -m verity_core.trust demo [--out PATH] [--overwrite] [--corrupt]
 
 `create` reads the source file read-only in a single streaming pass (full
@@ -18,6 +21,17 @@ three hold. With --source it additionally compares the file's bytes against
 the digest bound in the bundle; a mismatch is reported as a content
 mismatch, never as a verdict about authenticity. Nothing here verifies
 authorship or media authenticity.
+
+`compare` deterministically compares two VERIFIED bundles: both are
+re-verified with the strict media_bundle APIs first, optional source files
+are rechecked against each bundle's exact bound artifact, and the report
+covers recorded container fields (with a duration delta), streams paired
+by recorded type + ordinal (display alignment only), attribution-relevant
+embedded metadata, and tool examination status. Untrusted labels and
+metadata are escaped for Markdown; the report is printed to stdout and
+optionally written atomically via --out, which may not alias any input.
+The comparison draws no conclusion about scene content, provenance, or
+authenticity.
 """
 
 import argparse
@@ -27,6 +41,7 @@ import stat
 import sys
 import tempfile
 
+from verity_core.trust import compare as compare_module
 from verity_core.trust import media_bundle
 
 _LABELS = (
@@ -216,30 +231,9 @@ def _cmd_create(args):
     return 0 if report["verified"] else 1
 
 
-def _bound_source_artifact(bundle):
-    """The exact artifact pinned by the evidence_recorded binding payload
-    (packages can contain multiple source artifacts; the first one in the
-    list is not necessarily the bound one)."""
-    payload = None
-    for entry in (bundle.get("record") or {}).get("entries") or []:
-        if entry.get("entry_type") == "evidence_recorded":
-            p = entry.get("payload")
-            if (isinstance(p, dict)
-                    and media_bundle._valid_sha256(
-                        p.get("package_identity_sha256"))):
-                payload = p
-                break
-    if payload is None:
-        return None, None
-    art_id = payload.get("source_artifact_id")
-    if not isinstance(art_id, str):
-        return None, None
-    for art in (bundle.get("package") or {}).get("artifacts") or []:
-        if (art.get("artifact_id") == art_id
-                and art.get("role") == "source"
-                and media_bundle._valid_sha256(art.get("sha256"))):
-            return art_id, art
-    return art_id, None
+# Shared implementation (public in media_bundle; kept under the same name
+# here so existing tests and callers keep working).
+_bound_source_artifact = media_bundle.bound_source_artifact
 
 
 def _check_bound_source(bundle, source):
@@ -361,6 +355,79 @@ def _cmd_demo(args):
     return 0 if report["verified"] else 1
 
 
+def _aliases_output(out_path, *inputs):
+    """True when out_path would alias any input file (same file via
+    hardlink/symlink, or the same path spelled differently)."""
+    return any(_same_path(out_path, p) for p in inputs if p)
+
+
+def _write_report(path, text, overwrite=False):
+    """Publish a report atomically. Without --overwrite the target is
+    never replaced or linked-over (no-clobber, including hardlink
+    collisions and a target that appears concurrently); with it the
+    file is replaced via a same-directory temporary file. Any link
+    failure fails closed: the temporary file is removed and the target
+    is left untouched — a link error can never degrade into a rename
+    that replaces the target."""
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".verity-report-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        if overwrite:
+            os.replace(tmp, path)
+        else:
+            os.link(tmp, path)
+            os.unlink(tmp)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _cmd_compare(args):
+    inputs = (args.left, args.right, args.left_source, args.right_source)
+    if args.out and _aliases_output(args.out, *inputs):
+        print("compare: --out would overwrite an input file; choose a "
+              "different report path")
+        return 1
+    bundles = {}
+    for side, path in (("left", args.left), ("right", args.right)):
+        try:
+            bundles[side] = media_bundle.load_bundle(path)
+        except (OSError, ValueError) as exc:
+            print(f"compare: cannot load {side} bundle {path}: {exc}")
+            return 1
+    try:
+        report = compare_module.compare_bundles(
+            bundles["left"], bundles["right"],
+            left_source=args.left_source,
+            right_source=args.right_source,
+            check_source=_check_bound_source,
+        )
+    except compare_module.CompareError as exc:
+        print(f"compare: {exc}")
+        return 1
+    text = compare_module.render_markdown(report)
+    print(text, end="")
+    if args.out:
+        try:
+            _write_report(args.out, text, overwrite=args.overwrite)
+        except FileExistsError:
+            print(f"compare: {args.out} already exists; pass --overwrite "
+                  f"to replace it")
+            return 1
+        except OSError as exc:
+            print(f"compare: cannot write {args.out}: {exc}")
+            return 1
+        print(f"compare: wrote report {args.out}")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="python -m verity_core.trust",
@@ -381,6 +448,23 @@ def main(argv=None):
                         help="optional file to compare against the bound "
                              "source digest")
     verify.set_defaults(func=_cmd_verify)
+    compare = sub.add_parser(
+        "compare",
+        help="compare two verified trust bundles (recorded evidence only)")
+    compare.add_argument("left", help="path to the left trust bundle JSON")
+    compare.add_argument("right", help="path to the right trust bundle JSON")
+    compare.add_argument("--left-source", default=None,
+                         help="optional file to recheck against the left "
+                              "bundle's bound digest")
+    compare.add_argument("--right-source", default=None,
+                         help="optional file to recheck against the right "
+                              "bundle's bound digest")
+    compare.add_argument("--out", default=None,
+                         help="write the Markdown report to this path "
+                              "(also printed to stdout)")
+    compare.add_argument("--overwrite", action="store_true",
+                         help="replace an existing report file")
+    compare.set_defaults(func=_cmd_compare)
     demo = sub.add_parser("demo", help="build, bind, save, and verify a demo bundle")
     demo.add_argument("--out", default=None,
                       help="output path (default: a fresh temporary file)")

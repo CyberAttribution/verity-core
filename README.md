@@ -27,6 +27,24 @@ For deploys the services pin an **immutable Git tag** (e.g.
 `verity-core @ git+https://…/verity-core@v0.2.0-sprint1`). The repin happens in
 the Sprint 1 cleanup step, not during extraction.
 
+## Trust media bundles (consumer slice)
+
+`verity_core.trust.media_bundle` binds a validated
+`media_evidence_package/v1` into a `trust_record/v0.1` and stores both in one
+versioned JSON file. The binding is the SHA-256 of the package's full
+canonical JSON, carried in the `evidence_recorded` entry payload (header
+refs hold an advisory copy).
+
+```
+python -m verity_core.trust demo [--out PATH] [--overwrite] [--corrupt]
+python -m verity_core.trust verify BUNDLE.json   # nonzero exit if not verified
+```
+
+The verifier reports three verdicts separately — package validity, record
+chain integrity, and package binding — and never claims to verify
+authorship or media authenticity: it establishes consistency against the
+hashes embedded in the bundle only.
+
 ## Sprint 1 status
 
 Extraction order (golden suites in each service must stay byte-identical green

@@ -93,9 +93,35 @@ def escalation_ready():
     return True, pcfg["reason"], pcfg
 
 
-def build_router(generate_fn, selected_model=None):
+_DENY_AUTH_REASON = (
+    "operator authorization not granted for this job (deny by default; "
+    "an explicit keyword-only operator_authorized=True from the trusted "
+    "local caller is required — truthy strings, numbers, collections, "
+    "and omitted/false values are refused)")
+
+
+def _authorization_granted(operator_authorized):
+    """Strict per-job operator intent gate. ONLY boolean True counts.
+
+    LIMITATION: this is a trusted local-caller intent signal, NOT
+    authenticated human identity, a session proof, or cryptographic
+    approval. Anything with runtime/host access can call these functions
+    directly with operator_authorized=True and bypass it; the gate exists
+    so the governed service itself never escalates on implicit state
+    (model choice, installed credentials, readiness, prior jobs)."""
+    return operator_authorized is True
+
+
+def build_router(generate_fn, selected_model=None, *,
+                 workflow="general_evidence", operator_authorized=False):
     """(EscalatingRouter | None, reason). Fail-closed at every layer:
-    Keel policy, then the active provider's readiness (ADC + project)."""
+    the reserved-workflow guard (independent of callers), the explicit
+    per-job operator authorization gate (deny by default — no
+    readiness/policy/provider calls are made without it), Keel policy,
+    then the active provider's readiness (ADC + project)."""
+    guard_workflow(workflow)
+    if not _authorization_granted(operator_authorized):
+        return None, _DENY_AUTH_REASON
     allowed, why = keel_policy.multimodal_escalation_allowed()
     if not allowed:
         return None, why
@@ -235,32 +261,88 @@ _GOVERNED_TEXT_PROMPT = (
 
 def run_text_cloud_assist(items, *, workflow="general_evidence",
                           selected_model=None, system=None,
-                          prompt=None, max_chars=6000):
+                          prompt=None, max_chars=6000,
+                          operator_authorized=False):
     """Governed cloud-assist over a BOUNDED text payload. Local fusion is
     the caller's separate, always-local step; this adds a clearly-labeled
     cloud supplement. Fail-soft + truthful. Returns a dict:
     {escalated, ok, text, error, provider, model_used, latency_ms,
      project, region, attempted_models, provider_status, attempts,
-     sent_manifest, reason}."""
-    ready, reason, pcfg = escalation_ready()
-    if not ready:
-        audit_denied(workflow, reason)
+      sent_manifest, reason}.
+
+    `provider_attempted` means the provider SDK's generate method was
+    INVOKED (`cloud.generate(...)` called). It is NOT proof that bytes
+    reached the remote provider: credential resolution, request
+    signing, or transport setup can fail before any HTTP call leaves
+    the host, and such failures are still reported under
+    provider_attempted=True with the SDK error in `error`. Conversely
+    provider_attempted=False means no generate call was made at all
+    (denied, unconfigured, or router build failed).
+
+    Requires an explicit keyword-only per-job operator authorization
+    signal: `operator_authorized=True` (ONLY boolean True counts).
+    Deny-by-default — with missing/false/malformed authorization this
+    makes ZERO readiness, provider-build, or generate calls and returns
+    an honest denied result (no sent artifacts, no provider claim).
+    LIMITATION: this is a trusted local-caller intent gate, not
+    authenticated human identity or cryptographic approval; direct
+    runtime/host callers with code execution can pass True and bypass
+    it. Reserved workflows are refused here independent of UI guards
+    (ReservedWorkflowError), even when authorized."""
+    guard_workflow(workflow)
+    if not _authorization_granted(operator_authorized):
+        audit_denied(workflow, _DENY_AUTH_REASON)
         return {"escalated": True, "ok": False, "available": False,
-                "reason": reason, "text": "", "sent_manifest": [],
-                "provider": pcfg.get("provider"), "model_used": None,
+                "operator_authorized": False,
+                "authorized": False, "denied": True,
+                "reason": _DENY_AUTH_REASON, "text": "",
+                "sent_manifest": [], "provider": None, "model_used": None,
                 "attempted_models": [], "attempts": [],
                 "provider_status": None, "latency_ms": None,
-                "project": pcfg.get("project"),
-                "region": pcfg.get("region"), "error": reason}
+                "project": None, "region": None,
+                "error": _DENY_AUTH_REASON}
+    # Execution authorization is DISTINCT from operator intent: the
+    # intent signal only unlocks this check; Keel policy still decides.
+    allowed, why = keel_policy.multimodal_escalation_allowed()
+    if not allowed:
+        audit_denied(workflow, why)
+        return {"escalated": True, "ok": False, "available": False,
+                "operator_authorized": True,
+                "authorized": False, "denied": True,
+                "reason": why, "text": "", "sent_manifest": [],
+                "provider": None, "model_used": None,
+                "attempted_models": [], "attempts": [],
+                "provider_status": None, "latency_ms": None,
+                "project": None, "region": None, "error": why}
+    pcfg = providers.provider_config()
+    if not pcfg["ready"]:
+        # Unavailability / provider refusal after execution
+        # authorization — reported as such, NOT as an authorization
+        # denial and NOT as a sent/attempted cloud call.
+        audit_denied(workflow, pcfg["reason"])
+        return {"escalated": True, "ok": False, "available": False,
+                "operator_authorized": True,
+                "authorized": True, "denied": False,
+                "unavailable": True, "provider_attempted": False,
+                "reason": pcfg["reason"], "text": "", "sent_manifest": [],
+                    "provider": pcfg.get("provider"), "model_used": None,
+                    "attempted_models": [], "attempts": [],
+                    "provider_status": None, "latency_ms": None,
+                    "project": pcfg.get("project"),
+                    "region": pcfg.get("region"), "error": pcfg["reason"]}
     cloud, why = providers.build_cloud_router(selected_model)
     if cloud is None:
         audit_denied(workflow, why)
         return {"escalated": True, "ok": False, "available": False,
+                "operator_authorized": True,
+                "authorized": True, "denied": False,
+                "unavailable": True, "provider_attempted": False,
                 "reason": why, "text": "", "sent_manifest": [],
-                "provider": "vertex", "model_used": None,
+                "provider": pcfg.get("provider"), "model_used": None,
                 "attempted_models": [], "attempts": [],
                 "provider_status": None, "latency_ms": None,
-                "error": why}
+                "project": pcfg.get("project"),
+                "region": pcfg.get("region"), "error": why}
     digest, manifest = bounded_text_payload(items, max_chars=max_chars)
     audit_authorized(workflow, "vertex", manifest)
     full_prompt = (prompt or _GOVERNED_TEXT_PROMPT) + "\n\n" + digest
@@ -271,6 +353,8 @@ def run_text_cloud_assist(items, *, workflow="general_evidence",
                  latency_ms=out.get("latency_ms"))
     return {
         "escalated": True, "available": True, "ok": ok,
+        "operator_authorized": True, "authorized": True, "denied": False,
+        "unavailable": False, "provider_attempted": True,
         "text": out.get("response", "") if ok else "",
         "error": out.get("error") if not ok else None,
         "provider": out.get("provider", "vertex"),
@@ -289,13 +373,86 @@ def run_text_cloud_assist(items, *, workflow="general_evidence",
 def text_assist_router_meta(res):
     """Shape a run_text_cloud_assist result into the shared router_meta
     escalation fields, so generic investigations record identical
-    provider provenance + custody as media."""
+    provider provenance + custody as media.
+
+    DENIAL HONESTY: a denied job (missing operator authorization, or a
+    policy refusal) is NEVER shaped as a provider attempt or provider
+    failure — escalation_provider stays None, attempted_models and
+    sent_artifacts stay empty, and `denied`/`reason` carry the truth so
+    reports and the canonical case classify it as a denial.
+
+    AVAILABILITY HONESTY: an authorized job that failed BEFORE any
+    provider contact (provider unconfigured / router build failed) is
+    marked `unavailable: True` with `provider_error: None`, no
+    attempted models, and empty custody — explicitly distinct from a
+    provider that was actually contacted and returned an error. The
+    configured provider name is retained for provenance only.
+    `provider_attempted` (from the raw result) means the provider SDK
+    generate method was invoked — not that bytes reached the remote
+    provider; credential/transport setup can fail pre-HTTP."""
     if not res or not res.get("escalated"):
         return {"escalated": False}
     ok = bool(res.get("ok"))
+    denied = bool(res.get("denied"))
+    unavailable = bool(res.get("unavailable"))
     sent = res.get("sent_manifest") or []
+    reason = res.get("reason") or ""
+    if denied:
+        return {
+            "escalated": True,
+            "denied": True,
+            "escalation_denied": True,
+            "escalation_provider": None,   # no provider was ever engaged
+            "escalation_ok": False,
+            "multimodal_unavailable": False,
+            "attempted_models": [],
+            "model_used": None,
+            "latency_ms": None,
+            "vertex_project": None,
+            "vertex_region": None,
+            "attempt_history": [],
+            "provider_error": None,
+            "provider_status": None,
+            "reason": reason,
+            "sent_artifacts": [],
+            "custody": {
+                "source_evidence": "retained locally; nothing sent",
+                "retained_local": "full investigation, evidence package, "
+                                  "and canonical case",
+                "sent_to_provider": [],
+                "sent_but_provider_failed": [],
+            },
+        }
+    if unavailable:
+        return {
+            "escalated": True,
+            "denied": False,
+            "unavailable": True,       # no provider was ever contacted
+            "escalation_ok": False,
+            "escalation_provider": res.get("provider") or "vertex",
+            "multimodal_unavailable": False,   # text assist, not multimodal
+            "attempted_models": [],
+            "model_used": None,
+            "latency_ms": None,
+            "vertex_project": res.get("project"),
+            "vertex_region": res.get("region"),
+            "attempt_history": [],
+            "provider_error": None,    # nothing failed: no attempt was made
+            "provider_status": "unavailable",
+            "reason": res.get("reason") or "",
+            "sent_artifacts": [],
+            "custody": {
+                "source_evidence": "retained locally; nothing sent",
+                "retained_local": "full investigation, evidence package, "
+                                  "and canonical case",
+                "sent_to_provider": [],
+                "sent_but_provider_failed": [],
+            },
+        }
     return {
         "escalated": True,
+        "denied": False,
+        "unavailable": False,
         "escalation_provider": res.get("provider") or "vertex",
         "escalation_ok": ok,
         "multimodal_unavailable": False,   # text assist, not multimodal

@@ -346,7 +346,8 @@ def analyze_run(request: Request,
     escalate = bool(escalate_multimodal.strip())
     cloud = governed_analysis.run_text_cloud_assist(
         one_item, workflow="single_analysis",
-        selected_model=vertex_model.strip() or None) if escalate else None
+        selected_model=vertex_model.strip() or None,
+        operator_authorized=escalate) if escalate else None
     rm = governed_analysis.text_assist_router_meta(cloud) if cloud \
         else {"escalated": False}
     executed_mode, cloud_escalation, cloud_used, _pd = _mode_strings(rm)
@@ -483,7 +484,8 @@ def analyze_fused(request: Request,
     escalate = bool(escalate_multimodal.strip())
     cloud = governed_analysis.run_text_cloud_assist(
         items, workflow=workflow,
-        selected_model=vertex_model.strip() or None) if escalate else None
+        selected_model=vertex_model.strip() or None,
+        operator_authorized=escalate) if escalate else None
     rm = governed_analysis.text_assist_router_meta(cloud) if cloud \
         else {"escalated": False}
     executed_mode, cloud_escalation, cloud_used, provider_display = \

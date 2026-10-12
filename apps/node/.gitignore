@@ -1,0 +1,3 @@
+# Runtime records belong in backups, not source control.
+/logs/
+/data/

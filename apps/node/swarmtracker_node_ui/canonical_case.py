@@ -35,23 +35,32 @@ def _escalation_record(rm):
     """Derive the immutable escalation custody record from router_meta."""
     escalated = bool(rm.get("escalated"))
     used = bool(rm.get("escalation_ok"))
+    unavailable = bool(rm.get("unavailable"))
     if not escalated:
         state = "not_authorized"
+    elif rm.get("denied"):
+        state = "denied"          # refused before any provider was engaged
     elif used:
         state = "used"
+    elif unavailable:
+        state = "unavailable"     # authorized, but NO provider was contacted
     elif rm.get("multimodal_unavailable"):
         state = "failed"
     else:
         state = "authorized_no_effect"
     return {
-        "authorized": escalated,
+        "authorized": escalated and not rm.get("denied"),
         "provider": rm.get("escalation_provider"),
         "vertex_project": rm.get("vertex_project"),
         "region": rm.get("vertex_region"),
         "model_used": rm.get("model_used"),
         "attempted_models": list(rm.get("attempted_models") or []),
         "latency_ms": rm.get("latency_ms"),
-        "state": state,                       # not_authorized|used|failed
+        "state": state,      # not_authorized|denied|used|unavailable|failed|
+                             # authorized_no_effect
+        "unavailable": unavailable,
+        "denied": bool(rm.get("denied")),
+        "reason": rm.get("reason"),
         "provider_status": rm.get("provider_status"),
         "provider_error": rm.get("provider_error"),
         "attempt_history": list(rm.get("attempt_history") or []),

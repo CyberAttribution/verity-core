@@ -192,12 +192,16 @@ def _apply_modality_truth(assessment, *, fam, extraction, media_examined,
                               "stream; none was expected or extracted")
 
 
-def _escalation_router(generate_fn, selected_model=None):
+def _escalation_router(generate_fn, selected_model=None,
+                       operator_authorized=False):
     """Build the governed escalation router via the shared
     governed-analysis service (single source of truth). Fail-closed:
-    Keel policy, then provider readiness (ADC + project)."""
+    explicit per-job operator authorization (deny by default), Keel
+    policy, then provider readiness (ADC + project)."""
     from . import governed_analysis
-    return governed_analysis.build_router(generate_fn, selected_model)
+    return governed_analysis.build_router(
+        generate_fn, selected_model,
+        operator_authorized=operator_authorized)
 
 
 def run_media_job(src_path, orig_filename, *, generate_fn,
@@ -370,8 +374,20 @@ def run_media_job(src_path, orig_filename, *, generate_fn,
         digest = mp.evidence_digest(pkg)
         esc_router, esc_reason, sent_manifest = None, "", []
         if escalate and parts:
-            esc_router, esc_reason = _escalation_router(generate_fn,
-                                                        selected_model)
+            # `escalate` is this job's explicit per-job operator
+            # selection (form radio / direct caller); forwarded as the
+            # strict keyword-only authorization signal. Never inferred
+            # from model choice, credentials, readiness, or prior jobs.
+            # Availability honesty: a router-build failure here means
+            # the job failed BEFORE any provider contact (no provider
+            # SDK generate invocation) — reported as unavailable, never
+            # as a denial or a provider error. Note that once the
+            # router exists, an attempted generate proves only that the
+            # SDK call was made, not that bytes reached the remote
+            # provider (credential/transport setup can fail pre-HTTP).
+            esc_router, esc_reason = _escalation_router(
+                generate_fn, selected_model,
+                operator_authorized=(escalate is True))
             if esc_router is None:
                 stages.add("analyzing", "degraded",
                            "escalation unavailable: " + esc_reason

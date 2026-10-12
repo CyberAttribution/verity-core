@@ -216,12 +216,15 @@ def test_image_has_no_audio_stream_not_missing_audio(tmp_path):
 def test_escalated_review_labels_gemini_in_limitations(tmp_path,
                                                        monkeypatch):
     fake = _FakeCloud(ok=True)
+    seen_auth = []
     monkeypatch.setattr(
         media_runner, "_escalation_router",
-        lambda gen, sel=None: (
-            media_runner.core_bridge.EscalatingRouter(gen, fake), ""))
+        lambda gen, sel=None, *, operator_authorized=False: (
+            (seen_auth.append(operator_authorized is True),
+             media_runner.core_bridge.EscalatingRouter(gen, fake))[1], ""))
     r = media_runner.run_media_job(_video(tmp_path), "v.mp4",
                                    generate_fn=_gen, escalate=True)
+    assert seen_auth == [True], "current-job authorization must be forwarded"
     vf = r["assessment"]["visual_findings"]
     assert vf["status"] == "reviewed"
     assert "authorized Gemini escalation" in vf["limitations"]
@@ -231,7 +234,14 @@ def test_escalated_review_labels_gemini_in_limitations(tmp_path,
 @pytest.mark.skipif(not media_runner.core_bridge.media_tools.available(
     "ffmpeg"), reason="ffmpeg not available")
 def test_escalation_unavailable_without_key(tmp_path, monkeypatch):
+    # Fixture correction: the ACTIVE provider is Vertex AI (ADC +
+    # project), so a missing GEMINI_API_KEY is irrelevant to readiness.
+    # Explicitly exercise an unavailable ACTIVE Vertex configuration by
+    # clearing the captured project (providers reads it at import; the
+    # readiness gate reads the module attribute at call time).
+    from swarmtracker_node_ui import providers
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(providers, "VERTEX_PROJECT", "")
     r = media_runner.run_media_job(_video(tmp_path), "v.mp4",
                                    generate_fn=_gen, escalate=True)
     assert r["ok"] and not r["router_meta"]["escalated"]
@@ -245,12 +255,15 @@ def test_escalation_unavailable_without_key(tmp_path, monkeypatch):
     "ffmpeg"), reason="ffmpeg not available")
 def test_escalation_authorized_success(tmp_path, monkeypatch):
     fake = _FakeCloud(ok=True)
+    seen_auth = []
     monkeypatch.setattr(
         media_runner, "_escalation_router",
-        lambda gen, sel=None: (
-            media_runner.core_bridge.EscalatingRouter(gen, fake), ""))
+        lambda gen, sel=None, *, operator_authorized=False: (
+            (seen_auth.append(operator_authorized is True),
+             media_runner.core_bridge.EscalatingRouter(gen, fake))[1], ""))
     r = media_runner.run_media_job(_video(tmp_path), "v.mp4",
                                    generate_fn=_gen, escalate=True)
+    assert seen_auth == [True], "current-job authorization must be forwarded"
     assert r["ok"] and r["router_meta"]["escalated"]
     assert r["router_meta"]["escalation_ok"]
     # only extracted artifacts were sent, and they were recorded
@@ -273,12 +286,15 @@ def test_escalation_authorized_success(tmp_path, monkeypatch):
     "ffmpeg"), reason="ffmpeg not available")
 def test_escalation_failure_degrades_honestly(tmp_path, monkeypatch):
     fake = _FakeCloud(ok=False)
+    seen_auth = []
     monkeypatch.setattr(
         media_runner, "_escalation_router",
-        lambda gen, sel=None: (
-            media_runner.core_bridge.EscalatingRouter(gen, fake), ""))
+        lambda gen, sel=None, *, operator_authorized=False: (
+            (seen_auth.append(operator_authorized is True),
+             media_runner.core_bridge.EscalatingRouter(gen, fake))[1], ""))
     r = media_runner.run_media_job(_video(tmp_path), "v.mp4",
                                    generate_fn=_gen, escalate=True)
+    assert seen_auth == [True], "current-job authorization must be forwarded"
     assert r["ok"] and r["router_meta"]["escalated"]
     assert r["router_meta"]["escalation_ok"] is False
     assert "failed" in r["analysis_provenance"]["escalation"].lower()
@@ -337,9 +353,10 @@ def _mk_client(monkeypatch, tmp_path, gemini_key="x", cloud=None,
         "ok": True, "response": fus if "fusion engine" in p else art,
         "openclaw_event_id": "e"}
 
-    def fake_router(gen, sel=None):
+    def fake_router(gen, sel=None, *, operator_authorized=False):
         if spy is not None:
-            spy.append(True)
+            # records whether this job's authorization was forwarded
+            spy.append(operator_authorized is True)
         if cloud is None:
             return None, "no cloud configured for test"
         return media_runner.core_bridge.EscalatingRouter(gen, cloud), ""
@@ -420,16 +437,20 @@ def test_ui_checked_provider_failure_preserves_local(tmp_path, monkeypatch):
 @pytest.mark.skipif(not media_runner.core_bridge.media_tools.available(
     "ffmpeg"), reason="ffmpeg not available")
 def test_ui_checked_missing_key_stays_local(tmp_path, monkeypatch):
-    # No fake router: use the REAL _escalation_router with the key
-    # removed, so the missing-key gate (not a mock) is what's exercised.
+    # No fake router: use the REAL _escalation_router with an
+    # unavailable ACTIVE Vertex configuration (project cleared via
+    # monkeypatch), so the real readiness gate — not a mock — is what's
+    # exercised. (Fixture correction: a missing GEMINI_API_KEY is
+    # irrelevant; the active provider is Vertex AI via ADC + project.)
     v = _video(tmp_path)
-    import os as _os
     d = tmp_path / "nokey"
     d.mkdir()
+    import os as _os
     _os.environ.update(NODE_UI_DATA_DIR=str(d),
                        NODE_UI_DB=str(d / "t.db"),
                        NODE_UI_MEDIA_LEDGER=str(d / "k.jsonl"))
-    _os.environ.pop("GEMINI_API_KEY", None)
+    from swarmtracker_node_ui import providers
+    monkeypatch.setattr(providers, "VERTEX_PROJECT", "")
     import json as _json
     from fastapi.testclient import TestClient
     from swarmtracker_node_ui import app as app_mod
@@ -522,7 +543,7 @@ def test_provider_failure_suppresses_conclusion_truthfully(tmp_path,
                     "provider_status": 403}
     monkeypatch.setattr(
         media_runner, "_escalation_router",
-        lambda g, sel=None: (
+        lambda g, sel=None, *, operator_authorized=False: (
             media_runner.core_bridge.EscalatingRouter(g, _Fail()), ""))
 
     def gen(p):
@@ -886,10 +907,12 @@ def test_vertex_escalation_records_provider_metadata(tmp_path,
                     "attempted_models": ["gemini-3.6-flash"],
                     "attempts": [{"model": "gemini-3.6-flash",
                                   "status": 200, "latency_ms": 812}]}
+    seen_auth = []
     monkeypatch.setattr(
         media_runner, "_escalation_router",
-        lambda g, sel=None: (media_runner.core_bridge.EscalatingRouter(
-            g, _VOK()), ""))
+        lambda g, sel=None, *, operator_authorized=False: ((seen_auth.append(
+            operator_authorized is True), media_runner.core_bridge.EscalatingRouter(
+            g, _VOK()))[1], ""))
     r = media_runner.run_media_job(_video(tmp_path), "v.mp4",
                                    generate_fn=_gen, escalate=True,
                                    selected_model="gemini-3.6-flash")

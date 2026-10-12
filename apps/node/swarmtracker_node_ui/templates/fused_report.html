@@ -22,7 +22,30 @@
   </div>
 </section>
 
-{% if router_meta and router_meta.escalated %}
+{% if router_meta and router_meta.escalated and router_meta.denied %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Governed cloud-assist — denied</h2>
+    <span class="badge badge-warn">not authorized for this job — nothing sent</span>
+  </div>
+  <div class="alert alert-bad" style="margin-top:10px">Cloud-assist was
+  <strong>denied</strong>{% if router_meta.reason %}
+  ({{ router_meta.reason }}){% endif %}. No provider was engaged and no
+  evidence left this node. Local findings stand unchanged.</div>
+</section>
+{% elif router_meta and router_meta.escalated and router_meta.unavailable %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Governed cloud-assist — unavailable</h2>
+    <span class="badge badge-warn">authorized, but no provider was contacted — nothing sent</span>
+  </div>
+  <div class="alert alert-warn" style="margin-top:10px">Cloud-assist was
+  <strong>authorized</strong> for this job, but the provider was
+  <strong>unavailable</strong>{% if router_meta.reason %}
+  ({{ router_meta.reason }}){% endif %}. No provider call was attempted and
+  no evidence left this node. Local findings stand unchanged.</div>
+</section>
+{% elif router_meta and router_meta.escalated %}
 {% set esc_ok = router_meta.escalation_ok %}
 <section class="panel">
   <div class="panel-head">

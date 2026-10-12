@@ -45,6 +45,20 @@
   ({{ router_meta.reason }}){% endif %}. No provider call was attempted and
   no evidence left this node. Local findings stand unchanged.</div>
 </section>
+{% elif router_meta and router_meta.audit_write_failed %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Governed cloud-assist — authorization not recorded</h2>
+    <span class="badge badge-bad">audit ledger write failed — no cloud call attempted</span>
+  </div>
+  <div class="alert alert-bad" style="margin-top:10px">Cloud-assist was
+  <strong>requested and authorized</strong>, but the mandatory
+  authorization record could <strong>not be written to the audit
+  ledger</strong>{% if router_meta.reason %} ({{ router_meta.reason }}){% endif %}.
+  Per policy the cloud assist was <strong>not attempted</strong>: the
+  provider was never engaged, no evidence left this node, and the
+  failure is shown in this report. Local findings stand unchanged.</div>
+</section>
 {% elif router_meta and router_meta.escalated %}
 {% set esc_ok = router_meta.escalation_ok %}
 <section class="panel">
@@ -82,6 +96,14 @@
   {% if router_meta.provider_status %}HTTP {{ router_meta.provider_status }}{% endif %}).
   No cloud findings were produced; the local findings below stand
   unchanged.</div>
+  {% endif %}
+  {% if router_meta.result_write_failed %}
+  <div class="alert alert-warn" style="margin-top:10px">The provider call
+  outcome above is truthful, but the <strong>result audit record could not
+  be appended to the ledger</strong> (write failed after the call). The
+  authorization record exists
+  {% if router_meta.authorization_event_id %}(<code>{{ router_meta.authorization_event_id }}</code>){% endif %};
+  the inference was not retried to repair the audit record.</div>
   {% endif %}
   <p class="hint" style="margin-top:8px">Sent under authorization: only
   bounded text excerpts (hashes recorded in the audit ledger). Source

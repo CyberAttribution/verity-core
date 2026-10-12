@@ -229,19 +229,34 @@ def provenance(router, *, escalated, escalate_requested, esc_reason,
 # ---- audit ----
 
 def audit_authorized(workflow, provider, sent_manifest, extra=None):
-    keel_events.append_event("cloud_escalation_authorized",
-                             {"workflow": workflow, "provider": provider,
-                              "artifact_count": len(sent_manifest),
-                              "artifacts": sent_manifest,
-                              **(extra or {})})
+    """MANDATORY authorization audit (Task 3): the authorization row must
+    be durably persisted (flush + fsync) BEFORE any cloud SDK generate
+    call. Raises LedgerWriteError/ValueError on failure — callers must
+    fail closed instead of generating."""
+    return keel_events.append_event_mandatory(
+        "cloud_escalation_authorized",
+        {"workflow": workflow, "provider": provider,
+         "artifact_count": len(sent_manifest),
+         "artifacts": sent_manifest,
+         **(extra or {})})
 
 
 def audit_result(workflow, ok, error=None, model_used=None,
-                 latency_ms=None):
-    keel_events.append_event("cloud_escalation_result",
-                             {"workflow": workflow, "ok": bool(ok),
-                              "error": error, "model_used": model_used,
-                              "latency_ms": latency_ms})
+                 latency_ms=None, authorization_event_id=None,
+                 provider=None):
+    """Result audit. MANDATORY for honest custody, but a post-call write
+    failure cannot undo an already-executed provider call: on failure
+    this raises and the caller keeps the truthful provider outcome and
+    records the audit failure separately (never reruns inference).
+    Correlates the result row with its authorization row via
+    authorization_event_id (and provider for provenance)."""
+    return keel_events.append_event_mandatory(
+        "cloud_escalation_result",
+        {"workflow": workflow, "ok": bool(ok),
+         "error": error, "model_used": model_used,
+         "latency_ms": latency_ms,
+         "authorization_event_id": authorization_event_id,
+         "provider": provider})
 
 
 def audit_denied(workflow, reason):
@@ -344,20 +359,63 @@ def run_text_cloud_assist(items, *, workflow="general_evidence",
                 "project": pcfg.get("project"),
                 "region": pcfg.get("region"), "error": why}
     digest, manifest = bounded_text_payload(items, max_chars=max_chars)
-    audit_authorized(workflow, "vertex", manifest)
+    # Task 3 — MANDATORY ledger authorization BEFORE any generate call.
+    # A write failure here means ZERO cloud SDK invocations: the job
+    # returns honest audit-write-failed metadata with no sent artifacts
+    # and no provider-attempt claim (not "unavailable" in the provider
+    # sense, and not a policy denial either).
+    provider_name = pcfg.get("provider") or "vertex"
+    try:
+        auth_eid = audit_authorized(workflow, provider_name, manifest)
+    except (keel_events.LedgerWriteError, ValueError, OSError) as exc:
+        return {"escalated": True, "ok": False, "available": False,
+                "operator_authorized": True,
+                "authorized": True, "denied": False,
+                "unavailable": False, "provider_attempted": False,
+                "audit_write_failed": True,
+                "reason": ("authorization ledger write failed — cloud "
+                           "assist not attempted: " + str(exc)[:200]),
+                "error": "audit_write_failed", "text": "",
+                "sent_manifest": [], "provider": provider_name,
+                "authorization_event_id": None,
+                "model_used": None, "attempted_models": [],
+                "attempts": [], "provider_status": None,
+                "latency_ms": None,
+                "project": pcfg.get("project"),
+                "region": pcfg.get("region")}
     full_prompt = (prompt or _GOVERNED_TEXT_PROMPT) + "\n\n" + digest
-    out = cloud.generate(full_prompt) or {}
+    try:
+        out = cloud.generate(full_prompt) or {}
+    except Exception as exc:
+        # A raised SDK/transport error is still one attempted call.
+        # Record its failed outcome; never rerun it merely for auditing.
+        out = {"ok": False, "response": "",
+               "error": f"provider SDK raised {type(exc).__name__}: {str(exc)[:300]}",
+               "provider": provider_name,
+               "attempted_models": [], "attempts": []}
     ok = bool(out.get("ok"))
-    audit_result(workflow, ok, error=out.get("error"),
-                 model_used=out.get("model_used"),
-                 latency_ms=out.get("latency_ms"))
+    # Post-call result audit: a write failure CANNOT undo the provider
+    # call that already happened. Keep the truthful provider outcome and
+    # surface the audit-recording failure as a separate flag; never
+    # rerun inference to "fix" the ledger.
+    audit_write_failed = False
+    try:
+        audit_result(workflow, ok, error=out.get("error"),
+                     model_used=out.get("model_used"),
+                     latency_ms=out.get("latency_ms"),
+                     authorization_event_id=auth_eid,
+                     provider=out.get("provider") or provider_name)
+    except (keel_events.LedgerWriteError, ValueError, OSError):
+        audit_write_failed = True
     return {
         "escalated": True, "available": True, "ok": ok,
         "operator_authorized": True, "authorized": True, "denied": False,
         "unavailable": False, "provider_attempted": True,
+        "audit_write_failed": audit_write_failed,
+        "authorization_event_id": auth_eid,
         "text": out.get("response", "") if ok else "",
         "error": out.get("error") if not ok else None,
-        "provider": out.get("provider", "vertex"),
+        "provider": out.get("provider") or provider_name,
         "model_used": out.get("model_used"),
         "latency_ms": out.get("latency_ms"),
         "project": out.get("project") or getattr(cloud, "project", None),
@@ -389,9 +447,51 @@ def text_assist_router_meta(res):
     configured provider name is retained for provenance only.
     `provider_attempted` (from the raw result) means the provider SDK
     generate method was invoked — not that bytes reached the remote
-    provider; credential/transport setup can fail pre-HTTP."""
+    provider; credential/transport setup can fail pre-HTTP.
+
+    AUDIT-WRITE HONESTY (Task 3): if the mandatory authorization-ledger
+    write failed BEFORE any cloud call, the raw result carries
+    `audit_write_failed: True` and provider_attempted False; that is
+    shaped here as an explicitly local-only outcome — provider stays
+    None, `audit_write_failed` propagates so reports and the canonical
+    record can state that no cloud assist was attempted because the
+    authorization could not be persisted. A post-call result-ledger
+    failure (`result_write_failed`) propagates alongside the truthful
+    provider outcome: the call already happened and is not rerun or
+    hidden."""
     if not res or not res.get("escalated"):
         return {"escalated": False}
+    if res.get("audit_write_failed") and not res.get("provider_attempted"):
+        # Pre-call ledger failure: fail-closed local-only. Not denied,
+        # not unavailable — the authorization record could not be
+        # persisted, so nothing was attempted.
+        return {
+            "escalated": False,    # nothing was engaged; not a real
+                                   # escalation attempt
+            "audit_write_failed": True,
+            "authorization_event_id": res.get("authorization_event_id"),
+            "escalation_provider": None,
+            "escalation_ok": False,
+            "denied": False,
+            "unavailable": False,
+            "attempted_models": [],
+            "model_used": None,
+            "latency_ms": None,
+            "vertex_project": None,
+            "vertex_region": None,
+            "attempt_history": [],
+            "provider_error": None,
+            "provider_status": None,
+            "reason": res.get("reason") or "",
+            "sent_artifacts": [],
+            "custody": {
+                "source_evidence": "retained locally; nothing sent",
+                "retained_local": "full investigation, evidence package, "
+                                  "and canonical case",
+                "sent_to_provider": [],
+                "sent_but_provider_failed": [],
+            },
+        }
     ok = bool(res.get("ok"))
     denied = bool(res.get("denied"))
     unavailable = bool(res.get("unavailable"))
@@ -402,6 +502,10 @@ def text_assist_router_meta(res):
             "escalated": True,
             "denied": True,
             "escalation_denied": True,
+            "authorization_event_id": res.get("authorization_event_id"),
+            "audit_write_failed": False,
+            "result_write_failed":
+                bool(res.get("audit_write_failed")),
             "escalation_provider": None,   # no provider was ever engaged
             "escalation_ok": False,
             "multimodal_unavailable": False,
@@ -428,6 +532,10 @@ def text_assist_router_meta(res):
             "escalated": True,
             "denied": False,
             "unavailable": True,       # no provider was ever contacted
+            "authorization_event_id": res.get("authorization_event_id"),
+            "audit_write_failed": False,
+            "result_write_failed":
+                bool(res.get("audit_write_failed")),
             "escalation_ok": False,
             "escalation_provider": res.get("provider") or "vertex",
             "multimodal_unavailable": False,   # text assist, not multimodal
@@ -455,6 +563,9 @@ def text_assist_router_meta(res):
         "unavailable": False,
         "escalation_provider": res.get("provider") or "vertex",
         "escalation_ok": ok,
+        "authorization_event_id": res.get("authorization_event_id"),
+        "audit_write_failed": False,
+        "result_write_failed": bool(res.get("audit_write_failed")),
         "multimodal_unavailable": False,   # text assist, not multimodal
         "attempted_models": res.get("attempted_models") or [],
         "model_used": res.get("model_used"),

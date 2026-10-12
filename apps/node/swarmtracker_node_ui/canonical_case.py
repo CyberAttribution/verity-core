@@ -36,7 +36,23 @@ def _escalation_record(rm):
     escalated = bool(rm.get("escalated"))
     used = bool(rm.get("escalation_ok"))
     unavailable = bool(rm.get("unavailable"))
-    if not escalated:
+    # Task 3: support both router_meta shapes — media keys
+    # (escalation_auth_event_id/escalation_auth_write_failed/
+    #  escalation_result_write_failed) and the generic text path keys
+    # (authorization_event_id/audit_write_failed/result_write_failed).
+    auth_eid = rm.get("escalation_auth_event_id")
+    if auth_eid is None:
+        auth_eid = rm.get("authorization_event_id")
+    auth_write_failed = bool(
+        rm.get("escalation_auth_write_failed") or rm.get("audit_write_failed"))
+    result_write_failed = bool(
+        rm.get("escalation_result_write_failed")
+        or rm.get("result_write_failed"))
+    if not escalated and auth_write_failed:
+        # operator was authorized but the mandatory authorization row
+        # could not be written; no cloud escalation was attempted
+        state = "auth_write_failed"
+    elif not escalated:
         state = "not_authorized"
     elif rm.get("denied"):
         state = "denied"          # refused before any provider was engaged
@@ -49,21 +65,29 @@ def _escalation_record(rm):
     else:
         state = "authorized_no_effect"
     return {
-        "authorized": escalated and not rm.get("denied"),
+        "authorized": (escalated or auth_write_failed)
+                      and not rm.get("denied"),
         "provider": rm.get("escalation_provider"),
         "vertex_project": rm.get("vertex_project"),
         "region": rm.get("vertex_region"),
         "model_used": rm.get("model_used"),
         "attempted_models": list(rm.get("attempted_models") or []),
         "latency_ms": rm.get("latency_ms"),
-        "state": state,      # not_authorized|denied|used|unavailable|failed|
-                             # authorized_no_effect
+        "state": state,      # not_authorized|auth_write_failed|denied|used|
+                             # unavailable|failed|authorized_no_effect
         "unavailable": unavailable,
         "denied": bool(rm.get("denied")),
-        "reason": rm.get("reason"),
+        "reason": rm.get("reason") or rm.get("escalation_reason"),
+        "escalation_reason": rm.get("escalation_reason"),
         "provider_status": rm.get("provider_status"),
         "provider_error": rm.get("provider_error"),
         "attempt_history": list(rm.get("attempt_history") or []),
+        # Task 3 — mandatory authorization ledger correlation. The
+        # event id is a local correlation handle only: it proves no
+        # authenticated signer and no tamper-evidence.
+        "authorization_event_id": auth_eid,
+        "auth_write_failed": auth_write_failed,
+        "result_write_failed": result_write_failed,
         "artifact_custody": dict(rm.get("custody") or {}),
     }
 

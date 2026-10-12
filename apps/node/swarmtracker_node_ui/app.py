@@ -168,6 +168,16 @@ def _mode_strings(rm):
     esc_ok = bool(rm.get("escalated")) and bool(rm.get("escalation_ok"))
     prov = (rm.get("escalation_provider") or "vertex")
     prov_label = "Vertex AI" if prov == "vertex" else prov
+    if rm.get("audit_write_failed") or \
+            rm.get("escalation_auth_write_failed"):
+        # Task 3 — pre-call authorization ledger write failure:
+        # fail-closed Local Only with the explicit audit reason (never
+        # mislabeled as a provider failure or a policy denial).
+        return ("Local Only",
+                "Not authorized — ledger write failed",
+                "No — escalation not attempted "
+                "(authorization ledger write failed)",
+                "ollama_local")
     if esc_ok:
         return ("Governed Hybrid", f"Authorized — {prov_label} (this job)",
                 "Yes — bounded artifacts only",
@@ -1095,6 +1105,15 @@ def _finish_media_job(ctx, result, media_label, investigation_id,
         cloud_escalation = "Authorized — Gemini (this job)"
         cloud_used = "Yes — extracted artifacts only"
         provider_display = "ollama_local + gemini (authorized escalation)"
+    elif rm.get("escalation_auth_write_failed"):
+        # Task 3 — pre-call authorization ledger write failure:
+        # fail-closed Local Only with the explicit audit reason (never
+        # mislabeled as a provider failure or a policy denial).
+        executed_mode = "Local Only"
+        cloud_escalation = ("Not authorized — audit ledger write failed")
+        cloud_used = ("No — escalation not attempted (authorization "
+                      "ledger write failed)")
+        provider_display = "ollama_local"
     elif rm.get("escalated"):
         # Authorized but the provider call failed. Per the governance
         # model the mode stays Governed Hybrid (the operator DID
@@ -1338,6 +1357,15 @@ def _report_markdown(job):
                   f"models attempted: "
                   f"{', '.join(rm.get('attempted_models') or []) or 'n/a'}.",
                   ""]
+    if rm.get("escalation_result_write_failed"):
+        auth_ref = rm.get("escalation_auth_event_id")
+        lines += ["> AUDIT WARNING: The provider call outcome above is "
+                  "truthful, but the result audit record could not be "
+                  "appended to the ledger (write failed after the call). "
+                  "The authorization record exists"
+                  + (f" ({auth_ref})" if auth_ref else "")
+                  + "; the inference was not retried to repair the audit "
+                  "record.", ""]
     lines += ["## Analysis provenance", ""]
     for k, v in prov.items():
         if k != "sent_artifacts":
@@ -1439,7 +1467,11 @@ def _stix_from_fused(job):
                 "pattern_type": "stix", "valid_from": now,
                 "created_by_ref": ident_id})
     esc = "local only"
-    if rm.get("escalated"):
+    if rm.get("audit_write_failed") or \
+            rm.get("escalation_auth_write_failed"):
+        esc = ("local only — authorization ledger write failed; "
+               "no cloud escalation attempted")
+    elif rm.get("escalated"):
         esc = ("cloud-assisted: " + str(rm.get("escalation_provider"))
                + "/" + str(rm.get("model_used") or "n/a")
                + (" (FAILED)" if not rm.get("escalation_ok") else "")
@@ -1487,12 +1519,30 @@ def _generic_report_markdown(job):
                       f"(HTTP {rm.get('provider_status')}). No cloud "
                       "findings were produced; local findings preserved. "
                       "The provider did not examine the evidence.", ""]
+    elif rm.get("audit_write_failed"):
+        lines += ["> No cloud assist was attempted: the mandatory "
+                  "authorization record could not be written to the "
+                  "local ledger, so the escalation failed closed before "
+                  "any provider call. The failure is shown in this "
+                  "report. No cloud findings were produced.", ""]
+    if rm.get("result_write_failed"):
+        auth_ref = rm.get("authorization_event_id")
+        lines += ["> AUDIT WARNING: The provider call outcome above is "
+                  "truthful, but the result audit record could not be "
+                  "appended to the ledger (write failed after the call). "
+                  "The authorization record exists"
+                  + (f" ({auth_ref})" if auth_ref else "")
+                  + "; the inference was not retried to repair the audit "
+                  "record."]
     lines += ["", "## Custody", "",
               "- Local findings, evidence, and Canonical Case: retained "
               "on this node.",
               "- Sent to provider: " + (
                   "bounded text excerpts only"
                   if rm.get("escalated") else "nothing (Local Only).")]
+    if rm.get("audit_write_failed"):
+        lines += ["- Authorization ledger write failed before any cloud "
+                  "call; nothing was authorized or sent."]
     return "\n".join(lines) + "\n"
 
 
@@ -1682,7 +1732,13 @@ def _briefing_fields(job):
     rep = job.get("report") or {}
     rm = job.get("router_meta") or {}
     exam = _exam_status(rm)
-    if not rm.get("escalated"):
+    if rm.get("audit_write_failed") or \
+            rm.get("escalation_auth_write_failed"):
+        cloud_line = ("Local Only — the mandatory authorization record "
+                      "could not be written to the local ledger, so no "
+                      "cloud escalation was attempted (fail closed). "
+                      "No provider examined the evidence.")
+    elif not rm.get("escalated"):
         cloud_line = "Local Only — no cloud provider was used."
     elif rm.get("escalation_ok"):
         cloud_line = (f"Cloud-assisted (authorized): "
@@ -1704,6 +1760,16 @@ def _briefing_fields(job):
                         f"{', '.join(a.get('alternatives') or []) or 'none'})")
     if not findings:
         findings.append(f"Overall: {rep.get('fused_verdict','n/a')}")
+    audit_warning = None
+    if rm.get("result_write_failed"):
+        auth_ref = rm.get("authorization_event_id")
+        audit_warning = (
+            "AUDIT WARNING: the provider call outcome above is truthful, "
+            "but the result audit record could not be appended to the "
+            "ledger (write failed after the call). The authorization "
+            "record exists"
+            + (f" ({auth_ref})" if auth_ref else "")
+            + "; the inference was not retried to repair the audit record.")
     return {
         "title": job.get("title"), "case_id": job.get("report_id"),
         "risk": rep.get("overall_risk", "n/a"),
@@ -1713,6 +1779,7 @@ def _briefing_fields(job):
         "limitations": rep.get("limitations", []) or
         ["Bounded analysis; corroborate out-of-band before action."],
         "cloud_line": cloud_line, "exam": exam,
+        "audit_warning": audit_warning,
         "executed_mode": job.get("executed_mode"),
         "recommendations": rep.get("recommendations", []) or
         ["Verify key claims out-of-band.", "Preserve evidence + hashes."],
@@ -1737,7 +1804,10 @@ def _briefing_markdown(job):
     L += ["", "## Confidence & limitations", ""]
     L += [f"- {x}" for x in f["limitations"]]
     L += ["", "## Analysis disclosure (local vs cloud)", "",
-          f["cloud_line"], "", "## Recommended next actions", ""]
+          f["cloud_line"], ""]
+    if f.get("audit_warning"):
+        L += [f"> {f['audit_warning']}", ""]
+    L += ["## Recommended next actions", ""]
     L += [f"- {x}" for x in f["recommendations"]]
     L += ["", "## Integrity", "",
           f"- Report id / integrity ref: `{f['case_id']}`",
@@ -1778,6 +1848,7 @@ attribution indicators.</p>
 <h2>Confidence &amp; limitations</h2><ul>{lims}</ul>
 <h2>Analysis disclosure (local vs cloud)</h2>
 <p class="disc">{esc(f['cloud_line'])}</p>
+{'<p class="disc">' + esc(f['audit_warning']) + '</p>' if f.get('audit_warning') else ''}
 <h2>Recommended next actions</h2><ul>{recs}</ul>
 <h2>Integrity</h2><p>Report id / integrity ref:
 <code>{esc(str(f['case_id']))}</code>. Evidence, Evidence Package, and

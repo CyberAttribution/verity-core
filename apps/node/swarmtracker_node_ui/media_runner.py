@@ -373,6 +373,8 @@ def run_media_job(src_path, orig_filename, *, generate_fn,
         # ---- Keel-governed multimodal escalation) ----
         digest = mp.evidence_digest(pkg)
         esc_router, esc_reason, sent_manifest = None, "", []
+        auth_eid, auth_write_failed, result_write_failed = \
+            None, False, False
         if escalate and parts:
             # `escalate` is this job's explicit per-job operator
             # selection (form radio / direct caller); forwarded as the
@@ -405,23 +407,61 @@ def run_media_job(src_path, orig_filename, *, generate_fn,
                         {"kind": "source_image" if fam == "image"
                          else "source_audio", "sha256": sha,
                          "size_bytes": size})
-                keel_events.append_event(
-                    "media_escalation_authorized",
-                    {"provider": "gemini",
-                     "artifact_count": len(sent_manifest),
-                     "artifacts": sent_manifest,
-                     "boundary": "extracted artifacts only; source "
-                                 "video, evidence package, case, and "
-                                 "ledgers remain local"})
-                mp.record_event(
-                    pkg, "multimodal_escalation", "authorized",
-                    note=f"operator-authorized: {len(sent_manifest)} "
-                         "extracted artifact(s) to gemini; evidence "
-                         "package and source remain local")
-                stages.add("analyzing", "ok",
-                           f"authorized escalation: {len(sent_manifest)}"
-                           " extracted artifact(s) -> gemini "
-                           "(interpretation only; fusion stays local)")
+                esc_provider = getattr(esc_router, "provider",
+                                       None) or "vertex"
+                # Task 3 — MANDATORY ledger authorization BEFORE the
+                # core run_media call can trigger any cloud generate.
+                # A write failure here means the escalation is NOT
+                # attempted: the job continues LOCAL ONLY with an
+                # explicit reason in the stage log (never mislabeled as
+                # a provider failure or a policy denial).
+                auth_eid = None
+                auth_write_failed = False
+                try:
+                    auth_eid = keel_events.append_event_mandatory(
+                        "media_escalation_authorized",
+                        {"provider": esc_provider,
+                         "artifact_count": len(sent_manifest),
+                         "artifacts": sent_manifest,
+                         "boundary": "extracted artifacts only; source "
+                                     "video, evidence package, case, "
+                                     "and ledgers remain local"})
+                except (keel_events.LedgerWriteError, ValueError,
+                        OSError) as exc:
+                    auth_write_failed = True
+                    reason = ("authorization ledger write failed — "
+                              "escalation not attempted: "
+                              + str(exc)[:160])
+                    stages.add("analyzing", "degraded", reason
+                               + " — continuing Local Only")
+                    keel_events.append_event(
+                        "media_escalation_auth_write_failed",
+                        {"reason": str(exc)[:200]})
+                    mp.record_event(pkg, "multimodal_escalation",
+                                    "not_authorized",
+                                    note=reason)
+                    # Correlation directive: an authorization write
+                    # failure means NOTHING was authorized or sent.
+                    # Carry the explicit audit reason everywhere the
+                    # unavailable reason would have gone, and clear
+                    # the sent manifest so no report/custody field can
+                    # imply artifacts left the node.
+                    esc_router = None
+                    esc_reason = reason
+                    sent_manifest = []
+                else:
+                    mp.record_event(
+                        pkg, "multimodal_escalation", "authorized",
+                        note=f"operator-authorized: {len(sent_manifest)} "
+                             "extracted artifact(s) to "
+                             f"{esc_provider}; evidence package and "
+                             "source remain local")
+                    stages.add("analyzing", "ok",
+                               f"authorized escalation: "
+                               f"{len(sent_manifest)} extracted "
+                               f"artifact(s) -> {esc_provider} "
+                               "(interpretation only; fusion stays "
+                               "local)")
         elif escalate and not parts:
             stages.add("analyzing", "degraded",
                        "escalation requested but this specimen produced "
@@ -436,8 +476,19 @@ def run_media_job(src_path, orig_filename, *, generate_fn,
         if escalated:
             mm_ok = bool(getattr(router, "multimodal_ok", False))
             mm_err = getattr(router, "multimodal_error", None)
-            keel_events.append_event("media_escalation_result",
-                                     {"ok": mm_ok, "error": mm_err})
+            # Post-call result audit: a write failure CANNOT undo the
+            # generate call that already ran. Keep the truthful provider
+            # outcome (mm_ok/mm_err below) and surface the audit
+            # failure separately; never rerun inference.
+            result_write_failed = False
+            try:
+                keel_events.append_event_mandatory(
+                    "media_escalation_result",
+                    {"ok": mm_ok, "error": mm_err,
+                     "authorization_event_id": auth_eid,
+                     "provider": esc_provider})
+            except (keel_events.LedgerWriteError, ValueError, OSError):
+                result_write_failed = True
             mp.record_event(pkg, "multimodal_escalation",
                             "ok" if mm_ok else "failed",
                             note="gemini multimodal review completed"
@@ -537,6 +588,7 @@ def run_media_job(src_path, orig_filename, *, generate_fn,
             "media_examined": bool(media_examined),
             "fallback": bool(assessment.get("fallback")),
             "escalated": bool(escalated),
+            "escalation_reason": esc_reason or None,
             "escalation_provider": (getattr(router, "provider", "vertex")
                                     if escalated else None),
             "escalation_ok": mm_ok if escalated else None,
@@ -554,6 +606,10 @@ def run_media_job(src_path, orig_filename, *, generate_fn,
             if escalated else [],
             "provider_error": provider_error,
             "provider_status": provider_status,
+            "escalation_auth_event_id": auth_eid,
+            "escalation_auth_write_failed": auth_write_failed,
+            "escalation_result_write_failed":
+                result_write_failed if escalated else False,
             "sent_artifacts": sent_manifest if escalated else [],
             "custody": {
                 "source_file": "processed locally, deleted after "

@@ -74,7 +74,12 @@ Atlas, and both ledgers never leave the node. The report carries an
 **Analysis provenance** panel and per-section badges separating local
 findings from authorized-Gemini findings; the media governance ledger
 records the authorization (with the sent artifacts' hashes) and the
-outcome. Policy: `keel_policy.json` v0.3.0
+outcome. The escalation authorization is mandatory: if the ledger write
+fails, the provider is never engaged (fail-closed), and if the result
+write fails after the call, the outcome is reported truthfully but the
+inference is not retried to repair the audit record — no remote-delivery
+guarantee is inferred from SDK invocation alone. Policy:
+`keel_policy.json` v0.3.0
 `governed_egress.multimodal_escalation` (fail-closed; provider/kind
 scoped; `default_mode: local_only`; two new self-test rows). **Local
 Only remains the default** — nothing escalates without the checkbox,

@@ -190,6 +190,22 @@ metadata and provenance findings are retained below.
     {% endfor %}</p>
   {% endif %}
   {% endif %}
+  {% if rm.escalation_auth_write_failed %}
+  <div class="alert alert-bad" style="margin-top:10px">Cloud escalation was
+  <strong>requested and authorized</strong>, but the mandatory
+  authorization record could <strong>not be written to the audit
+  ledger</strong>{% if rm.escalation_reason %}
+  ({{ rm.escalation_reason }}){% endif %}. Per policy the provider was
+  <strong>never engaged</strong>: no evidence left this node, and the
+  failure is shown in this report. Local analysis stands unchanged.</div>
+  {% elif rm.escalation_result_write_failed %}
+  <div class="alert alert-warn" style="margin-top:10px">The provider call
+  outcome above is truthful, but the <strong>result audit record could not
+  be appended to the ledger</strong> (write failed after the call). The
+  authorization record exists
+  {% if rm.escalation_auth_event_id %}(<code>{{ rm.escalation_auth_event_id }}</code>){% endif %};
+  the inference was not retried to repair the audit record.</div>
+  {% endif %}
   {% if prov.sent_artifacts %}
   <p class="hint" style="margin-top:8px">Sent under authorization:
   {{ prov.sent_artifacts | length }} extracted artifact(s)

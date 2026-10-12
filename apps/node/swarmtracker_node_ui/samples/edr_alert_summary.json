@@ -1,0 +1,13 @@
+{
+  "_note": "SYNTHETIC DEMO SAMPLE — not real customer data",
+  "alert_id": "EDR-2026-0630-4471",
+  "severity": "high",
+  "host": "WKS-ACCT-07",
+  "user": "mreyes",
+  "detection": "Office application spawned scripting interpreter",
+  "process_chain": "OUTLOOK.EXE -> WINWORD.EXE -> powershell.exe -enc <base64…redacted-in-demo>",
+  "network": "powershell.exe attempted connection to 203.0.113.180:8443 (blocked)",
+  "action_taken": "process suspended by EDR policy",
+  "first_seen": "2026-06-30T13:22:41Z",
+  "notes": "Word document 'PO_88231_Apex.docm' opened from email attachment two minutes prior."
+}

@@ -1,0 +1,37 @@
+{
+  "_note": "SYNTHETIC DEMO CASE — not real customer data. Canonical three-artifact vendor-fraud demonstration. Byte-identical copies ship with SwarmTracker Node (samples/) and inside the Public Verity v2 embed so both surfaces produce the same deterministic graph structure.",
+  "case": {
+    "label": "Vendor fraud demonstration",
+    "profile_mode": "smb",
+    "analyst_notes": "AP clerk reported an urgent remittance-change email; IT pulled matching DNS and mail-gateway records."
+  },
+  "artifacts": [
+    {
+      "label": "Vendor email",
+      "evidence_type": "email_message",
+      "event_category": "vendor_payment_request",
+      "claimed_sender": "accounts@apex-remit.example",
+      "claimed_org": "Apex Supplies",
+      "requested_action": "Update bank details before Friday payment run",
+      "text": "SYNTHETIC DEMO SAMPLE — not real customer data\nFrom: Apex Supplies Billing <accounts@apex-remit.example>\nSubject: URGENT: Updated remittance before Friday run\n\nOur bank has changed effective immediately. Update ACH for invoice INV-88231 ($24,730) at http://pay.apex-remit.example/invoice-88231 before Friday. Our phones are migrating — email confirmation only.\n"
+    },
+    {
+      "label": "DNS log",
+      "evidence_type": "dns_log",
+      "event_category": "url_domain",
+      "claimed_sender": "",
+      "claimed_org": "",
+      "requested_action": "",
+      "text": "SYNTHETIC DEMO SAMPLE — not real customer data\n2026-07-10 09:14:22 client 192.0.2.34#53211: query: pay.apex-remit.example IN A + (192.0.2.1) -> 203.0.113.77\n2026-07-10 09:14:59 client 192.0.2.34#53644: query: pay.apex-remit.example IN AAAA + (192.0.2.1)\n2026-07-10 09:21:07 client 192.0.2.51#49872: query: www.microsoft.com IN A + (192.0.2.1)\n"
+    },
+    {
+      "label": "Email headers",
+      "evidence_type": "email_headers",
+      "event_category": "suspicious_email",
+      "claimed_sender": "",
+      "claimed_org": "",
+      "requested_action": "",
+      "text": "SYNTHETIC DEMO SAMPLE — not real customer data\nReceived: from mail-relay.apex-remit.example (203.0.113.77) by mx.yourcompany.example; Fri, 10 Jul 2026 09:12:41 +0000\nAuthentication-Results: mx.yourcompany.example; spf=softfail smtp.mailfrom=apex-remit.example; dkim=none; dmarc=fail\nFrom: \"Apex Supplies Billing\" <accounts@apex-remit.example>\nReply-To: accounts@apex-remit.example\nReturn-Path: <bounce@apex-remit.example>\n"
+    }
+  ]
+}

@@ -1,0 +1,371 @@
+{% extends "base.html" %}
+{% block title %}Fused Analysis Report{% endblock %}
+{% block content %}
+
+<section class="panel report-head risk-{{ fused.overall_risk }}">
+  <div class="report-risk">
+    <div class="card-label">Overall Risk</div>
+    <div class="risk-value">{{ fused.overall_risk | upper }}</div>
+  </div>
+  <div class="report-conf">
+    <div class="card-label">Overall Confidence</div>
+    <div class="conf-value">{{ fused.overall_confidence }}<span>/100</span></div>
+    <div class="conf-bar"><div class="conf-fill" style="width: {{ fused.overall_confidence }}%"></div></div>
+  </div>
+  <div class="report-meta">
+    <div class="kv"><span>Report</span><code>{{ fused.report_id }}</code></div>
+    <div class="kv"><span>Profile</span><code>{{ meta.profile_mode }}</code></div>
+    <div class="kv"><span>Artifacts</span><code>{{ meta.artifact_count }}</code></div>
+    <div class="kv"><span>Executed Mode</span><code>{{ meta.executed_mode }}</code></div>
+    <div class="kv"><span>Cloud Escalation</span><code>{{ meta.cloud_escalation or 'Disabled' }}</code></div>
+    <div class="kv"><span>Cloud Used</span><code>{{ meta.cloud_used or 'No' }}</code></div>
+  </div>
+</section>
+
+{% if router_meta and router_meta.escalated %}
+{% set esc_ok = router_meta.escalation_ok %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Governed cloud-assist{{ ' — used' if esc_ok else ' — failed' }}</h2>
+    <span class="badge {{ 'badge-warn' if esc_ok else 'badge-bad' }}">
+      {{ 'Vertex AI examined bounded excerpts' if esc_ok else
+         'authorized but provider failed — local findings preserved' }}</span>
+  </div>
+  <div class="kv-grid">
+    <div class="kv"><span>Provider</span>
+      <code>{{ (router_meta.escalation_provider or 'vertex') | title }}
+      (ADC — no API key)</code></div>
+    <div class="kv"><span>Model used</span>
+      <code>{{ router_meta.model_used or '— (no successful call)' }}</code></div>
+    <div class="kv"><span>Attempted</span>
+      <code>{{ router_meta.attempted_models | join(' → ') or 'n/a' }}</code></div>
+    {% if router_meta.vertex_project %}<div class="kv"><span>Project</span>
+      <code>{{ router_meta.vertex_project }}</code></div>{% endif %}
+    {% if router_meta.vertex_region %}<div class="kv"><span>Region</span>
+      <code>{{ router_meta.vertex_region }}</code></div>{% endif %}
+    {% if router_meta.latency_ms %}<div class="kv"><span>Latency</span>
+      <code>{{ router_meta.latency_ms }} ms</code></div>{% endif %}
+    <div class="kv"><span>Bounded payload sent</span>
+      <code>{{ router_meta.sent_artifacts | length }} text excerpt(s) —
+      full investigation stayed local</code></div>
+  </div>
+  {% if esc_ok and cloud_assist and cloud_assist.text %}
+  <h3 class="card-label" style="margin-top:12px">Cloud-assisted findings
+    (labeled supplement — local fusion above is authoritative)</h3>
+  <p class="verdict" style="white-space:pre-wrap;font-size:13px">{{ cloud_assist.text }}</p>
+  {% elif not esc_ok %}
+  <div class="alert alert-bad" style="margin-top:10px">Vertex did
+  <strong>not</strong> examine the evidence (provider error
+  {% if router_meta.provider_status %}HTTP {{ router_meta.provider_status }}{% endif %}).
+  No cloud findings were produced; the local findings below stand
+  unchanged.</div>
+  {% endif %}
+  <p class="hint" style="margin-top:8px">Sent under authorization: only
+  bounded text excerpts (hashes recorded in the audit ledger). Source
+  evidence, Evidence Package, Canonical Case, Atlas, and final fusion
+  never left this node.</p>
+</section>
+{% endif %}
+
+{% if report_token %}
+<section class="panel">
+  <div class="panel-head"><h2>Findings export</h2>
+    <span class="badge badge-muted">local + cloud-assist distinguished</span></div>
+  <div class="form-actions">
+    <a class="btn btn-ghost" href="/report/{{ report_token }}/json" download>Export JSON</a>
+    <a class="btn btn-ghost" href="/report/{{ report_token }}/report" download>Export Report</a>
+    <a class="btn btn-ghost" href="/report/{{ report_token }}/stix" download>Export STIX</a>
+    <a class="btn btn-ghost" href="/report/{{ report_token }}/atlas" download>Export to Atlas</a>
+    <a class="btn btn-ghost" href="/report/{{ report_token }}/briefing.html" target="_blank">Generate Briefing</a>
+  </div>
+  <p class="hint" style="margin-top:6px">STIX 2.1 carries the extracted
+  observables as indicators (meaningful cyber-threat objects). Exports
+  never embed evidence and never imply the provider examined anything it
+  did not.</p>
+</section>
+{% endif %}
+
+{% if not meta.analysis_mode_executed %}
+<div class="alert alert-warn">Roadmap analysis mode selected
+({{ meta.analysis_mode }}). Execution was <strong>Local Only</strong>; no
+cloud calls were made.</div>
+{% endif %}
+
+{% if not fused.fusion_parsed %}
+<div class="alert alert-warn">The fusion pass did not return structured
+output; this report contains deterministic correlation plus per-artifact
+results, with confidence capped accordingly.</div>
+{% endif %}
+
+{% if can_save %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Save to investigation</h2>
+    <span class="badge badge-muted">longitudinal context · persisted locally</span>
+  </div>
+  <form method="post" action="/report/{{ fused.report_id }}/save" class="form">
+    <div class="form-grid">
+      <div class="form-row">
+        <label>Existing investigation</label>
+        <select name="investigation_id">
+          <option value="">— choose —</option>
+          {% for inv in investigations %}<option value="{{ inv.id }}">{{ inv.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-row">
+        <label>…or new investigation</label>
+        <input name="new_name" placeholder="e.g. Vendor fraud — Apex">
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary">Save analysis</button>
+    <span class="hint">Saving keeps this evidence, its graph, and its
+    timeline in an investigation you can reopen after restart.</span>
+  </form>
+</section>
+{% endif %}
+
+<section class="panel keel-trace">
+  <div class="panel-head">
+    <h2>Keel Pipeline Trace</h2>
+    <span class="badge badge-ok">every model stage is one governed ledger event</span>
+  </div>
+
+  <div class="pipeline">
+    <div class="pstage"><div class="pstage-body">
+      <div class="pstage-name">Evidence</div>
+      <div class="pstage-what">{{ fused.artifact_analyses | length }} artifact(s) · untrusted specimens</div>
+      <div class="pstage-id">sha256-fingerprinted at intake</div>
+    </div><div class="pstage-arrow">→</div></div>
+    <div class="pstage"><div class="pstage-body">
+      <div class="pstage-name">Policy</div>
+      <div class="pstage-what">{{ meta.policy }} (locked)</div>
+      <div class="pstage-id">{{ meta.policy_source }}</div>
+    </div><div class="pstage-arrow">→</div></div>
+    <div class="pstage"><div class="pstage-body">
+      <div class="pstage-name">Runtime</div>
+      <div class="pstage-what">{{ meta.provider }} · {{ meta.model }}</div>
+      <div class="pstage-id">{{ fused.artifact_analyses | length }} governed call(s)</div>
+    </div><div class="pstage-arrow">→</div></div>
+    <div class="pstage"><div class="pstage-body">
+      <div class="pstage-name">Correlation</div>
+      <div class="pstage-what">deterministic · {{ fused.campaigns | length }} campaign cluster(s)</div>
+      <div class="pstage-id">no model call — computed</div>
+    </div><div class="pstage-arrow">→</div></div>
+    <div class="pstage"><div class="pstage-body">
+      <div class="pstage-name">Fusion</div>
+      <div class="pstage-what">one fused assessment</div>
+      <div class="pstage-id">{{ fused.fusion_event_id or 'not recorded' }}</div>
+    </div><div class="pstage-arrow">→</div></div>
+    <div class="pstage"><div class="pstage-body">
+      <div class="pstage-name">Audit</div>
+      <div class="pstage-what">{{ (fused.artifact_analyses | length) + 1 }} ledger event(s)</div>
+      <div class="pstage-id">logs/openclaw_events.jsonl</div>
+    </div></div>
+  </div>
+
+  <div class="trace-grid">
+    <div class="kv"><span>Keel Policy</span><code>{{ meta.policy }} <em class="trace-note">(locked)</em></code></div>
+    <div class="kv"><span>Policy Source</span><code>{{ meta.policy_source }}</code></div>
+    <div class="kv"><span>Policy Version</span><code>{{ meta.policy_version }}</code></div>
+    <div class="kv"><span>Data Boundary</span><code>{{ meta.data_boundary }}</code></div>
+    <div class="kv"><span>Tools Allowed</span><code>{{ meta.tools_allowed | join(', ') }}</code></div>
+    <div class="kv"><span>Tools Denied</span><code>{{ meta.tools_denied | join(', ') }}</code></div>
+    <div class="kv"><span>Evidence Role</span><code>{{ meta.evidence_role }}</code></div>
+    <div class="kv"><span>Model</span><code>{{ meta.model }}</code></div>
+    <div class="kv"><span>Provider</span><code>{{ meta.provider }}</code></div>
+    <div class="kv"><span>Node</span><code>{{ meta.node }}</code></div>
+    <div class="kv"><span>Analytical Engine</span><code>{{ fused.engine }}</code></div>
+    <div class="kv"><span>Core Source</span><code>{{ meta.core_source }}</code></div>
+  </div>
+  <details style="margin-top:10px">
+  <summary>Per-stage ledger event IDs</summary>
+  <table style="margin-top:12px">
+    <thead><tr><th>Stage</th><th>Input</th><th>Ledger Event ID</th></tr></thead>
+    <tbody>
+      {% for a in fused.artifact_analyses %}
+      <tr>
+        <td>Artifact analysis {{ loop.index }}/{{ fused.artifact_analyses | length }}</td>
+        <td>{{ a.artifact_id }}</td>
+        <td class="mono">{{ a.event_id or 'not recorded' }}</td>
+      </tr>
+      {% endfor %}
+      <tr>
+        <td>Deterministic correlation</td>
+        <td>all artifacts</td>
+        <td class="mono">computed locally (no model call)</td>
+      </tr>
+      <tr>
+        <td>Fusion</td>
+        <td>structured outputs</td>
+        <td class="mono">{{ fused.fusion_event_id or 'not recorded' }}</td>
+      </tr>
+    </tbody>
+  </table>
+  </details>
+</section>
+
+<section class="panel">
+  <h2>Fused Verdict</h2>
+  <p class="verdict">{{ fused.fused_verdict }}</p>
+</section>
+
+<div class="panel-pair">
+<section class="panel">
+  <h2>Corroboration</h2>
+  {% if fused.corroborations %}
+  <ul class="siglist">{% for c in fused.corroborations %}<li>{{ c }}</li>{% endfor %}</ul>
+  {% else %}<p class="empty">No cross-artifact corroboration identified.</p>{% endif %}
+</section>
+<section class="panel">
+  <h2>Contradictions</h2>
+  {% if fused.contradictions %}
+  <ul class="siglist">{% for c in fused.contradictions %}<li>{{ c }}</li>{% endfor %}</ul>
+  {% else %}<p class="empty">No contradictions identified.</p>{% endif %}
+</section>
+</div>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Attribution Hypotheses</h2>
+    <span class="badge badge-muted">bounded — campaign types, never named actors</span>
+  </div>
+  {% if fused.attribution %}
+  {% for h in fused.attribution %}
+  <div class="hyp-card">
+    <div class="hyp-head">
+      <span class="badge badge-warn">{{ h.campaign_type }}</span>
+      <span class="hint">confidence {{ h.confidence }}/100</span>
+      <div class="conf-bar" style="width:110px"><div class="conf-fill" style="width: {{ h.confidence }}%"></div></div>
+    </div>
+    <p class="verdict" style="font-size:13.5px">{{ h.hypothesis }}</p>
+    <div class="kv-grid" style="margin-top:8px">
+      <div class="kv"><span>Supporting</span><code>{{ h.supporting_evidence | join(' · ') or '—' }}</code></div>
+      <div class="kv"><span>Missing evidence</span><code>{{ h.missing_evidence | join(' · ') or '—' }}</code></div>
+      <div class="kv"><span>Alternatives</span><code>{{ h.alternatives | join(' · ') or '—' }}</code></div>
+    </div>
+  </div>
+  {% endfor %}
+  {% else %}<p class="empty">No attribution hypothesis met the evidence bar — that is itself a finding.</p>{% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Campaign Indicators</h2>
+    <span class="badge badge-muted">within this submission only — longitudinal tracking arrives with Origin</span>
+  </div>
+  {% if fused.campaigns %}
+  <table>
+    <thead><tr><th>Campaign ID</th><th>Artifacts</th><th>Shared Indicators</th><th>Basis</th><th>Confidence</th></tr></thead>
+    <tbody>
+      {% for c in fused.campaigns %}
+      <tr>
+        <td class="mono">{{ c.campaign_id }}</td>
+        <td class="mono">{{ c.artifact_ids | join(', ') }}</td>
+        <td class="mono">{{ c.shared_indicators | join(', ') }}</td>
+        <td>{{ c.basis }}</td>
+        <td>{{ c.confidence }}/100</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="empty">No shared infrastructure across artifacts in this submission.</p>{% endif %}
+</section>
+
+<div class="panel-pair">
+<section class="panel">
+  <h2>Missing Evidence</h2>
+  {% if fused.missing_evidence %}
+  <ul class="siglist">{% for m in fused.missing_evidence %}<li>{{ m }}</li>{% endfor %}</ul>
+  {% else %}<p class="empty">None listed.</p>{% endif %}
+</section>
+<section class="panel">
+  <h2>Recommendations</h2>
+  {% if fused.recommendations %}
+  <ul class="siglist">{% for r in fused.recommendations %}<li>{{ r }}</li>{% endfor %}</ul>
+  {% else %}<p class="empty">None listed.</p>{% endif %}
+</section>
+</div>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Atlas — Evidence Graph</h2>
+    <span>
+      <button type="button" class="btn" onclick="FUSED_PRESENT()">Presentation View</button>
+      <a class="btn btn-ghost" href="/atlas?report={{ fused.report_id }}">Open in Atlas →</a>
+    </span>
+  </div>
+  <div class="atlas-legend" id="atlas-legend"></div>
+  <svg id="atlas-svg" class="atlas-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+  <div class="gov-ind" id="atlas-inspector" style="margin-top:8px">Click a node to inspect.</div>
+  <div class="form-actions" style="margin-top:8px">
+    <button type="button" class="btn btn-ghost" onclick="AtlasGraph.downloadSVG(document.getElementById('atlas-svg'), 'atlas-{{ fused.report_id }}.svg')">Download SVG</button>
+    <button type="button" class="btn btn-ghost" onclick="AtlasGraph.downloadPNG(document.getElementById('atlas-svg'), 'atlas-{{ fused.report_id }}.png', 3)">Download PNG (3x)</button>
+  </div>
+  <p class="hint">{{ fused.entities | length }} entities ·
+  {{ fused.relationships | length }} relationships — deterministic extraction
+  with provenance to each artifact. Campaign clusters shown dashed.
+  Graph structure is deterministic from the evidence; narrative fields vary
+  with the local model.</p>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Per-Artifact Results</h2>
+    <span class="hint">{{ fused.artifact_analyses | length }} artifacts analyzed</span>
+  </div>
+  {% for a in fused.artifact_analyses %}
+  <details class="art-detail">
+    <summary>
+      <span class="badge {{ 'badge-bad' if a.risk_level == 'high' else ('badge-warn' if a.risk_level == 'medium' else 'badge-muted') }}">{{ a.risk_level | upper }}</span>
+      <code class="mono">{{ a.artifact_id }}</code> — {{ a.verdict | truncate(90) }}
+    </summary>
+    <div class="kv-grid" style="margin:10px 0 4px">
+      <div class="kv"><span>Confidence</span><code>{{ a.confidence }}/100</code></div>
+      <div class="kv"><span>Signals</span><code>{{ a.signals | join(' · ') or '—' }}</code></div>
+      <div class="kv"><span>Indicators</span><code>{{ (a.indicators.domains + a.indicators.ips + a.indicators.emails) | join(', ') or '—' }}</code></div>
+      <div class="kv"><span>Recommended action</span><code>{{ a.recommended_action }}</code></div>
+      <div class="kv"><span>Ledger event</span><code>{{ a.event_id or 'not recorded' }}</code></div>
+    </div>
+    <details><summary>Raw model response</summary><pre class="raw">{{ a.raw_response }}</pre></details>
+  </details>
+  {% endfor %}
+</section>
+
+<section class="panel panel-note">
+  <h2>Limitations</h2>
+  <ul class="siglist">
+    {% for l in fused.limitations %}<li>{{ l }}</li>{% endfor %}
+  </ul>
+</section>
+
+<section class="panel">
+  <details>
+    <summary>Full fused report (JSON — shared Verity Core schema)</summary>
+    <pre class="raw">{{ fused_dict | tojson(indent=2) }}</pre>
+  </details>
+</section>
+
+<div class="form-actions">
+  <a class="btn btn-primary" href="/analyze">New Analysis</a>
+  <a class="btn btn-ghost" href="/atlas?report={{ fused.report_id }}">Atlas graph →</a>
+  <a class="btn btn-ghost" href="/ledger">View stages in Audit Ledger →</a>
+</div>
+
+<script src="/static/atlas_graph.js"></script>
+<script>
+var FUSED_DATA = {{ fused_dict | tojson }};
+AtlasGraph.render(document.getElementById("atlas-svg"),
+                  FUSED_DATA.entities, FUSED_DATA.relationships,
+                  {campaigns: FUSED_DATA.campaigns,
+                   inspector: document.getElementById("atlas-inspector")});
+document.getElementById("atlas-legend").innerHTML = AtlasGraph.legendHTML();
+function FUSED_PRESENT(){
+  AtlasGraph.openPresentation(FUSED_DATA.entities, FUSED_DATA.relationships,
+    {title: "Evidence Relationship Graph — " + FUSED_DATA.report_id,
+     subtitle: "SwarmTracker Node · Keel-governed local analysis",
+     filename: "atlas-" + FUSED_DATA.report_id,
+     campaigns: FUSED_DATA.campaigns});
+}
+</script>
+
+{% endblock %}

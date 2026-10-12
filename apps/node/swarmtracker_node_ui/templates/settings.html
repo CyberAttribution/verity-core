@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Settings / About{% endblock %}
+{% block content %}
+
+<section class="panel">
+  <h2>About This Node</h2>
+  <p>This prototype runs entirely locally. No cloud calls are made.
+  Evidence is sent only to the local runtime on <code>127.0.0.1</code>.</p>
+  <div class="kv-grid">
+    <div class="kv"><span>Product</span><code>SwarmTracker Node UI v0.1</code></div>
+    <div class="kv"><span>Node</span><code>{{ cfg.node }}</code></div>
+    <div class="kv"><span>Hardware</span><code>{{ cfg.hardware }}</code></div>
+    <div class="kv"><span>Next hardware target</span><code>{{ cfg.hardware_next }}</code></div>
+    <div class="kv"><span>Model Runtime</span><code>{{ cfg.runtime }}</code></div>
+    <div class="kv"><span>Local Model</span><code>{{ cfg.model }}</code></div>
+    <div class="kv"><span>Runtime endpoint</span><code>{{ cfg.openclaw_url }}</code></div>
+    <div class="kv"><span>Ledger</span><code>{{ cfg.ledger_path }}</code></div>
+    <div class="kv"><span>Mode</span><code>{{ cfg.mode }}</code></div>
+    <div class="kv"><span>Cloud Escalation</span><code>{{ cfg.cloud }}</code></div>
+    <div class="kv"><span>Keel Policy</span><code>{{ cfg.policy }}</code></div>
+    <div class="kv"><span>Runtime status</span>
+      <code>{% if status.runtime_online %}online{% else %}offline{% endif %}
+      · schema {{ status.schema }}</code></div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Component Roles</h2>
+  <div class="kv-grid">
+    <div class="kv"><span>SwarmTracker Node</span>
+      <code>Local appliance — the product direction this UI demonstrates.</code></div>
+    <div class="kv"><span>Verity</span>
+      <code>Cloud analysis product; control/product surface. Not called by this node.</code></div>
+    <div class="kv"><span>Keel</span>
+      <code>Local policy / audit / control layer (working codename, concept stage).</code></div>
+    <div class="kv"><span>OpenClaw</span>
+      <code>Local agent/runtime under evaluation; executes governed inference.</code></div>
+  </div>
+</section>
+
+<section class="panel keel-trace">
+  <div class="panel-head">
+    <h2>Active Keel Policy</h2>
+    <span class="badge {{ 'badge-ok' if keel.ok else 'badge-bad' }}">
+      {{ 'policy lock active at Keel layer' if keel.ok else 'FAIL-CLOSED defaults in effect' }}</span>
+  </div>
+  <div class="kv-grid">
+    <div class="kv"><span>Policy profile</span><code>{{ keel.profile }}</code></div>
+    <div class="kv"><span>Policy source</span><code>{{ keel.source }}</code></div>
+    <div class="kv"><span>Policy version</span><code>{{ keel.version }}</code></div>
+    <div class="kv"><span>Unknown policies</span><code>{{ 'denied' if keel.deny_unknown else 'NOT denied' }}</code></div>
+    <div class="kv"><span>Cloud escalation</span><code>{{ 'disabled' if not keel.cloud_escalation_allowed else 'ENABLED' }}</code></div>
+    <div class="kv"><span>Network</span><code>{{ 'disabled' if not keel.network_allowed else 'ENABLED' }}</code></div>
+    <div class="kv"><span>Tools allowed</span><code>{{ keel.tools_allowed | join(', ') }}</code></div>
+    <div class="kv"><span>Tools denied</span><code>{{ keel.tools_denied | join(', ') }}</code></div>
+  </div>
+  <p class="hint" style="margin-top:8px">Node UI-side policy enforcement;
+  runtime-level enforcement pending. See
+  <a href="/governance">Governance</a> for the self-test and scorecard.</p>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Providers</h2>
+    <span class="badge badge-muted">model routing — future</span>
+  </div>
+  <table>
+    <thead><tr><th>Provider</th><th>Status</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td>Local / Ollama</td><td><span class="badge badge-ok">active</span></td><td class="mono">{{ cfg.model }} on 127.0.0.1</td></tr>
+      <tr><td>OpenAI</td><td><span class="badge badge-muted">not configured</span></td><td>cloud-assisted analysis (roadmap)</td></tr>
+      <tr><td>Claude / Anthropic</td><td><span class="badge badge-muted">not configured</span></td><td>cloud-assisted analysis (roadmap)</td></tr>
+      <tr><td>Gemini / Google</td><td><span class="badge badge-muted">not configured</span></td><td>cloud-assisted analysis (roadmap)</td></tr>
+      <tr><td>Vertex / Gemini</td><td><span class="badge badge-muted">not configured</span></td><td>cloud-assisted analysis (roadmap)</td></tr>
+    </tbody>
+  </table>
+  <p class="hint" style="margin-top:10px">Provider keys will allow
+  cloud-assisted or hybrid analysis in future versions, but API key presence
+  alone does not authorize cloud use. Keel policy must permit escalation.
+  No provider calls are implemented in this version.</p>
+</section>
+
+<section class="panel">
+  <h2>Product Profiles</h2>
+  <div class="kv-grid">
+    <div class="kv"><span>SMB</span>
+      <code>Vendor fraud, phishing, payment requests, and sensitive workflow risk.</code></div>
+    <div class="kv"><span>MSP</span>
+      <code>Client triage, ticket enrichment, and multi-client security workflows.</code></div>
+    <div class="kv"><span>Public Sector</span>
+      <code>Procurement, suspicious communications, incident artifacts, and audit-ready triage.</code></div>
+    <div class="kv"><span>Critical Infrastructure</span>
+      <code>OT/ICS alerts, vendor access, cyber-physical evidence, and operational risk.</code></div>
+    <div class="kv"><span>Legal / Regulated</span>
+      <code>Client communications, confidential documents, filing notices, and evidence sensitivity.</code></div>
+    <div class="kv"><span>Emerging Technology</span>
+      <code>Post-quantum claims, HNDL concerns, crypto migration, and vendor technology claims — text-based claim triage, honestly bounded.</code></div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Evidence Types / Supported Artifacts</h2>
+    <span class="badge badge-muted">all analyzed as text on this node</span>
+  </div>
+  <div class="kv-grid">
+    <div class="kv"><span>Communication</span>
+      <code>Email / message · Email headers · URL / domain · Email address · Freeform text</code></div>
+    <div class="kv"><span>Security Logs</span>
+      <code>Security alert summary · Authentication log · DNS log · Firewall / proxy log · Endpoint / EDR alert · Cloud / SaaS audit event</code></div>
+    <div class="kv"><span>Business Workflow</span>
+      <code>Vendor / payment request · File-share event · Ticket / incident note · Procurement / vendor request</code></div>
+    <div class="kv"><span>Advanced / Roadmap</span>
+      <code>OT / ICS alert summary · Media / evidence metadata</code></div>
+  </div>
+  <p class="hint" style="margin-top:8px">Evidence is submitted as untrusted
+  specimen text to the local model. No connectors, no live log sources, no
+  attachment or binary parsing in this version.</p>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Hardware Tier Roadmap</h2>
+    <span class="badge badge-muted">direction, not shipping claims</span>
+  </div>
+  <div class="kv-grid">
+    <div class="kv"><span>Entry — Node Mini</span>
+      <code>Mac mini / Tiiny-class local AI device. Manual intake, local
+      model, audit ledger, basic reports.</code></div>
+    <div class="kv"><span>Mid — Node Studio</span>
+      <code>Mac Studio-class appliance. Larger local models, org context
+      graph, selected connectors, policy routing.</code></div>
+    <div class="kv"><span>Advanced — Node GPU</span>
+      <code>Preloaded NVIDIA/local GPU appliance. Large models, evidence
+      graph, critical infrastructure, multimodal/cyber-physical
+      workflows.</code></div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Public Sector Product Line</h2>
+    <span class="badge badge-muted">three tiers — direction</span>
+  </div>
+  <div class="kv-grid">
+    <div class="kv"><span>Tier 1 — Public Sector Node</span>
+      <code>Local-first triage for suspicious communications, URLs, email
+      addresses, procurement/vendor requests, and incident artifacts.</code></div>
+    <div class="kv"><span>Tier 2 — Agency Context Graph</span>
+      <code>Adds people, roles, offices, approved vendors, domains, systems,
+      procurement workflows, and sensitive mission workflows.</code></div>
+    <div class="kv"><span>Tier 3 — Mission Evidence / Critical Infrastructure Ledger</span>
+      <code>Adds incident evidence chains, cyber-physical signals, media
+      authenticity, OT/ICS evidence, and cross-agency attribution
+      workflows.</code></div>
+  </div>
+  <p class="hint" style="margin-top:10px">Tier 1 is what this prototype
+  demonstrates. Tiers 2–3 are roadmap; no agency context graph or evidence
+  ledger is loaded. Designed to support audit-ready workflows; no compliance
+  or certification is claimed.</p>
+</section>
+
+<section class="panel panel-note">
+  <h2>Honest Limits (v0.1.1)</h2>
+  <p>Local model call: <strong>real</strong>. Audit ledger event:
+  <strong>real</strong>. Local-only mode: <strong>real</strong> (product
+  philosophy is local-first; no cloud escalation is implemented in v0.1.1).
+  Analysis modes other than Local Only: <strong>roadmap options only — no
+  cloud calls are made</strong>. Cloud providers: <strong>not
+  configured</strong>. Organization graph: <strong>future /
+  placeholder</strong>. Mailbox connectors (Gmail / Microsoft / Zoho):
+  <strong>not implemented</strong>. Tiiny hardware: <strong>future
+  target</strong>, not assumed. No compliance or certification is
+  claimed.</p>
+</section>
+
+{% endblock %}

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Investigations{% endblock %}
+{% block content %}
+
+{% if not store_ok %}
+<div class="alert alert-bad">Local persistence is unavailable: {{ store_error }}.
+Analysis still works, but investigations cannot be saved until this is
+resolved. The existing database was not modified.</div>
+{% endif %}
+
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Investigations</div>
+    <div class="card-value">{{ investigations | length }}</div>
+    <div class="card-sub">persistent · stored locally on this node</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Persistence</div>
+    <div class="card-value sm">SQLite (local)</div>
+    <div class="card-sub">survives restart · governed by Keel</div>
+  </div>
+</div>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>New investigation</h2>
+    <span class="badge badge-muted">evidence lives here, over time</span>
+  </div>
+  <form method="post" action="/investigations/new" class="form">
+    <div class="form-grid">
+      <div class="form-row">
+        <label for="name">Name</label>
+        <input name="name" id="name" required placeholder="e.g. Vendor fraud — Apex remittance">
+      </div>
+      <div class="form-row">
+        <label for="description">Description (optional)</label>
+        <input name="description" id="description" placeholder="Short context">
+      </div>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary" {{ 'disabled' if not store_ok }}>Create investigation</button>
+      <span class="hint">Or run a quick <a href="/analyze">Analysis</a> first and save it into an investigation afterward.</span>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Open investigations</h2>
+    <form method="post" action="/investigations/import" enctype="multipart/form-data" style="display:flex;gap:8px;align-items:center">
+      <input type="file" name="package" accept=".json,.stproj" style="width:auto">
+      <button type="submit" class="btn btn-ghost" {{ 'disabled' if not store_ok }}>Import package</button>
+    </form>
+  </div>
+  {% if investigations %}
+  <table>
+    <thead><tr><th>Name</th><th>Status</th><th>Events</th><th>Artifacts</th><th>Analyses</th><th>Updated</th></tr></thead>
+    <tbody>
+    {% for inv in investigations %}
+      <tr>
+        <td><a href="/investigations/{{ inv.id }}"><strong>{{ inv.name }}</strong></a>
+            {% if inv.description %}<div class="hint">{{ inv.description }}</div>{% endif %}</td>
+        <td><span class="badge {{ 'badge-ok' if inv.status in ('open','active') else ('badge-warn' if inv.status=='monitoring' else 'badge-muted') }}">{{ inv.status | upper }}</span></td>
+        <td>{{ inv.n_events }}</td>
+        <td>{{ inv.n_artifacts }}</td>
+        <td>{{ inv.n_analyses }}</td>
+        <td class="hint mono">{{ inv.updated | round(0) | int }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No investigations yet. Create one above, or run an
+  analysis and save it into a new investigation.</p>
+  {% endif %}
+</section>
+
+<section class="panel panel-note">
+  <p>An investigation is where evidence lives, grows, and connects over
+  time: events, artifacts, analyses, an Atlas graph, and a timeline — all
+  persisted locally and governed by Keel. Original evidence is never
+  modified; organization and analysis are non-destructive.</p>
+</section>
+
+{% endblock %}

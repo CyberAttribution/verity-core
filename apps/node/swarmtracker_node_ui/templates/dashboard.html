@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Node Dashboard{% endblock %}
+{% block content %}
+
+<div class="cards">
+  <div class="card">
+    <div class="card-label">SwarmTracker Node</div>
+    <div class="card-value">
+      {% if status.node_online %}<span class="dot dot-ok"></span> Online
+      {% else %}<span class="dot dot-bad"></span> Degraded{% endif %}
+    </div>
+    <div class="card-sub">{{ status.node_name }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Local Runtime</div>
+    <div class="card-value">
+      {% if status.runtime_online %}<span class="dot dot-ok"></span> Online
+      {% else %}<span class="dot dot-bad"></span> Offline{% endif %}
+    </div>
+    <div class="card-sub">{{ status.provider }} · schema {{ status.schema }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Local Model</div>
+    <div class="card-value">
+      {% if status.model_online %}<span class="dot dot-ok"></span> Online
+      {% else %}<span class="dot dot-warn"></span> Not detected{% endif %}
+    </div>
+    <div class="card-sub mono">{{ status.reported_model }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Ledger Events</div>
+    <div class="card-value">{{ ledger_count }}</div>
+    <div class="card-sub">Audit Ledger: {% if ledger_count > 0 %}Active{% else %}Empty{% endif %}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Mode</div>
+    <div class="card-value">{{ cfg.mode }}</div>
+    <div class="card-sub">Cloud Escalation: {{ cfg.cloud }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Keel Policy</div>
+    <div class="card-value mono sm">{{ cfg.policy }}</div>
+    <div class="card-sub">Policy / audit / control layer</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Hardware</div>
+    <div class="card-value sm">{{ cfg.hardware }}</div>
+    <div class="card-sub">Next target: {{ cfg.hardware_next }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Model Runtime</div>
+    <div class="card-value sm">{{ cfg.runtime }}</div>
+    <div class="card-sub">Endpoint: 127.0.0.1 only</div>
+  </div>
+</div>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Recent Analyses</h2>
+    <a class="btn btn-ghost" href="/ledger">Full ledger →</a>
+  </div>
+  {% if recent %}
+  <table>
+    <thead><tr><th>Time</th><th>Event ID</th><th>Event</th><th>Model</th>
+      <th>Decision</th><th>Latency</th><th>Alarm</th></tr></thead>
+    <tbody>
+    {% for e in recent %}
+      <tr>
+        <td>{{ e.time }}</td>
+        <td class="mono">{{ e.id }}</td>
+        <td>{{ e.event }}</td>
+        <td class="mono">{{ e.model }}</td>
+        <td><span class="badge {{ 'badge-ok' if e.decision in ('allow','allowed','ok') else 'badge-muted' }}">{{ e.decision }}</span></td>
+        <td>{{ e.latency_ms }}{% if e.latency_ms != '—' %} ms{% endif %}</td>
+        <td>{% if e.alarm %}<span class="badge badge-bad">ALARM</span>{% else %}<span class="badge badge-muted">none</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No ledger events yet. Run an analysis to create the first governed event.</p>
+  {% endif %}
+</section>
+
+<section class="panel panel-note">
+  <h2>Organization Context</h2>
+  <p><span class="badge badge-warn">Not connected yet</span>
+     No mailbox connectors or organization profile are loaded in v0.1.
+     Analyses are based on submitted evidence only.</p>
+</section>
+
+{% endblock %}

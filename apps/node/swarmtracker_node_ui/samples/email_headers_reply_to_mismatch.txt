@@ -1,0 +1,15 @@
+SYNTHETIC DEMO SAMPLE — not real customer data
+Received: from mail-out7.zeta-relay.example (203.0.113.44) by
+ mx.yourcompany.example with ESMTPS; Tue, 30 Jun 2026 14:02:31 +0000
+Received: from [198.51.100.23] (unknown [198.51.100.23])
+ by mail-out7.zeta-relay.example with ESMTPA id 9Qk3mV
+Authentication-Results: mx.yourcompany.example;
+ spf=softfail (sender IP is 203.0.113.44) smtp.mailfrom=brightpath-consulting.example;
+ dkim=none; dmarc=fail action=none header.from=brightpath-consulting.example
+From: "Margaret Ellis, CEO" <ceo@brightpath-consulting.example>
+Reply-To: m.ellis.private@quickinbox-mail.example
+Return-Path: <bounce-8823@zeta-relay.example>
+To: controller@yourcompany.example
+Subject: Quick task - are you at your desk?
+Message-ID: <20260630140228.A88F2@zeta-relay.example>
+Date: Tue, 30 Jun 2026 14:02:28 +0000

@@ -1,0 +1,476 @@
+{% extends "base.html" %}
+{% block title %}Media Evidence{% endblock %}
+{% block content %}
+
+{# Analysis Mode selector (v0.3.4): two mutually-exclusive cards replace
+   the old floating checkbox. Local Analysis is the default; selecting
+   Governed Multimodal Analysis IS the explicit per-job authorization
+   (no second checkbox). Native radios = full keyboard accessibility.
+   `sfx` makes ids unique per form. #}
+{% macro analysis_mode(sfx) %}
+<fieldset class="esc-row mode-select" data-state="local">
+  <legend class="mode-select-legend">Analysis Mode</legend>
+  <div class="mode-cards2">
+    <label class="mode-card2" id="mc-local-{{ sfx }}">
+      <input type="radio" name="escalate_multimodal" value=""
+             checked onchange="escMode(this)">
+      <span class="mode-card2-body">
+        <span class="mode-card2-title">Local Analysis
+          <span class="badge badge-ok">default</span></span>
+        <span class="mode-card2-desc">Runs entirely on this node.
+          Deterministic extraction + local model. No network egress;
+          nothing leaves this machine. Visual/audio frames are extracted
+          as evidence but not semantically examined by the text-only
+          local model.</span>
+      </span>
+    </label>
+    <label class="mode-card2 {{ 'mc-disabled' if not escalation_ready }}"
+           id="mc-hybrid-{{ sfx }}">
+      <input type="radio" name="escalate_multimodal" value="1"
+             onchange="escMode(this)"
+             {% if not escalation_ready %}disabled{% endif %}>
+      <span class="mode-card2-body">
+        <span class="mode-card2-title">Governed Multimodal Analysis
+          <span class="badge badge-warn">authorizes cloud</span></span>
+        <span class="mode-card2-desc">Selecting this <strong>is</strong>
+          your explicit per-job authorization. Only the extracted
+          artifacts (sampled frames · mono audio track · image) are sent
+          to <strong>{{ provider.name or 'the cloud provider' }}</strong>
+          ({{ provider.default_model_label or 'default model' }}) for
+          interpretation. Source file, Evidence Package, Canonical Case,
+          Atlas, audit trail, and fusion all stay
+          local.{% if not escalation_ready %}<br><strong>Unavailable:</strong>
+          {{ escalation_unready_note or escalation_reason }}{% endif %}</span>
+        {% if escalation_ready and provider.models %}
+        <span class="mode-card2-model">
+          <label>Model:
+          <select name="vertex_model" onclick="event.preventDefault()"
+                  onchange="event.stopPropagation()">
+            {% for mid, mlabel in provider.models %}
+            <option value="{{ mid }}">{{ mlabel }}</option>
+            {% endfor %}
+          </select></label>
+          <span class="hint">{{ provider.name }} ·
+            {{ provider.project or 'project?' }} ·
+            {{ provider.region }}</span>
+        </span>
+        {% endif %}
+      </span>
+    </label>
+  </div>
+  <div class="gov-ind esc-ind" data-state="local" style="margin-top:8px">
+    Mode: <strong class="status-green">Local Only</strong> ·
+    Cloud escalation: <strong>disabled</strong> ·
+    Cloud used: <strong>no</strong>
+  </div>
+</fieldset>
+{% endmacro %}
+<style>
+.mode-select{border:1px solid var(--panel-border,#2a3648);border-radius:8px;
+  padding:10px 12px 12px;margin:14px 0}
+.mode-select-legend{padding:0 6px;font-weight:700;font-size:13px;
+  letter-spacing:.3px}
+.mode-cards2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:640px){.mode-cards2{grid-template-columns:1fr}}
+.mode-card2{display:block;border:1.5px solid var(--panel-border,#2a3648);
+  border-radius:8px;padding:10px 12px;cursor:pointer;transition:
+  border-color .15s,background .15s}
+.mode-card2:hover{border-color:#4a5d78}
+.mode-card2 input{margin-right:8px}
+.mode-card2:has(input:checked){border-color:#e8b93e;
+  background:rgba(232,185,62,.07)}
+.mode-card2:has(input[value=""]:checked){border-color:#39c37f;
+  background:rgba(57,195,127,.07)}
+.mode-card2:focus-within{outline:2px solid #6aa0ff;outline-offset:2px}
+.mode-card2-title{display:block;font-weight:600;font-size:13.5px;
+  margin-bottom:3px}
+.mode-card2-desc{display:block;font-size:12px;opacity:.8;line-height:1.45}
+.mc-disabled{opacity:.5;cursor:not-allowed}
+</style>
+
+{% if form_error %}<div class="alert alert-bad">{{ form_error }}</div>{% endif %}
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Media Evidence — Deepfake Defender™</h2>
+    <span class="badge badge-muted">a Media Evidence workflow · governed by Keel</span>
+  </div>
+  <p class="hint">Media is analyzed as technical, contextual, narrative,
+  economic, social, and behavioral evidence — not reduced to "real" or
+  "fake". Upload a file and this node extracts evidence locally —
+  cryptographic hash, container/codec structure, embedded metadata,
+  representative frames, audio track — assembles a structured evidence
+  package, and produces a graded, bounded authenticity assessment saved
+  as a Canonical Case. Fully local: no cloud, no upload leaves this
+  machine, temporary media is deleted after analysis.</p>
+</section>
+
+{% if media_pipeline_available %}
+<form method="post" action="/media/upload" enctype="multipart/form-data"
+      class="form" id="upload-form" onsubmit="return startUploadRun()">
+<section class="panel">
+  <div class="panel-head">
+    <h2>Analyze a media file — on this node</h2>
+    <span class="badge badge-ok">local pipeline · evidence deleted after
+    analysis</span>
+  </div>
+  <div class="form-row">
+    <label>Media file (video · audio · image)</label>
+    <input type="file" name="media_file" id="media_file" required
+           accept="{{ accept_attr }}" onchange="showFileMeta()">
+    <div class="gov-ind" id="file-meta" style="margin-top:6px">
+      Accepted: {{ accepted_extensions | join(', ') }} — content-verified
+      on intake, never trusted by filename alone.
+    </div>
+  </div>
+  {{ analysis_mode('up') }}
+  <div class="form-grid">
+    <div class="form-row"><label>Save into investigation</label>
+      <select name="investigation_id">
+        <option value="">— run without saving —</option>
+        {% for inv in investigations %}
+        <option value="{{ inv.id }}">{{ inv.name }}</option>
+        {% endfor %}
+      </select></div>
+    <div class="form-row"><label>…or new investigation</label>
+      <input name="new_investigation" placeholder="e.g. Suspect clip — July"></div>
+  </div>
+  <div class="form-grid">
+    <div class="form-row"><label>Source account (optional)</label>
+      <input name="source_account" placeholder="@handle or channel"></div>
+    <div class="form-row"><label>Claimed date (optional)</label>
+      <input name="claimed_date" placeholder="2026-07-01"></div>
+    <div class="form-row"><label>Claimed place (optional)</label>
+      <input name="claimed_place" placeholder="City / venue"></div>
+  </div>
+  <div class="form-row"><label>Claimed context (optional)</label>
+    <input name="claimed_context"
+           placeholder="What the media claims to show"></div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary esc-btn" id="upload-btn"
+            data-local="Analyze Locally"
+            data-hybrid="Analyze with Governed Hybrid">
+      Analyze Locally</button>
+    <span class="hint">Local Only · Keel policy
+      <code>{{ cfg.policy }}</code> · hashes + evidence retained, media
+      deleted.</span>
+  </div>
+</section>
+</form>
+
+<div class="panel-pair">
+{% if retrieval_allowed %}
+<form method="post" action="/media/retrieve" class="form"
+      onsubmit="return startRun(true, this)">
+<section class="panel">
+  <div class="panel-head">
+    <h2>…or retrieve from a URL</h2>
+    <span class="badge badge-warn">governed egress · media retrieval
+      only</span>
+  </div>
+  <div class="form-row">
+    <label>YouTube video URL</label>
+    <input name="media_url" required
+           placeholder="https://www.youtube.com/watch?v=…">
+  </div>
+  {{ analysis_mode('yt') }}
+  <div class="form-grid">
+    <div class="form-row"><label>Save into investigation</label>
+      <select name="investigation_id">
+        <option value="">— run without saving —</option>
+        {% for inv in investigations %}
+        <option value="{{ inv.id }}">{{ inv.name }}</option>
+        {% endfor %}
+      </select></div>
+    <div class="form-row"><label>…or new investigation</label>
+      <input name="new_investigation" placeholder="New investigation name"></div>
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary esc-btn"
+            data-local="Retrieve &amp; Analyze Locally"
+            data-hybrid="Retrieve &amp; Analyze with Governed Hybrid">
+      Retrieve &amp; Analyze Locally</button>
+  </div>
+  <p class="hint">Keel scope: operator-initiated, single video, validated
+  &amp; canonicalized URL, bounded size/duration, yt-dlp only. The
+  retrieved file is analyzed by the same local pipeline and deleted.
+  Platform metadata is labeled <em>retrieval-generated</em> — never
+  implied to be the uploader's original.</p>
+</section>
+</form>
+{% else %}
+<section class="panel">
+  <div class="panel-head"><h2>Retrieve from a URL</h2>
+    <span class="badge badge-muted">disabled by Keel policy</span></div>
+  <p class="hint">{{ retrieval_reason }}</p>
+</section>
+{% endif %}
+
+<form method="post" action="/media/demo" class="form"
+      onsubmit="return startRun(false, this)">
+<section class="panel">
+  <div class="panel-head">
+    <h2>Guaranteed demonstration case</h2>
+    <span class="badge badge-muted">no external dependency</span>
+  </div>
+  <p class="hint">Synthesizes a labeled demonstration clip with ffmpeg on
+  this node, then runs the complete <strong>real</strong> pipeline on it:
+  hash, probe, EXIF, frames, audio, evidence package, graded assessment,
+  Canonical Case. Nothing downstream is mocked.</p>
+  {{ analysis_mode('demo') }}
+  <div class="form-grid">
+    <div class="form-row"><label>Save into investigation</label>
+      <select name="investigation_id">
+        <option value="">— run without saving —</option>
+        {% for inv in investigations %}
+        <option value="{{ inv.id }}">{{ inv.name }}</option>
+        {% endfor %}
+      </select></div>
+    <div class="form-row"><label>…or new investigation</label>
+      <input name="new_investigation" placeholder="New investigation name"></div>
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-ghost esc-btn"
+            data-local="Synthesize &amp; Run Demo Case"
+            data-hybrid="Synthesize &amp; Run Demo (Governed Hybrid)">
+      Synthesize &amp; Run Demo Case</button>
+  </div>
+</section>
+</form>
+</div>
+
+<div id="run-overlay" class="run-overlay" hidden>
+  <div class="run-card">
+    <h3 id="run-title">Analyzing on this node…</h3>
+    <ol class="run-stages">
+      <li id="rs-retrieving" hidden><span class="run-dot"></span>
+        Retrieving — governed egress · validated URL · bounded
+        download</li>
+      <li id="rs-received"><span class="run-dot"></span>Received —
+        verifying format &amp; hashing specimen</li>
+      <li id="rs-extracting"><span class="run-dot"></span>Extracting —
+        structure · metadata · frames · audio</li>
+      <li id="rs-selecting" hidden><span class="run-dot"></span>
+        Selecting bounded artifacts — frames · audio track only</li>
+      <li id="rs-escalating" hidden><span class="run-dot"></span>
+        Authorized Gemini interpretation — extracted artifacts only</li>
+      <li id="rs-analyzing"><span class="run-dot"></span>Analyzing —
+        <span class="rs-analyzing-label">governed local model
+        (Keel-locked)</span></li>
+      <li id="rs-fusing" hidden><span class="run-dot"></span>
+        Local fusion — reasoning stays on this node (Keel-locked)</li>
+      <li id="rs-complete"><span class="run-dot"></span>Complete —
+        graded assessment · Canonical Case</li>
+    </ol>
+    <p class="hint" id="ov-local">No network egress. Evidence never
+    leaves this machine.</p>
+    <p class="hint" id="ov-hybrid" hidden>Governed egress authorized.
+    Only extracted artifacts leave this node. Source media remains
+    local · Evidence Package remains local · Canonical Case remains
+    local · Atlas remains local · fusion remains local.</p>
+  </div>
+</div>
+<style>
+.run-overlay{position:fixed;inset:0;background:rgba(10,14,20,.82);
+  display:flex;align-items:center;justify-content:center;z-index:60}
+/* The hidden attribute's UA display:none loses to the author
+   display:flex above — restate it with attribute specificity so the
+   overlay is hidden by default and only shows after startRun(). */
+.run-overlay[hidden]{display:none !important}
+.run-card{background:var(--panel-bg,#131a24);border:1px solid
+  var(--panel-border,#2a3648);border-radius:10px;padding:28px 34px;
+  min-width:340px}
+.run-stages{list-style:none;margin:14px 0 6px;padding:0}
+.run-stages li{display:flex;align-items:center;gap:10px;padding:7px 0;
+  opacity:.35;transition:opacity .3s}
+.run-stages li.active,.run-stages li.done{opacity:1}
+.run-dot{width:10px;height:10px;border-radius:50%;background:#3b4a61;
+  flex:0 0 10px}
+.run-stages li.active .run-dot{background:#e8b93e;
+  animation:runpulse 1s infinite}
+.run-stages li.done .run-dot{background:#39c37f}
+@keyframes runpulse{50%{transform:scale(1.45);opacity:.65}}
+</style>
+{% else %}
+<section class="panel"><div class="alert alert-bad">Local media pipeline
+unavailable: this build's vendored core predates 0.5.0
+(<code>media_ingest</code> missing). The contextual bundle workflow below
+still works.</div></section>
+{% endif %}
+
+<form method="post" action="/media" class="form">
+<section class="panel">
+  <h2>Contextual bundle (no file) — transcript, metadata &amp; claims</h2>
+  <div class="form-row">
+    <label>Source / post URL (optional — not downloaded)</label>
+    <input name="media_url" id="media_url" placeholder="https://www.youtube.com/watch?v=… or direct .mp4"
+           oninput="classifyUrl()">
+    <div class="gov-ind" id="adapter-status" style="margin-top:6px">
+      Enter a URL to see how this source can be retrieved.
+    </div>
+  </div>
+  <div class="form-grid">
+    <div class="form-row"><label>Source account (optional)</label><input name="source_account" placeholder="@handle or channel"></div>
+    <div class="form-row"><label>Claimed date (optional)</label><input name="claimed_date" placeholder="2026-07-01"></div>
+    <div class="form-row"><label>Claimed place (optional)</label><input name="claimed_place" placeholder="City / venue"></div>
+  </div>
+  <div class="form-row"><label>Claimed context (optional)</label><input name="claimed_context" placeholder="What the media claims to show"></div>
+
+  <div class="form-row"><label>Transcript</label>
+    <textarea name="transcript" rows="5" placeholder="Paste the spoken transcript…"></textarea></div>
+  <div class="form-grid">
+    <div class="form-row"><label>Captions (optional)</label>
+      <textarea name="captions" rows="3" placeholder="On-screen captions / subtitles"></textarea></div>
+    <div class="form-row"><label>Metadata sidecar (optional)</label>
+      <textarea name="metadata" rows="3" placeholder="EXIF / codec / container metadata as text or JSON"></textarea></div>
+  </div>
+  <div class="form-grid">
+    <div class="form-row"><label>Comparison / reference material (optional)</label>
+      <textarea name="comparison" rows="3" placeholder="Known-authentic reference, prior version, etc."></textarea></div>
+    <div class="form-row"><label>Analyst notes (optional)</label>
+      <textarea name="analyst_notes" rows="3" placeholder="Your observations"></textarea></div>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary" onclick="this.disabled=true;this.form.submit()">Run Media Assessment</button>
+    <button type="button" class="btn btn-ghost" onclick="loadMediaDemo()">Load demonstration case</button>
+    <span class="hint">Local Only · governed by Keel policy <code>{{ cfg.policy }}</code>. No media is downloaded.</span>
+  </div>
+</section>
+</form>
+
+<section class="panel panel-note">
+  <p><strong>Evidence lifecycle.</strong> Uploaded media is processed in a
+  temporary working directory on this node and deleted after analysis —
+  success or failure. What is retained: cryptographic hashes, the
+  structured evidence package, observations, and the graded report. The
+  file itself never persists and never leaves this machine.</p>
+</section>
+
+<script>
+var NET_ALLOWED = {{ 'true' if network_allowed else 'false' }};
+function showFileMeta(){
+  var f = document.getElementById('media_file').files[0];
+  var el = document.getElementById('file-meta');
+  if (!f){ return; }
+  var mb = (f.size / (1024*1024)).toFixed(1);
+  el.innerHTML = '<strong class="status-green">' + f.name +
+    '</strong> · ' + mb + ' MB — will be hashed, examined, and deleted ' +
+    'on this node.';
+}
+// Pre-run indicator + button label reflect AUTHORIZATION intent only.
+// Before execution the escalated state is "pending" — the actual
+// "yes/failed" is decided server-side after the run (see the report
+// header). This function never triggers a cloud call; it only mirrors
+// the checkbox.
+// Analysis Mode selection (radio) drives status strip + button label.
+// Selecting Governed Multimodal Analysis (value "1") IS the per-job
+// authorization; nothing escalates implicitly.
+function escMode(radio){
+  var hybrid = (radio.value === '1');
+  var form = radio.closest('form');
+  var ind = form ? form.querySelector('.esc-ind') : null;
+  if (ind){
+    if (hybrid){
+      ind.setAttribute('data-state', 'hybrid');
+      ind.innerHTML = 'Mode: <strong class="status-yellow">Governed ' +
+        'Hybrid</strong> (this job) · Cloud escalation: <strong>' +
+        'authorized</strong> · Cloud used: <strong>pending</strong>';
+    } else {
+      ind.setAttribute('data-state', 'local');
+      ind.innerHTML = 'Mode: <strong class="status-green">Local Only' +
+        '</strong> · Cloud escalation: <strong>disabled</strong> · ' +
+        'Cloud used: <strong>no</strong>';
+    }
+  }
+  var btn = form ? form.querySelector('.esc-btn') : null;
+  if (btn){
+    btn.innerHTML = hybrid ? btn.getAttribute('data-hybrid')
+                           : btn.getAttribute('data-local');
+  }
+}
+function _formEscalated(form){
+  if (!form){ return false; }
+  var r = form.querySelector('input[name="escalate_multimodal"]:checked');
+  return !!(r && r.value === '1');
+}
+function startRun(withRetrieval, form){
+  var ov = document.getElementById('run-overlay');
+  ov.hidden = false;
+  var escalated = _formEscalated(form);
+  document.getElementById('rs-retrieving').hidden = !withRetrieval;
+  // overlay disclosure must match the actual data boundary of this job
+  document.getElementById('ov-local').hidden = escalated;
+  document.getElementById('ov-hybrid').hidden = !escalated;
+  document.getElementById('rs-selecting').hidden = !escalated;
+  document.getElementById('rs-escalating').hidden = !escalated;
+  document.getElementById('rs-fusing').hidden = !escalated;
+  var lbl = document.querySelector('#rs-analyzing .rs-analyzing-label');
+  if (lbl){
+    lbl.textContent = escalated
+      ? 'orchestration on the local model (Keel-locked)'
+      : 'governed local model (Keel-locked)';
+  }
+  // Synchronous single-user job: stage the indicator on realistic
+  // pacing while the POST runs; the report shows the authoritative
+  // per-stage log recorded by the pipeline itself.
+  var order = ['rs-received', 'rs-extracting', 'rs-analyzing'];
+  var delays = [200, 1400, 4500];
+  if (escalated){
+    order = ['rs-received', 'rs-extracting', 'rs-selecting',
+             'rs-escalating', 'rs-analyzing', 'rs-fusing'];
+    delays = [200, 1400, 2600, 3400, 6500, 8000];
+  }
+  if (withRetrieval){
+    order = ['rs-retrieving'].concat(order);
+    delays = [200].concat(delays.map(function(d){ return d + 8000; }));
+  }
+  order.forEach(function(id, i){
+    setTimeout(function(){
+      order.forEach(function(o, j){
+        var li = document.getElementById(o);
+        li.classList.toggle('active', j === i);
+        if (j < i){ li.classList.add('done'); }
+      });
+    }, delays[i]);
+  });
+  return true;
+}
+function startUploadRun(){
+  var f = document.getElementById('media_file').files[0];
+  if (!f){ return false; }
+  document.getElementById('upload-btn').disabled = true;
+  return startRun(false, document.getElementById('upload-form'));
+}
+function classifyUrl(){
+  var url = document.getElementById('media_url').value.trim();
+  var el = document.getElementById('adapter-status');
+  if (!url){ el.textContent = 'Enter a URL to see how this source can be retrieved.'; return; }
+  fetch('/api/media-classify?url=' + encodeURIComponent(url))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var cls = d.status === 'metadata_only' ? 'warn' :
+                (d.status === 'manual_import' ? 'warn' :
+                (d.status === 'blocked' || d.status === 'failed' ? 'bad' : 'ok'));
+      el.innerHTML = '<strong class="status-' + (cls==='ok'?'green':(cls==='warn'?'yellow':'red')) +
+        '">' + d.status_label + '</strong> · <strong>' + d.platform + '</strong> — ' + d.note;
+    })
+    .catch(function(){ el.textContent = 'Could not classify URL.'; });
+}
+function loadMediaDemo(){
+  fetch('/api/media-demo').then(function(r){ return r.json(); }).then(function(d){
+    document.getElementById('media_url').value = d.media_url || '';
+    document.querySelector('[name=source_account]').value = d.source_account || '';
+    document.querySelector('[name=claimed_date]').value = d.claimed_date || '';
+    document.querySelector('[name=claimed_place]').value = d.claimed_place || '';
+    document.querySelector('[name=claimed_context]').value = d.claimed_context || '';
+    document.querySelector('[name=transcript]').value = d.transcript || '';
+    document.querySelector('[name=captions]').value = d.captions || '';
+    document.querySelector('[name=metadata]').value = d.metadata || '';
+    document.querySelector('[name=comparison]').value = d.comparison || '';
+    document.querySelector('[name=analyst_notes]').value = d.analyst_notes || '';
+    classifyUrl();
+  });
+}
+</script>
+{% endblock %}

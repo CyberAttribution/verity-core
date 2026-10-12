@@ -1,0 +1,390 @@
+{% extends "base.html" %}
+{% import "_analysis_mode.html" as am with context %}
+{% block title %}Analyze Evidence{% endblock %}
+{% block content %}
+
+{% if form_error %}
+<div class="alert alert-bad">{{ form_error }}</div>
+{% endif %}
+
+{% if not status.runtime_online %}
+<div class="alert alert-warn">Local runtime appears offline. Analysis will fail
+until OpenClaw is running on 127.0.0.1:8090.</div>
+{% endif %}
+
+{% set pf = form_prefill or {} %}
+<form method="post" action="/analyze" class="form" onsubmit="lockForm(this)">
+<input type="hidden" name="profile_mode" id="profile_mode" value="{{ pf.get('profile_mode', 'smb') }}">
+<input type="hidden" name="analysis_mode" id="analysis_mode" value="{{ pf.get('analysis_mode', 'local_only') }}">
+<input type="hidden" name="evidence_type" id="evidence_type" value="{{ pf.get('evidence_type', 'email_message') }}">
+<input type="hidden" name="sample_source" id="sample_source" value="{{ pf.get('sample_source', '') }}">
+<input type="hidden" name="uploaded_filename" id="uploaded_filename" value="{{ pf.get('uploaded_filename', '') }}">
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Profile Mode</h2>
+    <span class="hint">how SwarmTracker Node adapts to the organization</span>
+  </div>
+  <div class="mode-cards" id="profile-cards">
+    {% for k, label in modes.profile_modes.items() %}
+    <button type="button" class="mode-card" data-key="{{ k }}" onclick="selectProfile('{{ k }}')">
+      <span class="mode-card-title">{{ label }}</span>
+      <span class="mode-card-desc">{{ modes.profile_descriptions[k] }}</span>
+    </button>
+    {% endfor %}
+  </div>
+  <div class="gov-ind" id="gov-ind-profile"></div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Analysis Mode</h2>
+    <span class="hint">execution path — governed by Keel policy</span>
+  </div>
+  <div class="mode-cards" id="mode-cards">
+    {% for k, label in modes.analysis_modes.items() %}
+    <button type="button" class="mode-card {{ 'mode-roadmap' if k not in modes.implemented_modes }}" data-key="{{ k }}" onclick="selectMode('{{ k }}')">
+      <span class="mode-card-title">{{ label }}
+        {% if k in modes.implemented_modes %}<span class="badge badge-ok">implemented</span>
+        {% else %}<span class="badge badge-muted">roadmap</span>{% endif %}</span>
+      <span class="mode-card-desc">{{ modes.analysis_mode_descriptions[k] }}</span>
+    </button>
+    {% endfor %}
+  </div>
+  <div class="alert alert-warn" id="mode-notice" style="display:none">{{ modes.mode_notice }}</div>
+  <div class="gov-ind" id="gov-ind-analysis"></div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Evidence</h2>
+    <span class="badge badge-muted">Evidence stays on this machine</span>
+  </div>
+
+  <div class="form-grid">
+    <div class="form-row">
+      <label>Load Sample Evidence <span class="hint">(synthetic demo artifacts)</span></label>
+      <div class="sample-row">
+        <select id="sample_select">
+          <option value="">— choose a synthetic sample —</option>
+          {% for s in samples %}
+          <option value="{{ s.key }}">{{ s.label }}</option>
+          {% endfor %}
+        </select>
+        <button type="button" class="btn" onclick="loadSample()">Load</button>
+      </div>
+      <div class="hint" id="sample-status"></div>
+    </div>
+    <div class="form-row">
+      <label>Upload Local Evidence File <span class="hint">(.txt .log .json .csv .eml · max 512 KB · local only, not persisted)</span></label>
+      <input type="file" id="evidence_file" accept=".txt,.log,.json,.csv,.eml" onchange="readLocalFile(this)">
+      <div class="hint" id="upload-status"></div>
+    </div>
+  </div>
+
+  <div class="form-row">
+    <label>Evidence Type</label>
+    {% for group, items in modes.evidence_type_groups %}
+    <div class="ev-group">
+      <span class="ev-group-name">{{ group }}</span>
+      <div class="ev-chips">
+        {% for k, label in items %}
+        <button type="button" class="ev-chip" data-key="{{ k }}" onclick="selectEvidenceType('{{ k }}')">{{ label }}</button>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="form-row">
+    <label for="event_category">Event Category <span class="hint">(changes with profile)</span></label>
+    <select name="event_category" id="event_category"></select>
+  </div>
+
+  <div class="form-row">
+    <label for="evidence">Evidence</label>
+    <textarea name="evidence" id="evidence" rows="10" required
+      placeholder="Paste evidence, load a synthetic sample, or upload a local text file…">{{ pf.get('evidence','') }}</textarea>
+  </div>
+
+  <fieldset class="form-optional">
+    <legend>Optional context (untrusted claims)</legend>
+    <div class="form-grid">
+      <div class="form-row">
+        <label for="claimed_sender">Claimed sender</label>
+        <input name="claimed_sender" id="claimed_sender" value="{{ pf.get('claimed_sender','') }}" placeholder="e.g. accounts@vendor.example">
+      </div>
+      <div class="form-row">
+        <label for="claimed_org">Claimed organization / vendor</label>
+        <input name="claimed_org" id="claimed_org" value="{{ pf.get('claimed_org','') }}" placeholder="e.g. Apex Supplies">
+      </div>
+      <div class="form-row">
+        <label for="requested_action">Requested action</label>
+        <input name="requested_action" id="requested_action" value="{{ pf.get('requested_action','') }}" placeholder="e.g. update bank details">
+      </div>
+    </div>
+  </fieldset>
+
+  {{ am.mode_cards('single', 'text') }}
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary ga-btn" id="run-btn"
+            data-local="Run Local Analysis"
+            data-hybrid="Run Governed Cloud-Assisted Analysis">Run Local Analysis</button>
+    <button type="button" class="btn" onclick="addToBatch()">Add to Fusion Batch</button>
+    <span class="hint">Runs on {{ cfg.hardware }} via the local runtime under
+      Keel policy <code>{{ cfg.policy }}</code>. Typical time: 10–60&nbsp;s per artifact.</span>
+  </div>
+</section>
+</form>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Multi-Artifact Case Builder</h2>
+    <span>
+      <button type="button" class="btn btn-ghost" onclick="loadDemoCase()">Load demo case (vendor fraud ×3)</button>
+      <span class="badge badge-muted">Verity Core · up to 6 artifacts → one fused assessment</span>
+    </span>
+  </div>
+  <p class="hint">Build a batch of related evidence (load samples or paste,
+  then "Add to Fusion Batch"). Verity correlates shared infrastructure,
+  surfaces corroboration and contradictions, clusters campaign indicators,
+  and produces bounded attribution hypotheses — all locally, one governed
+  ledger event per stage.</p>
+  <div id="batch-list" class="batch-list"></div>
+  <form method="post" action="/analyze/fused" id="fused-form"
+        onsubmit="return submitFused(this)">
+    <input type="hidden" name="artifacts_json" id="artifacts_json" value="[]">
+    <input type="hidden" name="profile_mode" id="fused_profile_mode" value="smb">
+    <input type="hidden" name="analysis_mode" id="fused_analysis_mode" value="local_only">
+    {{ am.mode_cards('fused', 'text') }}
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary ga-btn" id="fused-btn"
+              disabled data-local="Run Fused Analysis"
+              data-hybrid="Run Fused (Governed Cloud-Assisted)">Run Fused Analysis</button>
+      <span class="hint" id="batch-status">Batch is empty.</span>
+    </div>
+  </form>
+</section>
+{{ am.mode_cards_assets() }}
+
+<section class="panel panel-note">
+  <p>All analysis executes locally on this node
+  (<code>{{ cfg.model }}</code>). No cloud calls. Samples are
+  <strong>synthetic demo artifacts</strong>, not real customer data.
+  Uploaded files are read as text in your browser and are not persisted.
+  Organization profile: <strong>not loaded</strong>.</p>
+</section>
+
+<script>
+var EVENT_CATEGORIES = {{ modes.event_categories | tojson }};
+var SELECTED_CATEGORY = {{ (pf.get('event_category') or '') | tojson }};
+var IMPLEMENTED_MODES = {{ modes.implemented_modes | list | tojson }};
+var GOV_MODES = {{ gov_modes | tojson }};
+
+function setActive(containerId, key){
+  document.querySelectorAll('#' + containerId + ' .mode-card').forEach(function(c){
+    c.classList.toggle('active', c.dataset.key === key);
+  });
+}
+function govChip(ind){
+  if (!ind) return '';
+  return '<span class="dot dot-' + (ind.status === 'green' ? 'ok' : (ind.status === 'yellow' ? 'warn' : 'bad')) + '"></span>' +
+    '<strong class="status-' + ind.status + '">' + ind.status.toUpperCase() + '</strong>' +
+    ' <span class="gov-ind-conf">' + ind.confidence + '/100</span> — ' +
+    ind.reason + ' <a href="/governance">Governance details →</a>';
+}
+function govIndicators(){
+  var p = document.getElementById('profile_mode').value;
+  var a = document.getElementById('analysis_mode').value;
+  document.getElementById('gov-ind-profile').innerHTML = govChip(GOV_MODES.profiles[p]);
+  document.getElementById('gov-ind-analysis').innerHTML = govChip(GOV_MODES.analysis_modes[a]);
+}
+function syncCategories(){
+  var profile = document.getElementById('profile_mode').value;
+  var sel = document.getElementById('event_category');
+  var cats = EVENT_CATEGORIES[profile] || [];
+  var prev = sel.value || SELECTED_CATEGORY;
+  sel.innerHTML = '';
+  cats.forEach(function(c){
+    var o = document.createElement('option');
+    o.value = c[0]; o.textContent = c[1];
+    if (c[0] === prev) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+function selectProfile(key){
+  document.getElementById('profile_mode').value = key;
+  setActive('profile-cards', key);
+  syncCategories();
+  govIndicators();
+}
+function selectMode(key){
+  document.getElementById('analysis_mode').value = key;
+  setActive('mode-cards', key);
+  document.getElementById('mode-notice').style.display =
+    IMPLEMENTED_MODES.indexOf(key) === -1 ? 'block' : 'none';
+  govIndicators();
+}
+function selectEvidenceType(key){
+  document.getElementById('evidence_type').value = key;
+  document.querySelectorAll('.ev-chip').forEach(function(c){
+    c.classList.toggle('active', c.dataset.key === key);
+  });
+}
+function loadSample(){
+  var key = document.getElementById('sample_select').value;
+  var st = document.getElementById('sample-status');
+  if (!key){ st.textContent = 'Choose a sample first.'; return; }
+  st.textContent = 'Loading local sample…';
+  fetch('/api/samples/' + encodeURIComponent(key))
+    .then(function(r){ if (!r.ok) throw new Error('sample not found'); return r.json(); })
+    .then(function(d){
+      var m = d.meta;
+      selectProfile(m.profile_mode);
+      selectMode(m.analysis_mode || 'local_only');
+      selectEvidenceType(m.evidence_type);
+      syncCategories();
+      document.getElementById('event_category').value = m.event_category;
+      document.getElementById('evidence').value = d.text;
+      document.getElementById('claimed_sender').value = m.claimed_sender || '';
+      document.getElementById('claimed_org').value = m.claimed_org || '';
+      document.getElementById('requested_action').value = m.requested_action || '';
+      document.getElementById('sample_source').value = m.file;
+      document.getElementById('uploaded_filename').value = '';
+      st.textContent = 'Loaded synthetic sample: ' + m.file;
+    })
+    .catch(function(e){ st.textContent = 'Could not load sample: ' + e.message; });
+}
+var UPLOAD_EXTS = ['.txt', '.log', '.json', '.csv', '.eml'];
+function readLocalFile(input){
+  var st = document.getElementById('upload-status');
+  var f = input.files && input.files[0];
+  if (!f) return;
+  var name = f.name.toLowerCase();
+  var okExt = UPLOAD_EXTS.some(function(e){ return name.endsWith(e); });
+  if (!okExt){ st.textContent = 'Rejected: only ' + UPLOAD_EXTS.join(' ') + ' are accepted.'; input.value = ''; return; }
+  if (f.size > 512 * 1024){ st.textContent = 'Rejected: file exceeds 512 KB.'; input.value = ''; return; }
+  var reader = new FileReader();
+  reader.onerror = function(){ st.textContent = 'Could not read file locally.'; };
+  reader.onload = function(){
+    var text = String(reader.result || '');
+    if (text.indexOf('�') !== -1){
+      st.textContent = 'Warning: file contains non-text bytes; extracted readable text only.';
+    } else {
+      st.textContent = 'Extracted locally: ' + f.name + ' (' + f.size + ' bytes). Review below, then Run Local Analysis.';
+    }
+    document.getElementById('evidence').value = text;
+    document.getElementById('uploaded_filename').value = f.name;
+    document.getElementById('sample_source').value = '';
+  };
+  reader.readAsText(f);
+}
+function lockForm(f){
+  var b = document.getElementById('run-btn');
+  b.disabled = true; b.textContent = 'Analyzing locally…';
+}
+
+// ---- Multi-artifact fusion batch (v0.1.5 a2) ----
+var BATCH = [];
+var MAX_BATCH = 6;
+function addToBatch(){
+  var st = document.getElementById('batch-status');
+  var text = document.getElementById('evidence').value.trim();
+  if (!text){ st.textContent = 'Add evidence text first (paste, sample, or upload).'; return; }
+  if (BATCH.length >= MAX_BATCH){ st.textContent = 'Batch is full (' + MAX_BATCH + ' artifacts max in v0.1.5).'; return; }
+  var label = document.getElementById('uploaded_filename').value ||
+              document.getElementById('sample_source').value ||
+              text.slice(0, 40).replace(/\s+/g, ' ');
+  BATCH.push({
+    label: label,
+    evidence_type: document.getElementById('evidence_type').value,
+    event_category: document.getElementById('event_category').value,
+    text: text,
+    claimed_sender: document.getElementById('claimed_sender').value,
+    claimed_org: document.getElementById('claimed_org').value,
+    requested_action: document.getElementById('requested_action').value,
+    source: document.getElementById('sample_source').value ? 'sample' :
+            (document.getElementById('uploaded_filename').value ? 'upload' : 'manual')
+  });
+  // clear the intake area for the next artifact
+  document.getElementById('evidence').value = '';
+  document.getElementById('claimed_sender').value = '';
+  document.getElementById('claimed_org').value = '';
+  document.getElementById('requested_action').value = '';
+  document.getElementById('sample_source').value = '';
+  document.getElementById('uploaded_filename').value = '';
+  document.getElementById('sample-status').textContent = '';
+  document.getElementById('upload-status').textContent = '';
+  renderBatch();
+}
+function removeFromBatch(i){ BATCH.splice(i, 1); renderBatch(); }
+function renderBatch(){
+  var list = document.getElementById('batch-list');
+  var st = document.getElementById('batch-status');
+  var btn = document.getElementById('fused-btn');
+  list.innerHTML = '';
+  BATCH.forEach(function(a, i){
+    var row = document.createElement('div');
+    row.className = 'batch-item';
+    var span = document.createElement('span');
+    span.innerHTML = '<strong>' + (i + 1) + '.</strong> ';
+    span.appendChild(document.createTextNode(a.label + ' '));
+    var b1 = document.createElement('span');
+    b1.className = 'badge badge-muted'; b1.textContent = a.evidence_type;
+    span.appendChild(b1);
+    var meta = document.createElement('div');
+    meta.className = 'hint';
+    meta.textContent = (a.event_category || 'general') + ' · ' +
+      a.text.length + ' chars' + (a.source !== 'manual' ? ' · ' + a.source : '');
+    span.appendChild(meta);
+    row.appendChild(span);
+    var rm = document.createElement('button');
+    rm.type = 'button'; rm.className = 'btn btn-ghost'; rm.textContent = 'remove';
+    rm.onclick = function(){ removeFromBatch(i); };
+    row.appendChild(rm);
+    list.appendChild(row);
+  });
+  btn.disabled = BATCH.length === 0;
+  st.textContent = BATCH.length === 0 ? 'Batch is empty.' :
+    BATCH.length + '/' + MAX_BATCH + ' artifacts staged' +
+    (BATCH.length < 2 ? ' — add a second for cross-artifact correlation.' : '.');
+}
+function loadDemoCase(){
+  var st = document.getElementById('batch-status');
+  st.textContent = 'Loading demo case…';
+  fetch('/api/demo-case').then(function(r){
+    if (!r.ok) throw new Error('demo case unavailable');
+    return r.json();
+  }).then(function(d){
+    BATCH = d.artifacts.map(function(a){
+      return {label: a.label, evidence_type: a.evidence_type,
+              event_category: a.event_category, text: a.text,
+              claimed_sender: a.claimed_sender || '',
+              claimed_org: a.claimed_org || '',
+              requested_action: a.requested_action || '', source: 'sample'};
+    });
+    selectProfile(d.case.profile_mode || 'smb');
+    renderBatch();
+    st.textContent = BATCH.length + ' synthetic demo artifacts staged (' +
+      (d.case.label || 'demo case') + '). Run Fused Analysis.';
+  }).catch(function(e){ st.textContent = 'Demo case failed: ' + e.message; });
+}
+function submitFused(f){
+  if (BATCH.length === 0) return false;
+  document.getElementById('artifacts_json').value = JSON.stringify(BATCH);
+  document.getElementById('fused_profile_mode').value =
+    document.getElementById('profile_mode').value;
+  document.getElementById('fused_analysis_mode').value =
+    document.getElementById('analysis_mode').value;
+  var b = document.getElementById('fused-btn');
+  b.disabled = true;
+  b.textContent = 'Fusing ' + BATCH.length + ' artifacts locally… (' +
+    (BATCH.length + 1) + ' governed model calls)';
+  return true;
+}
+// init from hidden values (handles prefill after validation errors)
+selectProfile(document.getElementById('profile_mode').value || 'smb');
+selectMode(document.getElementById('analysis_mode').value || 'local_only');
+selectEvidenceType(document.getElementById('evidence_type').value || 'email_message');
+</script>
+{% endblock %}

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Audit Ledger{% endblock %}
+{% block content %}
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Local Audit Ledger</h2>
+    <span class="badge badge-muted mono sm">{{ cfg.ledger_path }}</span>
+  </div>
+
+  {% if not ledger_exists %}
+  <div class="alert alert-warn">Ledger file not found. It is created by the
+  local runtime on the first governed event.</div>
+  {% elif not events %}
+  <p class="empty">Ledger is empty. Run an analysis to create the first event.</p>
+  {% else %}
+  <p class="hint">{{ ledger_count }} total events · showing latest {{ events | length }} (newest first)</p>
+  <table>
+    <thead><tr>
+      <th>Time</th><th>Event ID</th><th>Event</th><th>Model</th><th>Policy</th>
+      <th>Decision</th><th>Provider</th><th>Node</th><th>Latency</th><th>Alarm</th>
+    </tr></thead>
+    <tbody>
+    {% for e in events %}
+      <tr class="{{ 'row-alarm' if e.alarm }}">
+        <td>{{ e.time }}</td>
+        <td class="mono">
+          <details class="ev">
+            <summary>{{ e.id }}</summary>
+            <pre class="raw">{{ e.raw }}</pre>
+          </details>
+        </td>
+        <td>{{ e.event }}</td>
+        <td class="mono">{{ e.model }}</td>
+        <td class="mono">{{ e.policy }}</td>
+        <td><span class="badge {{ 'badge-ok' if e.decision in ('allow','allowed','ok') else 'badge-muted' }}">{{ e.decision }}</span></td>
+        <td>{{ e.provider }}</td>
+        <td>{{ e.node }}</td>
+        <td>{{ e.latency_ms }}{% if e.latency_ms != '—' %} ms{% endif %}</td>
+        <td>{% if e.alarm %}
+          <span class="badge badge-bad" title="{{ e.failures | join(', ') }}">ALARM</span>
+          {% else %}<span class="badge badge-muted">none</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+{% endblock %}

@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Atlas — Operational Context Graph{% endblock %}
+{% block content %}
+
+{% if mode == 'investigation' %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>{{ inv.name }} — Investigation Atlas</h2>
+    <span class="badge badge-muted">how this investigation remembers and connects evidence</span>
+  </div>
+  <form method="get" action="/atlas" class="filterbar">
+    <input type="hidden" name="investigation" value="{{ inv.id }}">
+    <select name="event" onchange="this.form.submit()">
+      <option value="">All events</option>
+      {% for e in events %}<option value="{{ e.id }}" {{ 'selected' if filters.event==e.id }}>{{ e.name }}</option>{% endfor %}
+    </select>
+    <select name="evidence_type" onchange="this.form.submit()">
+      <option value="">All evidence types</option>
+      {% for t in evidence_types %}<option value="{{ t }}" {{ 'selected' if filters.evidence_type==t }}>{{ t }}</option>{% endfor %}
+    </select>
+    <select name="epistemic_status" onchange="this.form.submit()">
+      <option value="">All statuses</option>
+      {% for s in epistemic_statuses %}<option value="{{ s }}" {{ 'selected' if filters.epistemic_status==s }}>{{ s }}</option>{% endfor %}
+    </select>
+    <a class="btn btn-ghost" href="/atlas?investigation={{ inv.id }}">Reset</a>
+  </form>
+  <div class="atlas-legend" id="atlas-legend"></div>
+  <div class="hint" style="margin-bottom:8px">Edge style = epistemic status:
+  <span style="color:#8296ab">solid</span> deterministic ·
+  <span style="color:#7d8ba0">dashed</span> model-inferred ·
+  <span style="color:#37c0a3">heavy</span> analyst-confirmed.</div>
+  <svg id="atlas-svg" class="atlas-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+  <div class="gov-ind" id="atlas-inspector" style="margin-top:8px">Click a node to inspect.</div>
+  <div class="form-actions" style="margin-top:10px">
+    <button type="button" class="btn" onclick="AtlasGraph.openPresentation(ATLAS_DATA.entities, ATLAS_DATA.relationships, {title: 'Investigation Atlas — {{ inv.name }}', subtitle: 'SwarmTracker Node · aggregated across this investigation', filename: 'atlas-{{ inv.id }}'})">Presentation View</button>
+    <button type="button" class="btn btn-ghost" onclick="AtlasGraph.downloadSVG(document.getElementById('atlas-svg'), 'atlas-{{ inv.id }}.svg')">Download SVG</button>
+    <button type="button" class="btn btn-ghost" onclick="AtlasGraph.downloadPNG(document.getElementById('atlas-svg'), 'atlas-{{ inv.id }}.png', 3)">Download PNG (3x)</button>
+  </div>
+  <p class="hint">{{ selected_dict.entities | length }} entities ·
+  {{ selected_dict.relationships | length }} relationships across the
+  investigation. Provenance traces every edge to its supporting
+  artifacts.</p>
+</section>
+{% elif not selected %}
+<section class="panel">
+  <h2>Atlas</h2>
+  <p class="empty">No fused analyses in this session yet. Run a
+  <a href="/analyze">Multi-Artifact Fusion</a>, or open an
+  <a href="/investigations">Investigation</a> to see its full graph.</p>
+  <p class="hint">Atlas visualizes relationships among people, senders,
+  vendors, domains, IPs, emails, evidence artifacts, and campaign clusters
+  extracted by Verity Core. Reports are session-local in v0.1.5 —
+  persistent evidence storage is Origin's role (see preview below).</p>
+</section>
+{% else %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Evidence Graph — <code class="mono">{{ selected.report_id }}</code></h2>
+    <span class="badge {{ 'badge-bad' if selected.overall_risk == 'high' else ('badge-warn' if selected.overall_risk == 'medium' else 'badge-muted') }}">
+      overall {{ selected.overall_risk | upper }}</span>
+  </div>
+  <div class="atlas-legend" id="atlas-legend"></div>
+  <svg id="atlas-svg" class="atlas-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+  <div class="gov-ind" id="atlas-inspector" style="margin-top:8px">Click a node to inspect.</div>
+  <div class="form-actions" style="margin-top:10px">
+    <button type="button" class="btn" onclick="AtlasGraph.openPresentation(ATLAS_DATA.entities, ATLAS_DATA.relationships, {title: 'Evidence Relationship Graph — ' + ATLAS_DATA.report_id, subtitle: 'SwarmTracker Node · deterministic graph from {{ selected.artifact_analyses | length }} artifact(s)', filename: 'atlas-{{ selected.report_id }}', campaigns: ATLAS_DATA.campaigns})">Presentation View</button>
+    <button type="button" class="btn btn-ghost" onclick="AtlasGraph.downloadSVG(document.getElementById('atlas-svg'), 'atlas-{{ selected.report_id }}.svg')">Download SVG</button>
+    <button type="button" class="btn btn-ghost" onclick="AtlasGraph.downloadPNG(document.getElementById('atlas-svg'), 'atlas-{{ selected.report_id }}.png', 3)">Download PNG (3x)</button>
+  </div>
+  <p class="hint">{{ selected.entities | length }} entities ·
+  {{ selected.relationships | length }} relationships ·
+  {{ selected.campaigns | length }} campaign cluster(s) — extracted
+  deterministically from {{ selected.artifact_analyses | length }}
+  artifact(s), with provenance to each artifact. Hover nodes and edges for
+  detail. Graph structure is deterministic from the evidence; narrative
+  report fields vary with the local model.</p>
+</section>
+
+{% if selected.campaigns %}
+<section class="panel">
+  <h2>Campaign Clusters in this Graph</h2>
+  <table>
+    <thead><tr><th>Campaign ID</th><th>Artifacts</th><th>Shared Infrastructure</th><th>Confidence</th></tr></thead>
+    <tbody>
+    {% for c in selected.campaigns %}
+      <tr>
+        <td class="mono">{{ c.campaign_id }}</td>
+        <td class="mono">{{ c.artifact_ids | join(', ') }}</td>
+        <td class="mono">{{ c.shared_indicators | join(', ') }}</td>
+        <td>{{ c.confidence }}/100</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint">Within this submission only — longitudinal campaign
+  tracking requires the Origin evidence store.</p>
+</section>
+{% endif %}
+{% endif %}
+
+{% if reports %}
+<section class="panel">
+  <h2>Session Analyses</h2>
+  <table>
+    <thead><tr><th>Report</th><th>Risk</th><th>Artifacts</th><th>Campaigns</th><th></th></tr></thead>
+    <tbody>
+    {% for r in reports %}
+      <tr>
+        <td class="mono">{{ r.id }}</td>
+        <td>{{ r.risk | upper }}</td>
+        <td>{{ r.n }}</td>
+        <td>{{ r.campaigns }}</td>
+        <td><a href="/atlas?report={{ r.id }}">view graph →</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint">Session-local (cleared on restart). Persistent storage is
+  Origin's role.</p>
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Origin — System of Record</h2>
+    <span class="badge badge-muted">preview — future direction, not implemented</span>
+  </div>
+  <div class="kv-grid">
+    <div class="kv"><span>Evidence chains</span>
+      <code>Artifacts, analyses, and fused reports retained with hashes and chain of custody.</code></div>
+    <div class="kv"><span>Campaign persistence</span>
+      <code>Atlas campaign IDs (CAMP-…) become durable; new evidence joins existing clusters across time.</code></div>
+    <div class="kv"><span>Attribution relationships</span>
+      <code>Hypotheses, supporting/missing evidence, and human decisions recorded as reviewable records.</code></div>
+    <div class="kv"><span>Cyber-physical evidence</span>
+      <code>Media, IoT/OT signals, and telemetry alongside technical artifacts.</code></div>
+    <div class="kv"><span>Today</span>
+      <code>Nothing is persisted beyond the local audit ledger; this page is session-local by design.</code></div>
+  </div>
+</section>
+
+{% if selected %}
+<script src="/static/atlas_graph.js"></script>
+<script>
+var ATLAS_DATA = {{ selected_dict | tojson }};
+AtlasGraph.render(document.getElementById("atlas-svg"),
+                  ATLAS_DATA.entities, ATLAS_DATA.relationships,
+                  {campaigns: ATLAS_DATA.campaigns,
+                   inspector: document.getElementById("atlas-inspector")});
+document.getElementById("atlas-legend").innerHTML = AtlasGraph.legendHTML();
+</script>
+{% endif %}
+
+{% endblock %}

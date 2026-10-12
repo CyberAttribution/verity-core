@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}Analysis Report{% endblock %}
+{% block content %}
+
+<section class="panel report-head risk-{{ report.risk_level }}">
+  <div class="report-risk">
+    <div class="card-label">Risk Level</div>
+    <div class="risk-value">{{ report.risk_level | upper }}</div>
+  </div>
+  <div class="report-conf">
+    <div class="card-label">Confidence</div>
+    <div class="conf-value">{{ report.confidence }}<span>/100</span></div>
+    <div class="conf-bar"><div class="conf-fill" style="width: {{ report.confidence }}%"></div></div>
+  </div>
+  <div class="report-meta">
+    <div class="kv"><span>Profile</span><code>{{ meta.profile_mode }}</code></div>
+    <div class="kv"><span>Category</span><code>{{ meta.event_category }}</code></div>
+    <div class="kv"><span>Evidence Type</span><code>{{ meta.evidence_type }}</code></div>
+    <div class="kv"><span>Executed Mode</span><code>{{ meta.executed_mode }}</code></div>
+    <div class="kv"><span>Event ID</span><code>{{ meta.event_id }}</code></div>
+    <div class="kv"><span>Cloud Escalation</span><code>{{ meta.cloud_escalation or 'Disabled' }}</code></div>
+    <div class="kv"><span>Cloud Used</span><code>{{ meta.cloud_used or 'No' }}</code></div>
+  </div>
+</section>
+
+{% if router_meta and router_meta.escalated %}
+{% set esc_ok = router_meta.escalation_ok %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Governed cloud-assist{{ ' — used' if esc_ok else ' — failed' }}</h2>
+    <span class="badge {{ 'badge-warn' if esc_ok else 'badge-bad' }}">
+      {{ 'Vertex AI examined bounded excerpts' if esc_ok else
+         'authorized but provider failed — local findings preserved' }}</span>
+  </div>
+  <div class="kv-grid">
+    <div class="kv"><span>Provider</span><code>{{ (router_meta.escalation_provider or 'vertex') | title }} (ADC — no API key)</code></div>
+    <div class="kv"><span>Model used</span><code>{{ router_meta.model_used or '— (no successful call)' }}</code></div>
+    {% if router_meta.latency_ms %}<div class="kv"><span>Latency</span><code>{{ router_meta.latency_ms }} ms</code></div>{% endif %}
+    <div class="kv"><span>Bounded payload sent</span><code>{{ router_meta.sent_artifacts | length }} text excerpt(s)</code></div>
+  </div>
+  {% if esc_ok and cloud_assist and cloud_assist.text %}
+  <h3 class="card-label" style="margin-top:12px">Cloud-assisted findings (labeled supplement — local analysis above is authoritative)</h3>
+  <p class="verdict" style="white-space:pre-wrap;font-size:13px">{{ cloud_assist.text }}</p>
+  {% elif not esc_ok %}
+  <div class="alert alert-bad" style="margin-top:10px">Vertex did <strong>not</strong> examine the evidence (provider error{% if router_meta.provider_status %} HTTP {{ router_meta.provider_status }}{% endif %}). Local findings stand unchanged.</div>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if report_token %}
+<section class="panel">
+  <div class="panel-head"><h2>Findings export</h2></div>
+  <div class="form-actions">
+    <a class="btn btn-ghost" href="/report/{{ report_token }}/json" download>Export JSON</a>
+    <a class="btn btn-ghost" href="/report/{{ report_token }}/report" download>Export Report</a>
+    <a class="btn btn-ghost" href="/report/{{ report_token }}/atlas" download>Export to Atlas</a>
+    <a class="btn btn-ghost" href="/report/{{ report_token }}/briefing.html" target="_blank">Generate Briefing</a>
+  </div>
+  <p class="hint" style="margin-top:6px">Consistent with Fused Investigation exports. STIX is offered on multi-artifact investigations where observables map to cyber-threat objects.</p>
+</section>
+{% endif %}
+
+{% if not meta.analysis_mode_executed %}
+<div class="alert alert-warn">Roadmap analysis mode selected
+({{ meta.analysis_mode }}). This version executed <strong>Local Only</strong>;
+no cloud calls were made.</div>
+{% endif %}
+
+{% if meta.sample_source or meta.uploaded_filename %}
+<div class="alert" style="background:var(--panel);border:1px solid var(--line)">
+  {% if meta.sample_source %}Evidence source: synthetic demo sample
+  <code class="mono">{{ meta.sample_source }}</code> — not real customer data.
+  {% else %}Evidence source: local uploaded file
+  <code class="mono">{{ meta.uploaded_filename }}</code> (read as text on this
+  machine; not persisted).{% endif %}
+</div>
+{% endif %}
+
+{% if meta.governance_alarm %}
+<div class="alert alert-bad">Governance alarm raised on this event:
+  {{ meta.governance_failures | join(', ') }}</div>
+{% endif %}
+
+<section class="panel keel-trace">
+  <div class="panel-head">
+    <h2>Keel Trace</h2>
+    <span class="badge badge-ok">policy / audit / control</span>
+  </div>
+  <div class="trace-grid">
+    <div class="kv"><span>Profile Mode</span><code>{{ meta.profile_mode }}</code></div>
+    <div class="kv"><span>Analysis Mode</span><code>{{ meta.analysis_mode }}{% if not meta.analysis_mode_executed %} <em class="trace-note">(roadmap — executed Local Only)</em>{% endif %}</code></div>
+    <div class="kv"><span>Executed Mode</span><code>{{ meta.executed_mode }}</code></div>
+    <div class="kv"><span>Event Category</span><code>{{ meta.event_category }}</code></div>
+    <div class="kv"><span>Evidence Type</span><code>{{ meta.evidence_type }}</code></div>
+    {% if meta.sample_source %}<div class="kv"><span>Sample Source</span><code>{{ meta.sample_source }} (synthetic)</code></div>{% endif %}
+    {% if meta.uploaded_filename %}<div class="kv"><span>Uploaded File</span><code>{{ meta.uploaded_filename }} (local, not persisted)</code></div>{% endif %}
+    <div class="kv"><span>Keel Policy</span><code>{{ meta.policy }} <em class="trace-note">(locked)</em></code></div>
+    <div class="kv"><span>Policy Source</span><code>{{ meta.policy_source }}</code></div>
+    <div class="kv"><span>Policy Version</span><code>{{ meta.policy_version }}</code></div>
+    <div class="kv"><span>Data Boundary</span><code>{{ meta.data_boundary }}</code></div>
+    <div class="kv"><span>Cloud Used</span><code>No</code></div>
+    <div class="kv"><span>Runtime</span><code>local</code></div>
+    <div class="kv"><span>Model</span><code>{{ meta.model }}</code></div>
+    <div class="kv"><span>Provider</span><code>{{ meta.provider }}</code></div>
+    <div class="kv"><span>Node</span><code>{{ meta.node }}</code></div>
+    <div class="kv"><span>Event ID</span><code>{{ meta.event_id }}</code></div>
+    <div class="kv"><span>Decision</span><code>{{ meta.decision }}</code></div>
+    <div class="kv"><span>Governance Alarm</span><code>{% if meta.governance_alarm %}RAISED — {{ meta.governance_failures | join(', ') }}{% else %}none{% endif %}</code></div>
+    <div class="kv"><span>Tools Allowed</span><code>{{ meta.tools_allowed | join(', ') }}</code></div>
+    <div class="kv"><span>Tools Denied</span><code>{{ meta.tools_denied | join(', ') }}</code></div>
+    <div class="kv"><span>Evidence Role</span><code>{{ meta.evidence_role }}</code></div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Verdict</h2>
+  <p class="verdict">{{ report.verdict }}</p>
+</section>
+
+{% if report.mode_panel %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>{{ report.mode_panel }}</h2>
+    <span class="badge badge-muted">from evidence only — no org/OT context loaded</span>
+  </div>
+  <div class="kv-grid">
+    {% for label, value in report.mode_fields %}
+    <div class="kv"><span>{{ label }}</span><code>{{ value }}</code></div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if report.log_panel %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>{{ report.log_panel }}</h2>
+    <span class="badge badge-muted">log excerpt only — no live log sources connected</span>
+  </div>
+  <div class="kv-grid">
+    {% for label, value in report.log_fields %}
+    <div class="kv"><span>{{ label }}</span><code>{{ value }}</code></div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Signals / Evidence</h2>
+  {% if report.signals %}
+  <ul class="siglist">
+    {% for s in report.signals %}<li>{{ s }}</li>{% endfor %}
+  </ul>
+  {% else %}<p class="empty">No discrete signals extracted.</p>{% endif %}
+</section>
+
+<section class="panel">
+  <h2>Recommended Action</h2>
+  <p>{{ report.recommended_action }}</p>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Organization Context</h2>
+    <span class="badge badge-warn">Org profile: not loaded</span>
+  </div>
+  {% if report.org_questions %}
+  <p class="hint">Questions an organization profile would answer:</p>
+  <ul class="siglist">
+    {% for q in report.org_questions %}<li>{{ q }}</li>{% endfor %}
+  </ul>
+  {% else %}<p class="empty">The model listed no org-context questions.</p>{% endif %}
+</section>
+
+<section class="panel">
+  <details>
+    <summary>Raw model response</summary>
+    <pre class="raw">{{ meta.raw_response }}</pre>
+  </details>
+</section>
+
+<div class="form-actions">
+  <a class="btn btn-primary" href="/analyze">New Analysis</a>
+  <a class="btn btn-ghost" href="/ledger">View in Audit Ledger →</a>
+</div>
+
+{% endblock %}

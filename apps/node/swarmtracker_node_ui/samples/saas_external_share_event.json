@@ -1,0 +1,14 @@
+{
+  "_note": "SYNTHETIC DEMO SAMPLE — not real customer data",
+  "event_type": "file.share.external",
+  "timestamp": "2026-06-30T15:47:03Z",
+  "actor": "paralegal2@firm.example",
+  "file": "Matter_2214_Settlement_Draft_v3.docx",
+  "folder": "/Matters/2214-Hollis/Drafts/",
+  "shared_with": "hollis.review@personal-mail.example",
+  "link_type": "anyone_with_link",
+  "permissions": "edit",
+  "device": "unmanaged (new device fingerprint)",
+  "ip": "198.51.100.201",
+  "prior_external_shares_by_actor_30d": 0
+}

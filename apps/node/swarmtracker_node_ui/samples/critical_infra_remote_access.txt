@@ -1,0 +1,18 @@
+SYNTHETIC DEMO SAMPLE — not real customer data
+
+Ticket note — Water Treatment Plant #2, evening shift
+
+Received call + follow-up email from "Turbine Controls Inc. support"
+(support@turbinecontrols-vendor.example) stating they detected a firmware
+fault on the SCADA HMI workstation and need remote access tonight to
+prevent a pump failure.
+
+Request details:
+- Asked operator to install TeamViewer on the HMI workstation (currently
+  air-gapped from internet per policy)
+- Referenced a real PO number from 2024 (PO-24-0091)
+- Said the regular contact "Mike" is on vacation and they are covering
+- Callback number differs from the vendor number on file
+- Emphasized "if pumps trip overnight it's on your shift"
+
+Operator did not grant access; escalating for review.

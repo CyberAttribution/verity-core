@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SwarmTracker Node</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">▲</div>
+      <div>
+        <div class="brand-name">SwarmTracker <span>Node</span></div>
+        <div class="brand-sub">Governed Investigation Appliance · v0.2.0</div>
+      </div>
+    </div>
+    <a href="/" class="navlink {{ 'active' if page == 'dashboard' }}">Dashboard</a>
+    <a href="/investigations" class="navlink {{ 'active' if page == 'investigations' }}">Investigations</a>
+    <a href="/analyze" class="navlink {{ 'active' if page in ('analyze','report') }}">Analyze</a>
+    <a href="/media" class="navlink {{ 'active' if page == 'media' }}">Media Evidence</a>
+    <a href="/atlas" class="navlink {{ 'active' if page == 'atlas' }}">Atlas</a>
+    <a href="/governance" class="navlink {{ 'active' if page == 'governance' }}">Governance</a>
+    <a href="/ledger" class="navlink {{ 'active' if page == 'ledger' }}">Audit Ledger</a>
+    <a href="/settings" class="navlink {{ 'active' if page == 'settings' }}">Settings</a>
+    <div class="sidebar-foot">
+      <div class="kv"><span>Node</span><code>{{ cfg.node }}</code></div>
+      <div class="kv"><span>Keel Policy</span><code>{{ cfg.policy }}</code></div>
+    </div>
+  </nav>
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-left">{% block title %}{% endblock %}</div>
+      <div class="topbar-right">
+        <span class="pill pill-ok">Mode: {{ cfg.mode }}</span>
+        <span class="pill pill-muted">Cloud Escalation: {{ cfg.cloud }}</span>
+        <span class="pill pill-muted mono">{{ cfg.model }}</span>
+      </div>
+    </header>
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+    <footer class="foot">Local-first · evidence never leaves this machine ·
+      OpenClaw runtime under evaluation · Keel policy layer (concept)</footer>
+  </div>
+</div>
+</body>
+</html>

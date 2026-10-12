@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Timeline — {{ inv.name }}{% endblock %}
+{% block content %}
+
+<div class="panel-head">
+  <h2>{{ inv.name }} — Timeline</h2>
+  <a class="btn btn-ghost" href="/investigations/{{ inv.id }}">← Investigation</a>
+</div>
+
+<section class="panel">
+  <p class="hint">An analytical sequence, not a claim that every timestamp
+  is verified. Each entry marks whether its time is
+  <strong>claimed</strong>, <strong>observed</strong>,
+  <strong>inferred</strong>, <strong>unknown</strong>, or
+  <strong>disputed</strong>.</p>
+  {% if timeline %}
+  <div class="tl">
+    {% for t in timeline %}
+    <div class="tl-row">
+      <div class="tl-time mono">
+        {{ t.t_claimed or (t.t_observed) or '—' }}
+        <span class="badge {{ 'badge-ok' if t.time_status=='observed' else ('badge-warn' if t.time_status in ('inferred','disputed') else 'badge-muted') }}">{{ t.time_status }}</span>
+      </div>
+      <div class="tl-dot"></div>
+      <div class="tl-body">
+        <strong>{{ t.label }}</strong>
+        {% if t.event_id %}<span class="hint">event</span>
+        {% elif t.analysis_id %}<span class="hint">analysis</span>
+        {% elif t.artifact_id %}<span class="hint">artifact</span>
+        {% else %}<span class="hint">marker</span>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}<p class="empty">No timeline entries yet. Events and saved
+  analyses appear here automatically; add markers below.</p>{% endif %}
+</section>
+
+<section class="panel">
+  <h2>Add analyst marker</h2>
+  <form method="post" action="/investigations/{{ inv.id }}/markers/new" class="form">
+    <div class="form-grid">
+      <div class="form-row"><label>Label</label><input name="label" required placeholder="e.g. Vendor called AP claiming urgency"></div>
+      <div class="form-row"><label>Claimed time (optional)</label><input name="t_claimed" placeholder="2026-07-02"></div>
+      <div class="form-row"><label>Time status</label>
+        <select name="time_status">
+          <option value="claimed">claimed</option>
+          <option value="observed">observed</option>
+          <option value="inferred">inferred</option>
+          <option value="unknown">unknown</option>
+          <option value="disputed">disputed</option>
+        </select>
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary">Add marker</button>
+  </form>
+</section>
+
+<style>
+.tl { display:flex; flex-direction:column; }
+.tl-row { display:grid; grid-template-columns: 200px 24px 1fr; align-items:start; gap:6px; }
+.tl-time { font-size:12px; color:var(--muted); padding-top:2px; text-align:right; }
+.tl-dot { width:12px; height:12px; border-radius:50%; background:var(--accent);
+  margin:4px auto 0; position:relative; }
+.tl-row:not(:last-child) .tl-dot::after { content:""; position:absolute;
+  left:50%; top:12px; width:2px; height:calc(100% + 14px);
+  background:var(--cline); transform:translateX(-50%); }
+.tl-body { padding:0 0 18px 6px; }
+</style>
+{% endblock %}

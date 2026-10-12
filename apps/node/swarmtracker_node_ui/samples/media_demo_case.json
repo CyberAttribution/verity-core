@@ -1,0 +1,13 @@
+{
+  "_note": "SYNTHETIC DEMO — not real media, not a real person. Illustrates the Media Evidence workflow offline. All URLs use reserved example domains; no retrieval occurs.",
+  "media_url": "https://www.youtube.com/watch?v=SYNTHETIC_DEMO_ID",
+  "source_account": "@apex-updates (unverified)",
+  "claimed_date": "2026-07-05",
+  "claimed_place": "Corporate briefing room (claimed)",
+  "claimed_context": "Clip claims to show a company executive announcing an urgent crypto giveaway and a bank-detail change for vendors.",
+  "transcript": "SYNTHETIC DEMO TRANSCRIPT — not a real person.\n\"Hello everyone. Due to an urgent treasury migration, all vendor payments must be redirected today. To celebrate, the first 500 partners who send funds to the address on screen will receive double back within the hour. This is time-sensitive. Do not contact the old finance line — it is being decommissioned.\"",
+  "captions": "URGENT: vendor payment redirect | Double-back promotion | Send to on-screen address | Offer ends today",
+  "metadata": "container: mp4 (ISO Base Media)\nencoder: Lavf61.7.100 (desktop ffmpeg)\ndevice_make_model: absent\ngps: absent\nclaimed_capture_time: 2026-07-05T09:12:00-04:00\ncontainer_write_time: 2026-07-06T22:47:18Z\nnote: container written ~37h after claimed capture; no device tags",
+  "comparison": "Known-authentic executive briefings from this org are published on the corporate domain with C2PA manifests; this clip has no manifest and was reposted from an unverified account.",
+  "analyst_notes": "Reported by AP clerk who received the link via DM. The bank-redirect + giveaway pattern matches financially motivated impersonation. Requesting original-source verification."
+}

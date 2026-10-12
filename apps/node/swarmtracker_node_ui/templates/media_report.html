@@ -1,0 +1,544 @@
+{% extends "base.html" %}
+{% block title %}Media Evidence Assessment{% endblock %}
+{% block content %}
+
+{% if fused %}
+<section class="panel report-head risk-{{ fused.overall_risk }}">
+  <div class="report-risk">
+    <div class="card-label">Assessed Risk</div>
+    <div class="risk-value">{{ fused.overall_risk | upper }}</div>
+  </div>
+  <div class="report-conf">
+    <div class="card-label">Confidence</div>
+    <div class="conf-value">{{ fused.overall_confidence }}<span>/100</span></div>
+    <div class="conf-bar"><div class="conf-fill" style="width: {{ fused.overall_confidence }}%"></div></div>
+  </div>
+  <div class="report-meta">
+    <div class="kv"><span>Workflow</span><code>Media Evidence (Deepfake Defender)</code></div>
+    <div class="kv"><span>Report</span><code>{{ fused.report_id }}</code></div>
+    <div class="kv"><span>Executed Mode</span><code>{{ meta.executed_mode }}</code></div>
+    <div class="kv"><span>Cloud Escalation</span><code>{{ meta.cloud_escalation or 'Disabled' }}</code></div>
+    <div class="kv"><span>Cloud Used</span><code>{{ meta.cloud_used or 'No' }}</code></div>
+  </div>
+</section>
+{% else %}
+<section class="panel report-head risk-unknown">
+  <div class="report-risk">
+    <div class="card-label">Media Analysis</div>
+    <div class="risk-value">NOT COMPLETED</div>
+  </div>
+  <div class="report-meta">
+    <div class="kv"><span>Workflow</span><code>Media Evidence (Deepfake Defender)</code></div>
+    <div class="kv"><span>Executed Mode</span><code>{{ meta.executed_mode }}</code></div>
+    <div class="kv"><span>Cloud Escalation</span><code>{{ meta.cloud_escalation or 'Disabled' }}</code></div>
+    <div class="kv"><span>Cloud Used</span><code>{{ meta.cloud_used or 'No' }}</code></div>
+  </div>
+</section>
+{% endif %}
+
+<div class="alert alert-warn">Media authenticity is expressed as bounded,
+evidence-based findings — never a bare "real"/"fake" verdict, and never
+named-person attribution without strong evidence. Signal-level review is
+reported honestly per runtime capability below.</div>
+
+{% if media_job %}
+{% set concl = assessment.assessment_conclusion if assessment else 'insufficient_media_evidence' %}
+{% set concl_cls = 'ok' if concl == 'no_material_indicators_observed'
+   else ('bad' if concl == 'likely_manipulated'
+   else ('warn' if concl in ('suspicious', 'technical_review_recommended')
+   else 'muted')) %}
+
+{% if job_error %}
+<div class="alert alert-bad"><strong>Pipeline result:</strong>
+{{ job_error }}
+{% if retrieval_category %}<br><span class="hint">failure category:
+<code>{{ retrieval_category }}</code></span>{% endif %}
+{% if confidence_effect %}<br><span class="hint">confidence effect:
+{{ confidence_effect }}</span>{% endif %}</div>
+{% endif %}
+
+{% if media_job.retrieval_metadata %}
+<section class="panel">
+  <div class="panel-head"><h2>Retrieved source (platform metadata)</h2>
+    <span class="badge badge-warn">retrieval-generated — not the
+      uploader's original metadata</span></div>
+  <div class="kv-grid">
+    <div class="kv"><span>Title</span>
+      <code>{{ media_job.retrieval_metadata.title or '—' }}</code></div>
+    <div class="kv"><span>Uploader</span>
+      <code>{{ media_job.retrieval_metadata.uploader or '—' }}</code></div>
+    <div class="kv"><span>Upload date</span>
+      <code>{{ media_job.retrieval_metadata.upload_date or '—' }}</code></div>
+    <div class="kv"><span>Duration</span>
+      <code>{{ media_job.retrieval_metadata.duration_s or '?' }} s</code></div>
+    <div class="kv"><span>Views</span>
+      <code>{{ media_job.retrieval_metadata.view_count if
+        media_job.retrieval_metadata.view_count is not none else '—' }}</code></div>
+    <div class="kv"><span>Video id</span>
+      <code>{{ media_job.retrieval_metadata.video_id or '—' }}</code></div>
+  </div>
+  <p class="hint" style="margin-top:8px">Retrieved through Keel governed
+  egress: operator-initiated, canonical URL only, bounded size and
+  duration. A retrieved file is a platform re-encode — original-file
+  corroboration remains recommended.</p>
+</section>
+{% endif %}
+
+{% if multimodal_unavailable %}
+<div class="alert alert-bad"><strong>Multimodal interpretation
+unavailable.</strong> Cloud multimodal analysis was authorized, but the
+provider call failed{% if provider_status %} (HTTP
+{{ provider_status }}){% endif %}. The extracted artifacts were hashed
+and preserved as local evidence but were <strong>not examined</strong> by
+any model, so <strong>no authenticity conclusion is drawn</strong>. Local
+metadata and provenance findings are retained below.
+{% if attempted_models %}<br><span class="hint">Models attempted:
+<code>{{ attempted_models | join(', ') }}</code></span>{% endif %}
+{% if provider_error %}<br><span class="hint">Provider error (sanitized):
+<code>{{ provider_error }}</code></span>{% endif %}</div>
+{% endif %}
+
+{% if assessment %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Graded Authenticity Assessment</h2>
+    <span class="badge badge-muted">six-value graded conclusion ·
+      bounded language</span>
+  </div>
+  <div class="graded-head">
+    <span class="graded-badge graded-{{ concl_cls }}">
+      {{ concl.replace('_', ' ') | upper }}</span>
+    {% if saved.case_id %}
+    <span class="kv"><span>Canonical Case</span>
+      <code>{{ saved.case_id }}</code></span>
+    {% endif %}
+    {% if assessment.fallback %}
+    <span class="badge badge-warn">deterministic fallback — model
+      analysis unavailable</span>
+    {% endif %}
+  </div>
+  <p class="verdict">{{ assessment.conclusion_rationale }}</p>
+  {% if assessment.confidence_by_domain %}
+  <h3 class="card-label" style="margin-top:14px">Confidence by evidence
+    domain</h3>
+  <div class="domain-grid">
+    {% for dom, dv in assessment.confidence_by_domain.items() %}
+    <div class="domain-row">
+      <span class="domain-name">{{ dom }}</span>
+      <div class="conf-bar"><div class="conf-fill"
+        style="width: {{ dv.confidence if dv.confidence is not none else 0 }}%"></div></div>
+      <span class="domain-val">{{ dv.confidence if dv.confidence is not none
+        else '—' }}</span>
+      <span class="hint domain-basis">{{ dv.basis or '' }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="hint" style="margin-top:6px">Confidence is per evidence
+  domain, never a single authenticity score. Domains without examined
+  evidence are not assigned numbers.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if media_job.analysis_provenance %}
+{% set prov = media_job.analysis_provenance %}
+{% set rm = media_job.router_meta %}
+{% set esc_used = rm.escalated and rm.escalation_ok %}
+{% set prov_name = (rm.escalation_provider or 'cloud') | title %}
+<section class="panel">
+  <div class="panel-head"><h2>Analysis provenance</h2>
+    <span class="badge {{ 'badge-warn' if esc_used else 'badge-ok' }}">
+      {{ 'authorized ' + prov_name + ' escalation used for interpretation'
+         if esc_used else 'fully local' }}</span></div>
+  <div class="kv-grid">
+    <div class="kv"><span>Evidence extraction</span>
+      <code>{{ prov.extraction }}</code></div>
+    <div class="kv"><span>Media interpretation</span>
+      <code>{{ prov.artifact_analysis }}</code></div>
+    <div class="kv"><span>Fusion &amp; reasoning</span>
+      <code>{{ prov.fusion }}</code></div>
+    <div class="kv"><span>Persistence &amp; governance</span>
+      <code>{{ prov.persistence_governance }}</code></div>
+    <div class="kv"><span>Cloud escalation</span>
+      <code>{{ prov.escalation }}</code></div>
+  </div>
+  {% if rm.escalated %}
+  <h3 class="card-label" style="margin-top:12px">Cloud provider</h3>
+  <div class="kv-grid">
+    <div class="kv"><span>Provider</span>
+      <code>{{ rm.escalation_provider | title }} (Application Default
+      Credentials — no API key)</code></div>
+    {% if rm.vertex_project %}<div class="kv"><span>Vertex project</span>
+      <code>{{ rm.vertex_project }}</code></div>{% endif %}
+    {% if rm.vertex_region %}<div class="kv"><span>Region</span>
+      <code>{{ rm.vertex_region }}</code></div>{% endif %}
+    <div class="kv"><span>Model used</span>
+      <code>{{ rm.model_used or '— (no successful call)' }}</code></div>
+    <div class="kv"><span>Attempted models</span>
+      <code>{{ rm.attempted_models | join(' → ') or 'n/a' }}</code></div>
+    {% if rm.latency_ms %}<div class="kv"><span>Inference latency</span>
+      <code>{{ rm.latency_ms }} ms</code></div>{% endif %}
+    <div class="kv"><span>Provider status</span>
+      <code>{{ ('HTTP ' ~ rm.provider_status) if rm.provider_status
+        else ('OK' if esc_used else 'failed') }}</code></div>
+  </div>
+  {% if rm.attempt_history %}
+  <p class="hint" style="margin-top:6px">Attempt history:
+    {% for at in rm.attempt_history %}{{ at.model or '?' }}
+    → {{ at.status or 'error' }}{% if at.latency_ms %}
+    ({{ at.latency_ms }} ms){% endif %}{% if not loop.last %} · {% endif %}
+    {% endfor %}</p>
+  {% endif %}
+  {% endif %}
+  {% if prov.sent_artifacts %}
+  <p class="hint" style="margin-top:8px">Sent under authorization:
+  {{ prov.sent_artifacts | length }} extracted artifact(s)
+  ({% for s in prov.sent_artifacts %}{{ s.kind }}
+  {{ (s.sha256 or '')[:10] }}…{% if not loop.last %} · {% endif %}
+  {% endfor %}) — hashes recorded in the media governance ledger. The
+  source file and evidence package never left this node.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<div class="panel-pair">
+<section class="panel">
+  <div class="panel-head"><h2>Local pipeline — stage log</h2>
+    <span class="badge badge-ok">recorded on this node</span></div>
+  <ol class="stage-log">
+    {% for s in stages %}
+    <li class="stage-{{ s.status }}">
+      <span class="stage-dot"></span>
+      <code class="stage-time">{{ s.at }}</code>
+      <strong>{{ s.stage }}</strong>
+      <span class="stage-detail">{{ s.detail }}</span>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+
+{% if package %}
+<section class="panel">
+  <div class="panel-head"><h2>Evidence package</h2>
+    <span class="badge badge-muted">{{ package.schema }}</span></div>
+  <div class="kv-grid">
+    <div class="kv"><span>Specimen</span>
+      <code>{{ package.source.identifier }}</code></div>
+    <div class="kv"><span>Artifacts (hashed)</span>
+      <code>{{ package.artifacts | length }}
+      {%- if media_job.extraction.frames %} · {{ media_job.extraction.frames | length }} frames{% endif %}
+      {%- if media_job.extraction.audio %} · audio track{% endif %}</code></div>
+    <div class="kv"><span>Processing events</span>
+      <code>{{ package.processing_events | length }}</code></div>
+    <div class="kv"><span>Observations</span>
+      <code>{{ package.observations | length }} (direct / inference /
+      model — labeled)</code></div>
+    <div class="kv"><span>Metadata by origin</span>
+      <code>source-embedded {{ package.metadata_by_origin.source_embedded | length }}
+      · retrieval {{ package.metadata_by_origin.retrieval_generated | length }}
+      · processing {{ package.metadata_by_origin.processing_generated | length }}
+      · model {{ package.metadata_by_origin.model_observations | length }}</code></div>
+    <div class="kv"><span>Temporary media</span>
+      <code>{{ package.cleanup.status or 'pending' }} — hashes &amp;
+      evidence retained</code></div>
+    {% if media_job.validation_issues %}
+    <div class="kv"><span>Validation</span>
+      <code class="status-red">{{ media_job.validation_issues | join('; ') }}</code></div>
+    {% else %}
+    <div class="kv"><span>Validation</span>
+      <code class="status-green">internally consistent</code></div>
+    {% endif %}
+  </div>
+</section>
+{% else %}
+<section class="panel">
+  <div class="panel-head"><h2>Evidence package</h2>
+    <span class="badge badge-muted">not created</span></div>
+  <p class="empty">No evidence package was produced — the specimen was
+  never acquired, so there was nothing to hash or examine.</p>
+</section>
+{% endif %}
+</div>
+
+{% if assessment %}
+<div class="panel-pair">
+<section class="panel">
+  <div class="panel-head"><h2>Visual findings</h2>
+    <span class="badge {{ 'badge-ok' if assessment.visual_findings.status == 'reviewed' else 'badge-muted' }}">
+      {{ assessment.visual_findings.status.replace('_', ' ') }}</span>
+    {% if assessment.visual_findings.status == 'reviewed' and
+          media_job.router_meta.escalated %}
+    <span class="badge badge-warn">via authorized
+      {{ (media_job.router_meta.escalation_provider or 'cloud') | title }}
+      {{ media_job.router_meta.model_used or '' }}</span>
+    {% endif %}</div>
+  {% if assessment.visual_findings.frame_observations %}
+  <ul class="siglist">
+    {% for fo in assessment.visual_findings.frame_observations %}
+    <li><strong>{{ fo.observation }}</strong>
+      {% if fo.interpretation %} — {{ fo.interpretation }}{% endif %}
+      {% if fo.competing_explanations %}
+      <div class="hint">competing: {{ fo.competing_explanations | join(' · ') }}</div>
+      {% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <p class="hint">{{ assessment.visual_findings.limitations }}</p>
+</section>
+<section class="panel">
+  <div class="panel-head"><h2>Audio findings</h2>
+    <span class="badge {{ 'badge-ok' if assessment.audio_findings.status == 'reviewed' else 'badge-muted' }}">
+      {{ assessment.audio_findings.status.replace('_', ' ') }}</span>
+    {% if assessment.audio_findings.status == 'reviewed' and
+          media_job.router_meta.escalated %}
+    <span class="badge badge-warn">via authorized
+      {{ (media_job.router_meta.escalation_provider or 'cloud') | title }}
+      {{ media_job.router_meta.model_used or '' }}</span>
+    {% endif %}</div>
+  {% if assessment.audio_findings.transcript %}
+  <p class="verdict" style="font-size:13px">
+    {{ assessment.audio_findings.transcript }}</p>
+  {% endif %}
+  <p class="hint">{{ assessment.audio_findings.limitations }}</p>
+</section>
+</div>
+
+{% set ta = assessment.technical_authenticity or {} %}
+<section class="panel">
+  <h2>Technical authenticity</h2>
+  <div class="kv-grid">
+    <div class="kv"><span>Metadata / codec findings</span>
+      <code>{{ (ta.get('metadata_codec_findings') or []) | join(' · ') or '—' }}</code></div>
+    <div class="kv"><span>Original file available</span>
+      <code>{{ ta.get('original_file_available') or 'unknown' }}</code></div>
+    <div class="kv"><span>Derivative / repost indicators</span>
+      <code>{{ (ta.get('derivative_or_repost_indicators') or []) | join(' · ') or '—' }}</code></div>
+    <div class="kv"><span>Signal-level analysis</span>
+      <code>{{ ta.get('signal_level_analysis') or 'not stated' }}</code></div>
+  </div>
+</section>
+
+{% if assessment.recommended_corroboration %}
+<section class="panel">
+  <div class="panel-head"><h2>Recommended corroboration</h2>
+    <span class="badge badge-muted">guidance — what evidence would
+      settle this</span></div>
+  <ul class="siglist">
+    {% for rc in assessment.recommended_corroboration %}
+    <li><strong>{{ rc.item }}</strong>
+      {% if rc.rationale %} — {{ rc.rationale }}{% endif %}
+      {% if rc.bearing %}<div class="hint">bearing: {{ rc.bearing }}</div>{% endif %}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endif %}
+
+{% if saved.pid %}
+<div class="alert alert-ok"><strong>Saved.</strong> Canonical Case
+<code>{{ saved.case_id }}</code> persisted to the local SQLite
+investigation store —
+<a href="/investigations/{{ saved.pid }}">open investigation</a> ·
+<a href="/atlas?investigation={{ saved.pid }}">view in Atlas</a> ·
+<a href="/investigations/{{ saved.pid }}/timeline">timeline</a>.</div>
+{% elif saved.error %}
+<div class="alert alert-warn">Analysis completed but saving failed:
+{{ saved.error }}</div>
+{% endif %}
+
+<style>
+.graded-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  margin:6px 0 10px}
+.graded-badge{display:inline-block;padding:7px 16px;border-radius:6px;
+  font-weight:700;letter-spacing:.4px;font-size:14px}
+.graded-ok{background:rgba(57,195,127,.16);color:#39c37f;
+  border:1px solid #39c37f}
+.graded-warn{background:rgba(232,185,62,.14);color:#e8b93e;
+  border:1px solid #e8b93e}
+.graded-bad{background:rgba(224,82,82,.14);color:#e05252;
+  border:1px solid #e05252}
+.graded-muted{background:rgba(140,160,185,.12);color:#9fb2c8;
+  border:1px solid #55677e}
+.domain-grid{display:flex;flex-direction:column;gap:7px}
+.domain-row{display:grid;grid-template-columns:110px 1fr 40px 2fr;
+  gap:10px;align-items:center}
+.domain-name{text-transform:capitalize;font-size:13px}
+.domain-val{font-variant-numeric:tabular-nums;font-size:12.5px}
+.domain-basis{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stage-log{list-style:none;margin:0;padding:0}
+.stage-log li{display:flex;align-items:baseline;gap:9px;padding:6px 0;
+  font-size:13px}
+.stage-dot{width:9px;height:9px;border-radius:50%;flex:0 0 9px;
+  align-self:center}
+.stage-ok .stage-dot{background:#39c37f}
+.stage-degraded .stage-dot{background:#e8b93e}
+.stage-failed .stage-dot{background:#e05252}
+.stage-time{opacity:.6;font-size:11.5px}
+.stage-detail{opacity:.8}
+.alert-ok{border-color:#39c37f;color:inherit}
+</style>
+{% endif %}
+
+<div class="panel-pair">
+<section class="panel">
+  <h2>Media evidence bundle</h2>
+  <div class="kv-grid">
+    {% if bundle_summary.media_url %}<div class="kv"><span>Source URL</span><code>{{ bundle_summary.media_url }}</code></div>{% endif %}
+    {% if adapter %}<div class="kv"><span>Retrieval</span><code>{{ adapter.status_label }} · {{ adapter.platform }}</code></div>{% endif %}
+    {% if bundle_summary.source_account %}<div class="kv"><span>Source account</span><code>{{ bundle_summary.source_account }}</code></div>{% endif %}
+    {% if bundle_summary.claimed_date %}<div class="kv"><span>Claimed date</span><code>{{ bundle_summary.claimed_date }}</code></div>{% endif %}
+    {% if bundle_summary.claimed_place %}<div class="kv"><span>Claimed place</span><code>{{ bundle_summary.claimed_place }}</code></div>{% endif %}
+    <div class="kv"><span>Components</span><code>{{ bundle_summary.components | join(', ') }}</code></div>
+  </div>
+  {% if adapter %}<p class="hint" style="margin-top:8px">{{ adapter.note }}</p>{% endif %}
+</section>
+
+<section class="panel">
+  <h2>Fused assessment</h2>
+  <p class="verdict">{{ fused.fused_verdict if fused else
+    'No analysis was run — the specimen was not acquired.' }}</p>
+</section>
+</div>
+
+{% if not media_job %}
+{% if media_report and media_report.media_sections %}
+{% for section_title, rows in media_report.media_sections %}
+<section class="panel">
+  <h2>{{ section_title }}</h2>
+  <div class="kv-grid">
+    {% for label, value in rows %}
+    <div class="kv"><span>{{ label }}</span><code>{{ value }}</code></div>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+{% else %}
+<section class="panel"><p class="empty">The model did not return a
+structured media assessment; see the fused verdict and per-artifact
+findings.</p></section>
+{% endif %}
+{% endif %}
+
+{% if fused %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Attribution hypotheses</h2>
+    <span class="badge badge-muted">bounded — scenarios, never named actors</span>
+  </div>
+  {% if fused.attribution %}
+  {% for h in fused.attribution %}
+  <div class="hyp-card">
+    <div class="hyp-head">
+      <span class="badge badge-warn">{{ h.campaign_type }}</span>
+      <span class="hint">confidence {{ h.confidence }}/100</span>
+    </div>
+    <p class="verdict" style="font-size:13.5px">{{ h.hypothesis }}</p>
+    <div class="kv-grid" style="margin-top:8px">
+      <div class="kv"><span>Supporting</span><code>{{ h.supporting_evidence | join(' · ') or '—' }}</code></div>
+      <div class="kv"><span>Missing evidence</span><code>{{ h.missing_evidence | join(' · ') or '—' }}</code></div>
+      <div class="kv"><span>Alternatives</span><code>{{ h.alternatives | join(' · ') or '—' }}</code></div>
+    </div>
+  </div>
+  {% endfor %}
+  {% else %}<p class="empty">No attribution hypothesis met the evidence bar.</p>{% endif %}
+</section>
+{% endif %}
+
+{% if fused and can_save and not (media_job and saved and saved.pid) %}
+<section class="panel" id="save-to-investigation">
+  <div class="panel-head"><h2>Save to investigation</h2></div>
+  <form method="post" action="/report/{{ fused.report_id }}/save" class="form">
+    <div class="form-grid">
+      <div class="form-row"><label>Existing investigation</label>
+        <select name="investigation_id"><option value="">— choose —</option>
+          {% for inv in investigations %}<option value="{{ inv.id }}">{{ inv.name }}</option>{% endfor %}
+        </select></div>
+      <div class="form-row"><label>…or new investigation</label>
+        <input name="new_name" placeholder="e.g. Media authenticity — clip"></div>
+    </div>
+    <button type="submit" class="btn btn-primary">Save analysis</button>
+  </form>
+</section>
+{% endif %}
+
+{% if fused_dict %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Atlas — Evidence Graph</h2>
+    <button type="button" class="btn" onclick="MEDIA_PRESENT()">Presentation View</button>
+  </div>
+  <div class="atlas-legend" id="atlas-legend"></div>
+  <svg id="atlas-svg" class="atlas-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+</section>
+{% endif %}
+
+<section class="panel panel-note">
+  <h2>Limitations</h2>
+  <ul class="siglist">{% if fused %}{% for l in fused.limitations %}<li>{{ l }}</li>{% endfor %}{% endif %}
+    {% if media_job %}
+    <li>{{ assessment.technical_authenticity.signal_level_analysis
+        if assessment else 'Signal-level review was not performed for '
+        'this specimen.' }}</li>
+    {% else %}
+    <li>Signal-level (visual/audio) media forensics are not performed in
+    this workflow; findings derive from transcript, captions, metadata,
+    provenance, and submitted context.</li>
+    {% endif %}
+  </ul>
+</section>
+
+{% if report_token %}
+<section class="panel">
+  <div class="panel-head"><h2>Report actions</h2>
+    <span class="badge badge-muted">exports built from local case
+      data</span></div>
+  <div class="form-actions">
+    {% if can_save and not (saved and saved.pid) %}
+    <a class="btn btn-primary" href="#save-to-investigation">Save to
+      Investigation</a>
+    {% elif saved and saved.pid %}
+    <a class="btn btn-ok" href="/investigations/{{ saved.pid }}">Saved →
+      open investigation</a>
+    {% endif %}
+    <a class="btn btn-ghost" href="/media/report/{{ report_token }}/json"
+       download>Export JSON</a>
+    <a class="btn btn-ghost"
+       href="/media/report/{{ report_token }}/report" download>Export
+      Report</a>
+    <a class="btn btn-ghost" href="/media/report/{{ report_token }}/stix"
+       download>Export STIX</a>
+    <a class="btn btn-ghost" href="/report/{{ report_token }}/atlas"
+       download>Export to Atlas</a>
+    <a class="btn btn-ghost" href="/report/{{ report_token }}/briefing.html"
+       target="_blank">Generate Briefing</a>
+  </div>
+  <p class="hint" style="margin-top:6px">JSON = full assessment +
+  evidence-package refs + provenance. STIX 2.1 = interoperable bundle
+  (node identity · media artifact hash · assessment note). Report =
+  human-readable Markdown. All generated locally from the Canonical
+  Case.</p>
+</section>
+{% endif %}
+
+<div class="form-actions">
+  <a class="btn btn-primary" href="/media">New Media Assessment</a>
+  <a class="btn btn-ghost" href="/investigations">Investigations →</a>
+</div>
+
+{% if fused_dict %}
+<script src="/static/atlas_graph.js"></script>
+<script>
+var FUSED_DATA = {{ fused_dict | tojson }};
+AtlasGraph.render(document.getElementById("atlas-svg"),
+                  FUSED_DATA.entities, FUSED_DATA.relationships,
+                  {campaigns: FUSED_DATA.campaigns});
+document.getElementById("atlas-legend").innerHTML = AtlasGraph.legendHTML();
+function MEDIA_PRESENT(){
+  AtlasGraph.openPresentation(FUSED_DATA.entities, FUSED_DATA.relationships,
+    {title: "Media Evidence Graph — " + FUSED_DATA.report_id,
+     subtitle: "SwarmTracker Node · Deepfake Defender workflow",
+     filename: "media-" + FUSED_DATA.report_id, campaigns: FUSED_DATA.campaigns});
+}
+</script>
+{% endif %}
+{% endblock %}

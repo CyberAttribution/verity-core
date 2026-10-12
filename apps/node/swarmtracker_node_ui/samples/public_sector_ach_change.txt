@@ -1,0 +1,22 @@
+SYNTHETIC DEMO SAMPLE — not real customer data
+
+To: accounts.payable@countygov.example
+From: remit-updates@midstate-paving.example
+Subject: Remittance update — Contract C-2026-114 (Road Resurfacing)
+
+Dear County Accounts Payable,
+
+MidState Paving LLC has completed a banking transition. Effective today,
+please direct all payments for Contract C-2026-114 to:
+
+  Bank: Lakeshore Community Bank
+  Routing: 071000505
+  Account: 5583312209
+
+The next milestone payment ($187,450) is due July 3. To avoid contractor
+delay penalties, please confirm the update today. Our office phone is
+temporarily down due to the transition; email confirmation is sufficient.
+
+Sincerely,
+R. Calloway
+Contracts & Receivables, MidState Paving LLC

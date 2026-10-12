@@ -1,0 +1,115 @@
+{# Shared Analysis Mode selector (v0.5.0). Two mutually-exclusive radio
+   cards: Local Analysis (default) and Governed Cloud-Assisted Analysis.
+   Selecting the second IS the explicit per-job authorization. `kind`
+   tailors the copy: 'text' | 'media' | 'sensitive'. `sfx` = unique ids.
+   Requires ctx: escalation_ready, escalation_reason,
+   escalation_unready_note, provider. #}
+{% macro mode_cards(sfx, kind='text') %}
+<fieldset class="esc-row mode-select" data-state="local">
+  <legend class="mode-select-legend">Analysis Mode</legend>
+  <div class="mode-cards2">
+    <label class="mode-card2" id="mc-local-{{ sfx }}">
+      <input type="radio" name="escalate_multimodal" value=""
+             checked onchange="gaMode(this)">
+      <span class="mode-card2-body">
+        <span class="mode-card2-title">Local Analysis
+          <span class="badge badge-ok">default</span></span>
+        <span class="mode-card2-desc">Runs entirely on this node. Local
+          model, local persistence, local fusion. No network egress;
+          nothing leaves this machine.</span>
+      </span>
+    </label>
+    <label class="mode-card2 {{ 'mc-disabled' if not escalation_ready }}"
+           id="mc-hybrid-{{ sfx }}">
+      <input type="radio" name="escalate_multimodal" value="1"
+             onchange="gaMode(this)"
+             {% if not escalation_ready %}disabled{% endif %}>
+      <span class="mode-card2-body">
+        <span class="mode-card2-title">Governed Cloud-Assisted Analysis
+          <span class="badge badge-warn">authorizes cloud</span></span>
+        <span class="mode-card2-desc">Selecting this <strong>is</strong>
+          your explicit per-job authorization. Only
+          {% if kind == 'sensitive' %}<strong>shielded, bounded
+          artifacts</strong>{% elif kind == 'media' %}the extracted
+          artifacts (sampled frames · audio track · image){% else %}
+          <strong>bounded evidence excerpts</strong>{% endif %} are sent
+          to <strong>{{ provider.name or 'the cloud provider' }}</strong>
+          ({{ provider.default_model_label or 'default model' }}).
+          The source evidence, Evidence Package, Canonical Case, Atlas,
+          audit trail, and final fusion all stay local.{% if not
+          escalation_ready %}<br><strong>Unavailable:</strong>
+          {{ escalation_unready_note or escalation_reason }}{% endif %}</span>
+        {% if escalation_ready and provider.models %}
+        <span class="mode-card2-model">
+          <label>Model:
+          <select name="vertex_model" onclick="event.preventDefault()"
+                  onchange="event.stopPropagation()">
+            {% for mid, mlabel in provider.models %}
+            <option value="{{ mid }}">{{ mlabel }}</option>
+            {% endfor %}
+          </select></label>
+          <span class="hint">{{ provider.name }} ·
+            {{ provider.project or 'project?' }} ·
+            {{ provider.region }}</span>
+        </span>
+        {% endif %}
+      </span>
+    </label>
+  </div>
+  <div class="gov-ind esc-ind" data-state="local" style="margin-top:8px">
+    Mode: <strong class="status-green">Local Only</strong> ·
+    Cloud escalation: <strong>disabled</strong> ·
+    Cloud used: <strong>no</strong>
+  </div>
+</fieldset>
+{% endmacro %}
+
+{% macro mode_cards_assets() %}
+<style>
+.mode-select{border:1px solid var(--panel-border,#2a3648);border-radius:8px;
+  padding:10px 12px 12px;margin:14px 0}
+.mode-select-legend{padding:0 6px;font-weight:700;font-size:13px;
+  letter-spacing:.3px}
+.mode-cards2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:640px){.mode-cards2{grid-template-columns:1fr}}
+.mode-card2{display:block;border:1.5px solid var(--panel-border,#2a3648);
+  border-radius:8px;padding:10px 12px;cursor:pointer;transition:
+  border-color .15s,background .15s}
+.mode-card2:hover{border-color:#4a5d78}
+.mode-card2 input{margin-right:8px}
+.mode-card2:has(input:checked){border-color:#e8b93e;
+  background:rgba(232,185,62,.07)}
+.mode-card2:has(input[value=""]:checked){border-color:#39c37f;
+  background:rgba(57,195,127,.07)}
+.mode-card2:focus-within{outline:2px solid #6aa0ff;outline-offset:2px}
+.mode-card2-title{display:block;font-weight:600;font-size:13.5px;
+  margin-bottom:3px}
+.mode-card2-desc{display:block;font-size:12px;opacity:.8;line-height:1.45}
+.mc-disabled{opacity:.5;cursor:not-allowed}
+</style>
+<script>
+// Status strip + (optional) primary button label follow the selection.
+// Selecting Governed Cloud-Assisted Analysis IS the authorization;
+// nothing escalates implicitly.
+function gaMode(radio){
+  var hybrid = (radio.value === '1');
+  var form = radio.closest('form');
+  var ind = form ? form.querySelector('.esc-ind') : null;
+  if (ind){
+    ind.setAttribute('data-state', hybrid ? 'hybrid' : 'local');
+    ind.innerHTML = hybrid
+      ? 'Mode: <strong class="status-yellow">Governed Cloud-Assisted' +
+        '</strong> (this job) · Cloud escalation: <strong>authorized' +
+        '</strong> · Cloud used: <strong>pending</strong>'
+      : 'Mode: <strong class="status-green">Local Only</strong> · ' +
+        'Cloud escalation: <strong>disabled</strong> · Cloud used: ' +
+        '<strong>no</strong>';
+  }
+  var btn = form ? form.querySelector('.ga-btn') : null;
+  if (btn){
+    btn.innerHTML = hybrid ? btn.getAttribute('data-hybrid')
+                           : btn.getAttribute('data-local');
+  }
+}
+</script>
+{% endmacro %}

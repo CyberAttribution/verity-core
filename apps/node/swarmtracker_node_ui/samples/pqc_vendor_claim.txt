@@ -1,0 +1,14 @@
+SYNTHETIC DEMO SAMPLE — not real customer data
+
+Vendor email excerpt received by IT procurement:
+
+"QuantumShield Gateway v4 is fully quantum-proof and NIST-certified against
+all future quantum computers. Our proprietary QS-256 cipher is mathematically
+unbreakable — unlike AES, which quantum computers already defeat. Agencies
+that do not deploy QuantumShield this quarter remain exposed to
+harvest-now-decrypt-later interception of ALL past traffic. Because QS-256 is
+patent-protected, it has never needed public cryptanalysis. Pricing locks
+expire Friday; a purchase order this week includes complimentary quantum risk
+certification for your auditors."
+
+Attachment referenced (not included): QS-256_whitepaper_final_v9.pdf

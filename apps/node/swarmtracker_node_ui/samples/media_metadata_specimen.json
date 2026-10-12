@@ -1,0 +1,14 @@
+{
+  "_note": "SYNTHETIC DEMO SAMPLE — not real customer data",
+  "artifact": "site_incident_video_0630.mp4",
+  "submitted_as": "evidence in Matter 2214 (contested delivery timestamp)",
+  "container": "mp4 (ISO Base Media)",
+  "claimed_capture_time": "2026-06-28T09:12:00-04:00",
+  "metadata_creation_time": "2026-06-29T22:47:18Z",
+  "metadata_modify_time": "2026-06-29T23:03:52Z",
+  "encoder": "Lavf61.7.100 (ffmpeg)",
+  "device_make_model": "absent",
+  "gps": "absent",
+  "duration_sec": 41.2,
+  "notes": "Claimed phone capture, but no device make/model tags; container written by desktop encoder ~36 hours after claimed capture time."
+}

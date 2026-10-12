@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+{% block title %}Keel Governance{% endblock %}
+{% block content %}
+
+<div class="cards">
+  <div class="card gov-overall gov-{{ gov.overall }}">
+    <div class="card-label">Keel Governance Health</div>
+    <div class="card-value status-{{ gov.overall }}">{{ gov.overall | upper }}</div>
+    <div class="card-sub">prototype governance score — not a certification</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Confidence</div>
+    <div class="card-value">{{ gov.overall_confidence }}<span class="sm">/100</span></div>
+    <div class="card-sub">evidence coverage across {{ gov.categories | length }} controls</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Events Analyzed</div>
+    <div class="card-value">{{ gov.summary.events }}</div>
+    <div class="card-sub">last {{ gov.window }} ledger events (window)</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Governance Alarms</div>
+    <div class="card-value {{ 'status-red' if gov.summary.alarms else '' }}">{{ gov.summary.alarms }}</div>
+    <div class="card-sub">{{ gov.summary.recent_alarms }} in the most recent {{ 10 }} events</div>
+  </div>
+</div>
+
+{% if gov.attention %}
+<section class="panel attention">
+  <div class="panel-head">
+    <h2>Attention Items</h2>
+    <span class="badge badge-warn">{{ gov.attention | length }} open</span>
+  </div>
+  <table>
+    <thead><tr><th></th><th>Source</th><th>Item</th><th>Detail</th></tr></thead>
+    <tbody>
+    {% for a in gov.attention %}
+      <tr class="gov-row {{ 'row-alarm' if a.level == 'red' }}"
+          data-status="{{ a.level }}" data-alarm="{{ '1' if a.kind == 'ledger event' else '0' }}"
+          data-text="{{ (a.title ~ ' ' ~ a.detail ~ ' ' ~ a.kind) | lower }}">
+        <td><span class="badge badge-{{ 'bad' if a.level == 'red' else 'warn' }}">{{ a.level | upper }}</span></td>
+        <td>{{ a.kind }}</td>
+        <td>{{ a.title }}</td>
+        <td class="hint">{{ a.detail }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<div class="panel-pair">
+<section class="panel keel-trace">
+  <div class="panel-head">
+    <h2>Active Keel Policy</h2>
+    <span class="badge {{ 'badge-ok' if keel.ok else 'badge-bad' }}">
+      {{ 'policy lock active at Keel layer' if keel.ok else 'FAIL-CLOSED defaults in effect' }}</span>
+  </div>
+  {% if not keel.ok %}
+  <div class="alert alert-bad">{{ keel.error }} — Node UI is using
+  fail-closed defaults (read_only_analysis only).</div>
+  {% endif %}
+  <div class="kv-grid">
+    <div class="kv"><span>Policy profile</span><code>{{ keel.profile }}</code></div>
+    <div class="kv"><span>Policy source</span><code>{{ keel.source }}</code></div>
+    <div class="kv"><span>Policy version</span><code>{{ keel.version }}</code></div>
+    <div class="kv"><span>Allowed policies</span><code>{{ keel.allowed_policies | join(', ') }}</code></div>
+    <div class="kv"><span>Unknown policies</span><code>{{ 'denied' if keel.deny_unknown else 'NOT denied' }}</code></div>
+    <div class="kv"><span>Analysis modes enabled</span><code>{{ keel.analysis_modes_enabled | join(', ') }}</code></div>
+    <div class="kv"><span>Cloud escalation</span><code>{{ 'disabled' if not keel.cloud_escalation_allowed else 'ENABLED' }}</code></div>
+    <div class="kv"><span>Network</span><code>{{ 'disabled' if not keel.network_allowed else 'ENABLED' }}</code></div>
+    <div class="kv"><span>Tools allowed</span><code>{{ keel.tools_allowed | join(', ') }}</code></div>
+    <div class="kv"><span>Tools denied</span><code>{{ keel.tools_denied | join(', ') }}</code></div>
+  </div>
+  <p class="hint" style="margin-top:8px">Node UI-side policy enforcement:
+  analysis requests are validated against this file before any runtime
+  call. Runtime-level enforcement pending.</p>
+
+  <div class="panel-head" style="margin-top:14px">
+    <h2>Media Evidence Policy (v0.2.0)</h2>
+    <span class="badge {{ 'badge-ok' if keel.media.enabled else 'badge-muted' }}">
+      {{ 'active' if keel.media.enabled else 'disabled (fail-closed)' }}</span>
+  </div>
+  <div class="kv-grid">
+    <div class="kv"><span>Local evidence tools</span>
+      <code>{{ keel.media.local_tools_allowed | join(', ') or 'none' }}</code></div>
+    <div class="kv"><span>Temp-dir confinement</span>
+      <code>{{ 'enforced' if keel.media.temp_dir_only else 'NOT enforced' }}</code></div>
+    <div class="kv"><span>Media deleted after analysis</span>
+      <code>{{ 'always (success and failure)' if
+        keel.media.delete_media_after_analysis else 'NOT enforced' }}</code></div>
+    <div class="kv"><span>Governed egress — media retrieval</span>
+      <code>{{ ('enabled · adapters: ' + (keel.media.retrieval_adapters | join(', ')))
+        if keel.media.retrieval_enabled else 'disabled' }}</code></div>
+    <div class="kv"><span>Governed egress — multimodal escalation</span>
+      <code>{{ ('available · ' + keel.media.escalation_provider +
+        ' · per-job operator authorization · extracted artifacts only · '
+        'default Local Only') if keel.media.escalation_enabled
+        else 'disabled' }}</code></div>
+    <div class="kv"><span>General network</span>
+      <code>{{ 'still disabled' if not keel.network_allowed else 'ENABLED' }}</code></div>
+    <div class="kv"><span>Media governance events</span>
+      <code>{{ media_ledger_count }} recorded ·
+      logs/keel_media_events.jsonl</code></div>
+  </div>
+  {% if keel.media.retrieval_enabled %}
+  <p class="hint" style="margin-top:8px">{{ keel.media.scope_note }}</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Keel Policy Self-Test</h2>
+    <span class="badge {{ 'badge-ok' if selftest.all_passed else 'badge-bad' }}">
+      {{ 'all checks pass' if selftest.all_passed else 'CHECKS FAILING' }}</span>
+  </div>
+  <table>
+    <tbody>
+      {% for label, key in [
+        ('Policy file present', 'policy_file_present'),
+        ('Policy file parsed', 'policy_file_parsed'),
+        ('Default policy allowed', 'default_policy_allowed'),
+        ('Unknown policy rejected', 'unknown_policy_rejected'),
+        ('Cloud escalation disabled', 'cloud_escalation_disabled'),
+        ('Network disabled', 'network_disabled'),
+        ('Only Local Only enabled', 'local_only_enabled'),
+        ('Tools allow/deny present', 'tools_allow_deny_present'),
+        ('Media tools scoped', 'media_tools_scoped'),
+        ('Media temp-dir + cleanup locked',
+         'media_temp_dir_and_cleanup_locked'),
+        ('Media egress scoped or disabled',
+         'media_egress_scoped_or_disabled'),
+        ('Multimodal escalation scoped or disabled',
+         'media_escalation_scoped_or_disabled'),
+        ('Escalation operator-gated, Local Only default',
+         'media_escalation_operator_gated_local_default'),
+        ('General network still disabled',
+         'general_network_still_disabled'),
+      ] %}
+      <tr>
+        <td>{{ label }}</td>
+        <td>{% if selftest[key] %}<span class="badge badge-ok">PASS</span>
+            {% else %}<span class="badge badge-bad">FAIL</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint" style="margin-top:8px">Local checks only — no cloud, no
+  network, no runtime calls. JSON:
+  <code>/governance/self-test</code>. Runtime-level enforcement:
+  <strong>{{ selftest.runtime_enforcement }}</strong> (next hardening
+  step).</p>
+</section>
+</div>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Control Scorecards</h2>
+    <span class="hint">control health from structural facts + recent ledger evidence</span>
+  </div>
+  <div class="filterbar">
+    <input type="search" id="gov-q" placeholder="Search: category, event ID, policy, model, node, failure…" oninput="govFilter()">
+    <select id="gov-status" onchange="govFilter()">
+      <option value="">All statuses</option>
+      <option value="green">Green</option>
+      <option value="yellow">Yellow</option>
+      <option value="red">Red</option>
+    </select>
+    <label class="check"><input type="checkbox" id="gov-alarm" onchange="govFilter()"> alarms only</label>
+    <span class="hint" id="gov-count"></span>
+  </div>
+
+  <div class="gov-grid" id="gov-grid">
+    {% for c in gov.categories %}
+    <div class="gov-card gov-{{ c.status }} gov-item" data-status="{{ c.status }}" data-alarm="0"
+         data-text="{{ (c.name ~ ' ' ~ c.capability ~ ' ' ~ c.next_step ~ ' ' ~ (c.sources | join(' ')) ~ ' ' ~ (c.flags | map(attribute=1) | join(' '))) | lower }}">
+      <div class="gov-card-head">
+        <h3>{{ c.name }}</h3>
+        <span class="badge badge-{{ 'ok' if c.status == 'green' else ('warn' if c.status == 'yellow' else 'bad') }}">{{ c.status | upper }}</span>
+      </div>
+      <div class="conf-bar"><div class="conf-fill" style="width: {{ c.confidence }}%"></div></div>
+      <div class="hint">confidence {{ c.confidence }}/100</div>
+      <p class="gov-cap">{{ c.capability }}</p>
+      {% if c.flags %}
+      <ul class="gov-flags">
+        {% for level, msg in c.flags %}
+        <li class="flag-{{ level }}">{{ msg }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      <div class="gov-next"><span>Next hardening step</span>{{ c.next_step }}</div>
+      <div class="gov-src">
+        {% for s in c.sources %}<div class="mono">{{ s }}</div>{% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Recent Ledger Events</h2>
+    <a class="btn btn-ghost" href="/ledger">Full ledger →</a>
+  </div>
+  <p class="hint">Window: models {{ gov.summary.models or '—' }} · policies
+  {{ gov.summary.policies or '—' }} · providers {{ gov.summary.providers or '—' }}
+  · nodes {{ gov.summary.nodes or '—' }}</p>
+  {% if gov.events %}
+  <table>
+    <thead><tr><th>Time</th><th>Event ID</th><th>Policy</th><th>Model</th>
+      <th>Node</th><th>Decision</th><th>Alarm</th></tr></thead>
+    <tbody>
+    {% for e in gov.events %}
+      <tr class="gov-row gov-item {{ 'row-alarm' if e.alarm }}"
+          data-status="{{ 'red' if e.alarm else 'green' }}" data-alarm="{{ '1' if e.alarm else '0' }}"
+          data-text="{{ (e.id ~ ' ' ~ e.policy ~ ' ' ~ e.model ~ ' ' ~ e.node ~ ' ' ~ e.event ~ ' ' ~ (e.failures | join(' '))) | lower }}">
+        <td>{{ e.time }}</td>
+        <td class="mono">{{ e.id }}</td>
+        <td class="mono">{{ e.policy }}</td>
+        <td class="mono">{{ e.model }}</td>
+        <td>{{ e.node }}</td>
+        <td><span class="badge {{ 'badge-ok' if e.decision in ('allow','allowed','ok') else 'badge-muted' }}">{{ e.decision }}</span></td>
+        <td>{% if e.alarm %}<span class="badge badge-bad" title="{{ e.failures | join(', ') }}">ALARM</span>{% else %}<span class="badge badge-muted">none</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="empty">No ledger events in window.</p>{% endif %}
+</section>
+
+<section class="panel panel-note">
+  <p>This page shows a <strong>prototype governance score</strong>: control
+  health inferred from this build's structure and recent audit-ledger
+  evidence. It supports audit-ready workflows and is aligned with the Keel
+  policy/audit/control concept. It is not a compliance attestation and does
+  not certify this system as safe.</p>
+</section>
+
+<script>
+function govFilter(){
+  var q = document.getElementById('gov-q').value.toLowerCase().trim();
+  var st = document.getElementById('gov-status').value;
+  var al = document.getElementById('gov-alarm').checked;
+  var items = document.querySelectorAll('.gov-item, .gov-row');
+  var shown = 0, total = 0, seen = new Set();
+  items.forEach(function(el){
+    if (seen.has(el)) return; seen.add(el); total++;
+    var ok = true;
+    if (q && (el.dataset.text || '').indexOf(q) === -1) ok = false;
+    if (st && el.dataset.status !== st) ok = false;
+    if (al && el.dataset.alarm !== '1') ok = false;
+    el.style.display = ok ? '' : 'none';
+    if (ok) shown++;
+  });
+  document.getElementById('gov-count').textContent =
+    shown + ' / ' + total + ' items';
+}
+govFilter();
+</script>
+
+{% endblock %}

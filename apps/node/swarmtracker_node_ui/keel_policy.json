@@ -1,0 +1,79 @@
+{
+  "policy_profile": "read_only_analysis",
+  "allowed_policies": [
+    "read_only_analysis"
+  ],
+  "default_policy": "read_only_analysis",
+  "deny_unknown_policies": true,
+  "analysis_modes_enabled": [
+    "local_only"
+  ],
+  "cloud_escalation_allowed": false,
+  "network_allowed": false,
+  "tools_allowed": [
+    "generate_text"
+  ],
+  "tools_denied": [
+    "shell_exec",
+    "file_write",
+    "email_send",
+    "browser_login"
+  ],
+  "evidence_role": "untrusted specimen",
+  "data_boundary": "local node only",
+  "policy_source": "swarmtracker_node_ui/keel_policy.json",
+  "policy_version": "0.5.0",
+  "media_evidence": {
+    "enabled": true,
+    "local_tools_allowed": [
+      "ffmpeg",
+      "ffprobe",
+      "exiftool",
+      "yt-dlp"
+    ],
+    "temp_dir_only": true,
+    "delete_media_after_analysis": true,
+    "retain": [
+      "hashes",
+      "evidence_package",
+      "graded_report",
+      "canonical_case"
+    ],
+    "governed_egress": {
+      "media_retrieval": {
+        "enabled": true,
+        "operator_initiated_only": true,
+        "adapters": [
+          "youtube"
+        ],
+        "tools": [
+          "yt-dlp"
+        ],
+        "scope_note": "Single-purpose egress: retrieving one operator-submitted media URL through a registered, validated adapter. No model traffic, no telemetry, no other destinations. General network remains disabled."
+      },
+      "multimodal_escalation": {
+        "enabled": true,
+        "provider": "vertex",
+        "operator_authorization_required": true,
+        "artifacts_only": true,
+        "artifact_kinds_allowed": [
+          "frame",
+          "audio_track",
+          "source_image",
+          "source_audio"
+        ],
+        "default_mode": "local_only",
+        "scope_note": "Optional per-job escalation to Vertex AI after explicit operator authorization. ONLY extracted analysis artifacts (sampled frames, mono audio track, or the source image/audio) are sent for multimodal interpretation, authenticated via Application Default Credentials (no API key). Source video, evidence package, canonical case, Atlas graph, and audit trail never leave this node. Orchestration and fusion stay on the local model. Local Only remains the default.",
+        "auth": "application_default_credentials"
+      }
+    }
+  },
+  "sensitive_media": {
+    "enabled": false,
+    "workflow_id": "intimate_image_abuse_assessment",
+    "publication_disabled": true,
+    "exports_exclude_embedded_media": true,
+    "restricted_handling_required_default": true,
+    "note": "Reserved namespace for a future Intimate-Image Abuse Assessment workflow. Inactive in v0.5.0: no route, no navigation, no upload, no analysis. Publication is hard-disabled and exports must never embed media regardless of gallery settings."
+  }
+}

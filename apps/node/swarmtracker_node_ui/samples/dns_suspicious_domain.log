@@ -1,0 +1,8 @@
+# SYNTHETIC DEMO SAMPLE — not real customer data
+2026-06-30 10:14:22 client 192.0.2.34#53211: query: sharepoint-docs-verify.example-portal.top IN A + (192.0.2.1)
+2026-06-30 10:14:22 client 192.0.2.34#53211: query: sharepoint-docs-verify.example-portal.top IN AAAA + (192.0.2.1)
+2026-06-30 10:14:59 client 192.0.2.34#53644: query: cdn.jquery-lib-update.example.click IN A + (192.0.2.1)
+2026-06-30 10:16:03 client 192.0.2.34#53980: query: a8f3k2.example-portal.top IN A + (192.0.2.1)
+2026-06-30 10:16:41 client 192.0.2.34#54102: query: b7q1x9.example-portal.top IN A + (192.0.2.1)
+2026-06-30 10:17:20 client 192.0.2.34#54233: query: c2m8v4.example-portal.top IN A + (192.0.2.1)
+2026-06-30 10:21:07 client 192.0.2.51#49872: query: www.microsoft.com IN A + (192.0.2.1)

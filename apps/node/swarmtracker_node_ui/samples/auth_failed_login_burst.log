@@ -1,0 +1,10 @@
+# SYNTHETIC DEMO SAMPLE — not real customer data
+2026-06-30T03:11:02Z auth sshd[2211]: Failed password for finance.admin from 198.51.100.77 port 51122 ssh2
+2026-06-30T03:11:05Z auth sshd[2211]: Failed password for finance.admin from 198.51.100.77 port 51124 ssh2
+2026-06-30T03:11:09Z auth sshd[2211]: Failed password for finance.admin from 198.51.100.77 port 51131 ssh2
+2026-06-30T03:11:14Z auth sshd[2211]: Failed password for finance.admin from 198.51.100.77 port 51140 ssh2
+2026-06-30T03:11:21Z auth sshd[2211]: Failed password for finance.admin from 203.0.113.15 port 40988 ssh2
+2026-06-30T03:11:27Z auth sshd[2211]: Failed password for finance.admin from 203.0.113.15 port 40990 ssh2
+2026-06-30T03:12:44Z idp portal: password reset requested for finance.admin via self-service (source 203.0.113.15)
+2026-06-30T03:13:02Z idp portal: MFA challenge NOT completed, session abandoned
+2026-06-30T07:58:19Z auth sshd[2211]: Accepted password for finance.admin from 192.0.2.61 port 55021 ssh2

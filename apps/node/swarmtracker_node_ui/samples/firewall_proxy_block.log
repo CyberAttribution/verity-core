@@ -1,0 +1,7 @@
+# SYNTHETIC DEMO SAMPLE — not real customer data
+2026-06-30T11:02:14Z proxy01 BLOCK category=newly-registered-domain user=jsmith dst=invoice-portal-secure.example.top:443 method=CONNECT bytes=0
+2026-06-30T11:02:19Z proxy01 BLOCK category=newly-registered-domain user=jsmith dst=invoice-portal-secure.example.top:443 method=CONNECT bytes=0
+2026-06-30T11:03:44Z fw-edge DENY proto=tcp src=192.0.2.34 dst=203.0.113.99 dpt=8443 flags=SYN
+2026-06-30T11:03:47Z fw-edge DENY proto=tcp src=192.0.2.34 dst=203.0.113.99 dpt=9443 flags=SYN
+2026-06-30T11:03:51Z fw-edge DENY proto=tcp src=192.0.2.34 dst=203.0.113.99 dpt=10443 flags=SYN
+2026-06-30T11:09:33Z proxy01 ALLOW category=file-sharing user=jsmith dst=drive.google.com:443 method=CONNECT bytes=48211

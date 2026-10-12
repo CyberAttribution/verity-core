@@ -29,3 +29,8 @@ media = ["yt-dlp"]
 
 [tool.setuptools.packages.find]
 include = ["verity_core*"]
+
+[tool.pytest.ini_options]
+# The vendored dependency includes copies of Core tests; collect canonical
+# Core tests and Node-specific tests once, avoiding duplicate module names.
+testpaths = ["tests", "apps/node/swarmtracker_node_ui"]

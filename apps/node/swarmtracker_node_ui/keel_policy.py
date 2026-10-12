@@ -18,6 +18,77 @@ from pathlib import Path
 
 from . import config
 
+
+class _PolicyParseError(ValueError):
+    """Raised by the strict JSON decoder for non-conforming documents."""
+
+
+# Maximum structural nesting depth accepted for a policy document. Deeper
+# documents are rejected before any recursive processing (copy/validate).
+_MAX_DEPTH = 64
+
+
+def _pairs_no_duplicates(pairs):
+    """object_pairs_hook that rejects duplicate JSON object keys."""
+    out = {}
+    for k, v in pairs:
+        if k in out:
+            raise _PolicyParseError(f"duplicate JSON object key: {k!r}")
+        out[k] = v
+    return out
+
+
+def _reject_nonfinite_constant(name):
+    """parse_constant hook: NaN/Infinity/-Infinity are never valid policy."""
+    raise _PolicyParseError(f"non-finite JSON number not allowed: {name}")
+
+
+def _finite_float(value: str) -> float:
+    """parse_float hook: finite-syntax overflow (1e999) yields float
+    inf in Python; policy numbers must be finite."""
+    out = float(value)
+    if out != out or out in (float("inf"), float("-inf")):
+        raise _PolicyParseError(f"non-finite JSON number not allowed: "
+                                f"{value}")
+    return out
+
+
+def _strict_loads(text: str):
+    """json.loads with duplicate-key and non-finite-number rejection."""
+    return json.loads(
+        text,
+        object_pairs_hook=_pairs_no_duplicates,
+        parse_constant=_reject_nonfinite_constant,
+        parse_float=_finite_float,
+    )
+
+
+def _is_json_container(value) -> bool:
+    return isinstance(value, (dict, list))
+
+
+def _check_depth(value) -> bool:
+    """True when the document nests no deeper than _MAX_DEPTH."""
+    stack = [(value, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if depth > _MAX_DEPTH:
+            return False
+        if isinstance(current, dict):
+            stack.extend((v, depth + 1) for v in current.values())
+        elif isinstance(current, list):
+            stack.extend((v, depth + 1) for v in current)
+    return True
+
+
+def _deep_copy(value):
+    """Isolated copy of JSON-shaped data (dicts/lists, scalar leaves)."""
+    if isinstance(value, dict):
+        return {k: _deep_copy(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_deep_copy(v) for v in value]
+    return value
+
 POLICY_PATH = Path(os.environ.get(
     "NODE_UI_KEEL_POLICY", str(config.PKG_DIR / "keel_policy.json")))
 
@@ -49,6 +120,13 @@ _REQUIRED_KEYS = (
 # enable them is treated as invalid (fail closed, do not partially honor).
 _EXECUTABLE_ANALYSIS_MODES = {"local_only"}
 
+# Policy vocabulary this release actually implements. The runtime accepts
+# only read-only local analysis; any other name (e.g. "admin_override")
+# is not a privilege this policy file can grant, so it is rejected here.
+# Note: a Node-local policy file is a boundary, not proof of any remote
+# action privilege — per-job operator authorization still applies.
+_EXECUTABLE_POLICIES = {"read_only_analysis"}
+
 # v0.2.0 media-evidence policy vocabulary. The media section is OPTIONAL
 # and fail-closed: absent/invalid section => all media capabilities
 # denied. `network_allowed` stays false — governed_egress.media_retrieval
@@ -62,6 +140,18 @@ _ESCALATION_KINDS_KNOWN = {"frame", "audio_track", "source_image",
                            "source_audio"}
 
 
+def _is_str_list(value) -> bool:
+    return (isinstance(value, list) and
+            all(isinstance(v, str) for v in value))
+
+
+def _subset_of(value, known) -> bool:
+    """Type-safe subset check: elements must be known strings, so
+    unhashable nested containers can never reach set() membership."""
+    return (_is_str_list(value) and
+            all(v in known for v in value))
+
+
 def _validate_media_section(raw: dict) -> list:
     """Additive validation. Empty list = acceptable (which includes 'no
     media section at all' — that simply disables media capabilities)."""
@@ -71,48 +161,53 @@ def _validate_media_section(raw: dict) -> list:
     problems = []
     if not isinstance(me, dict):
         return ["media_evidence must be an object"]
-    if me.get("enabled") not in (True, False):
+    if not isinstance(me.get("enabled"), bool):
         problems.append("media_evidence.enabled must be boolean")
     tools = me.get("local_tools_allowed")
-    if not isinstance(tools, list) or \
-            not set(tools) <= _MEDIA_TOOLS_KNOWN:
+    if not _subset_of(tools, _MEDIA_TOOLS_KNOWN):
         problems.append("media_evidence.local_tools_allowed must be a "
                         "subset of: " + ", ".join(sorted(_MEDIA_TOOLS_KNOWN)))
-    if me.get("temp_dir_only") is not True:
-        problems.append("media_evidence.temp_dir_only must be true")
-    if me.get("delete_media_after_analysis") is not True:
-        problems.append("media_evidence.delete_media_after_analysis "
-                        "must be true")
-    eg = (me.get("governed_egress") or {}).get("media_retrieval")
+    for flag in ("temp_dir_only", "delete_media_after_analysis"):
+        value = me.get(flag)
+        if not isinstance(value, bool) or value is not True:
+            problems.append(f"media_evidence.{flag} must be boolean true")
+    ge = me.get("governed_egress")
+    if ge is not None and not isinstance(ge, dict):
+        problems.append("governed_egress must be an object")
+        ge = None
+    ge = ge if isinstance(ge, dict) else {}
+    eg = ge.get("media_retrieval")
     if eg is not None:
         if not isinstance(eg, dict):
             problems.append("governed_egress.media_retrieval must be an "
                             "object")
         else:
-            if eg.get("enabled") not in (True, False):
+            if not isinstance(eg.get("enabled"), bool):
                 problems.append("media_retrieval.enabled must be boolean")
-            if eg.get("enabled") and \
+            if eg.get("enabled") is True and \
                     eg.get("operator_initiated_only") is not True:
                 problems.append("media_retrieval requires "
                                 "operator_initiated_only: true")
-            if not set(eg.get("adapters") or []) <= _EGRESS_ADAPTERS_KNOWN:
+            if not _subset_of(eg.get("adapters"), _EGRESS_ADAPTERS_KNOWN):
                 problems.append("media_retrieval.adapters must be a "
                                 "subset of: "
                                 + ", ".join(sorted(_EGRESS_ADAPTERS_KNOWN)))
-            if not set(eg.get("tools") or []) <= _EGRESS_TOOLS_KNOWN:
+            if not _subset_of(eg.get("tools"), _EGRESS_TOOLS_KNOWN):
                 problems.append("media_retrieval.tools must be a subset "
                                 "of: " + ", ".join(sorted(_EGRESS_TOOLS_KNOWN)))
-    esc = (me.get("governed_egress") or {}).get("multimodal_escalation")
+    esc = ge.get("multimodal_escalation")
     if esc is not None:
         if not isinstance(esc, dict):
             problems.append("governed_egress.multimodal_escalation must "
                             "be an object")
         else:
-            if esc.get("enabled") not in (True, False):
+            if not isinstance(esc.get("enabled"), bool):
                 problems.append("multimodal_escalation.enabled must be "
                                 "boolean")
-            if esc.get("enabled"):
-                if esc.get("provider") not in _ESCALATION_PROVIDERS_KNOWN:
+            if esc.get("enabled") is True:
+                provider = esc.get("provider")
+                if not isinstance(provider, str) or \
+                        provider not in _ESCALATION_PROVIDERS_KNOWN:
                     problems.append(
                         "multimodal_escalation.provider must be one of: "
                         + ", ".join(sorted(_ESCALATION_PROVIDERS_KNOWN)))
@@ -128,8 +223,8 @@ def _validate_media_section(raw: dict) -> list:
                 if esc.get("default_mode") != "local_only":
                     problems.append("multimodal_escalation.default_mode "
                                     "must be local_only")
-                if not set(esc.get("artifact_kinds_allowed") or []) <= \
-                        _ESCALATION_KINDS_KNOWN:
+                if not _subset_of(esc.get("artifact_kinds_allowed"),
+                                  _ESCALATION_KINDS_KNOWN):
                     problems.append(
                         "multimodal_escalation.artifact_kinds_allowed "
                         "must be a subset of: "
@@ -142,18 +237,30 @@ def _validate_structure(raw: dict) -> list:
     problems = []
     if not isinstance(raw, dict):
         return ["policy root is not a JSON object"]
+    if not _check_depth(raw):
+        return [f"policy nesting exceeds maximum depth {_MAX_DEPTH}"]
     for k in _REQUIRED_KEYS:
         if k not in raw:
             problems.append(f"missing key: {k}")
     if problems:
         return problems
 
+    profile = raw["policy_profile"]
+    if not isinstance(profile, str) or profile not in _EXECUTABLE_POLICIES:
+        problems.append(
+            "policy_profile must be one of: "
+            + ", ".join(sorted(_EXECUTABLE_POLICIES))
+            + " (this release implements local read-only analysis only)")
+
     allowed = raw["allowed_policies"]
     if (not isinstance(allowed, list) or not allowed or
-            not all(isinstance(p, str) and p.strip() for p in allowed)):
-        problems.append("allowed_policies must be a non-empty list of "
-                        "policy names")
-    elif raw["default_policy"] not in allowed:
+            not _subset_of(allowed, _EXECUTABLE_POLICIES)):
+        problems.append(
+            "allowed_policies must be a non-empty list of policy names "
+            "from: " + ", ".join(sorted(_EXECUTABLE_POLICIES))
+            + " (a local policy file cannot grant broader policies)")
+    elif not isinstance(raw["default_policy"], str) or \
+            raw["default_policy"] not in allowed:
         problems.append("default_policy is not in allowed_policies")
 
     if raw.get("deny_unknown_policies") is not True:
@@ -164,16 +271,36 @@ def _validate_structure(raw: dict) -> list:
         problems.append("network_allowed must be false in v0.1.3")
 
     modes = raw.get("analysis_modes_enabled")
-    if not isinstance(modes, list) or not modes:
-        problems.append("analysis_modes_enabled must be a non-empty list")
+    if not isinstance(modes, list) or not modes or \
+            not all(isinstance(m, str) for m in modes):
+        problems.append("analysis_modes_enabled must be a non-empty list "
+                        "of mode names")
     elif not set(modes) <= _EXECUTABLE_ANALYSIS_MODES:
-        extra = set(modes) - _EXECUTABLE_ANALYSIS_MODES
+        extra = sorted(set(modes) - _EXECUTABLE_ANALYSIS_MODES)
         problems.append("analysis_modes_enabled enables unimplemented "
-                        f"modes: {', '.join(sorted(extra))}")
+                        f"modes: {', '.join(extra)}")
 
     for k in ("tools_allowed", "tools_denied"):
-        if not isinstance(raw.get(k), list) or not raw[k]:
-            problems.append(f"{k} must be a non-empty list")
+        if not _is_str_list(raw.get(k)) or not raw[k]:
+            problems.append(f"{k} must be a non-empty list of tool names")
+    tools_allowed = raw.get("tools_allowed")
+    tools_denied = raw.get("tools_denied")
+    if _is_str_list(tools_allowed) and tools_allowed and \
+            not set(tools_allowed) <= set(config.TOOLS_ALLOWED):
+        extra = sorted(set(tools_allowed) - set(config.TOOLS_ALLOWED))
+        problems.append("tools_allowed names tools this build does not "
+                        f"implement: {', '.join(extra)}")
+    if _is_str_list(tools_denied) and tools_denied and \
+            not set(config.TOOLS_DENIED) <= set(tools_denied):
+        missing = sorted(set(config.TOOLS_DENIED) - set(tools_denied))
+        problems.append("tools_denied must keep all build-required denies: "
+                        f"{', '.join(missing)}")
+    if _is_str_list(tools_allowed) and _is_str_list(tools_denied) and \
+            tools_allowed and tools_denied and \
+            set(tools_allowed) & set(tools_denied):
+        overlap = sorted(set(tools_allowed) & set(tools_denied))
+        problems.append("tools_allowed and tools_denied overlap: "
+                        f"{', '.join(overlap)}")
     problems.extend(_validate_media_section(raw))
     return problems
 
@@ -185,17 +312,26 @@ def load_policy() -> tuple:
     On any problem the returned policy is the fail-closed FAILSAFE copy.
     """
     try:
-        raw = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
+        text = POLICY_PATH.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return dict(FAILSAFE), False, f"policy file missing: {POLICY_PATH}"
-    except (json.JSONDecodeError, OSError) as e:
-        return dict(FAILSAFE), False, f"policy file unreadable or malformed: {e}"
+        return _deep_copy(FAILSAFE), False, f"policy file missing: {POLICY_PATH}"
+    except (OSError, UnicodeDecodeError) as e:
+        return _deep_copy(FAILSAFE), False, \
+            f"policy file unreadable or malformed: {e}"
+    try:
+        raw = _strict_loads(text)
+    except (ValueError, RecursionError) as e:
+        # JSONDecodeError, duplicate keys, non-finite numbers, and
+        # pathologically deep documents all fail closed here.
+        return _deep_copy(FAILSAFE), False, \
+            f"policy file unreadable or malformed: {e}"
 
     problems = _validate_structure(raw)
     if problems:
-        return dict(FAILSAFE), False, "invalid policy file: " + "; ".join(problems)
+        return _deep_copy(FAILSAFE), False, \
+            "invalid policy file: " + "; ".join(problems)
 
-    policy = dict(FAILSAFE)
+    policy = _deep_copy(FAILSAFE)
     policy.update(raw)
     return policy, True, None
 

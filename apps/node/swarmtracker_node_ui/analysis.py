@@ -63,10 +63,11 @@ ANALYSIS_MODE_DESCRIPTIONS = {
 # in the Media Evidence workflow (see /media) — so this notice points
 # there rather than implying no cloud capability exists anywhere.
 IMPLEMENTED_ANALYSIS_MODES = ("local_only",)
-MODE_NOTICE = ("Roadmap mode selected for text/log analysis. This "
-               "workflow executes Local Only and makes no cloud calls. "
-               "Governed per-job cloud escalation is available now in "
-               "the Media Evidence workflow.")
+MODE_NOTICE = ("This roadmap selector does not authorize cloud use. "
+               "Local analysis runs first; the separate Governed "
+               "Cloud-Assisted selection authorizes a bounded supplement "
+               "for this job only. Governed per-job cloud escalation is "
+               "available now in the Media Evidence and text workflows.")
 
 # ---------------- event categories ----------------
 

@@ -62,6 +62,7 @@ class _VFAIL:
 
 
 def _client(monkeypatch, cloud=None):
+    monkeypatch.setattr(providers, "VERTEX_PROJECT", "synthetic-test-project")
     monkeypatch.setattr(core_bridge.model_router, "adc_available",
                         lambda: True)
     if cloud is not None:

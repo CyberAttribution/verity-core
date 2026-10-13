@@ -76,7 +76,7 @@ until OpenClaw is running on 127.0.0.1:8090.</div>
       <div class="hint" id="sample-status"></div>
     </div>
     <div class="form-row">
-      <label>Upload Local Evidence File <span class="hint">(.txt .log .json .csv .eml · max 512 KB · local only, not persisted)</span></label>
+      <label>Upload Local Evidence File <span class="hint">(.txt .log .json .csv .eml · max 512 KB · read in browser; text submitted on analysis)</span></label>
       <input type="file" id="evidence_file" accept=".txt,.log,.json,.csv,.eml" onchange="readLocalFile(this)">
       <div class="hint" id="upload-status"></div>
     </div>
@@ -169,9 +169,10 @@ until OpenClaw is running on 127.0.0.1:8090.</div>
 
 <section class="panel panel-note">
   <p>All analysis executes locally on this node
-  (<code>{{ cfg.model }}</code>). No cloud calls. Samples are
+  (<code>{{ cfg.model }}</code>) by default. Per-job cloud authorization
+  permits a bounded supplement; local analysis stays local. Samples are
   <strong>synthetic demo artifacts</strong>, not real customer data.
-  Uploaded files are read as text in your browser and are not persisted.
+  Original files are read in your browser. Submitted text is retained in the local session report; explicit cloud authorization sends bounded excerpts.
   Organization profile: <strong>not loaded</strong>.</p>
 </section>
 

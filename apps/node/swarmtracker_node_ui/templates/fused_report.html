@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Fused Analysis Report{% endblock %}
 {% block content %}
+{% include "_execution.html" %}
 
 <section class="panel report-head risk-{{ fused.overall_risk }}">
   <div class="report-risk">
@@ -59,7 +60,7 @@
   provider was never engaged, no evidence left this node, and the
   failure is shown in this report. Local findings stand unchanged.</div>
 </section>
-{% elif router_meta and router_meta.escalated %}
+{% elif router_meta and router_meta.escalated and not router_meta.input_invalid %}
 {% set esc_ok = router_meta.escalation_ok %}
 <section class="panel">
   <div class="panel-head">

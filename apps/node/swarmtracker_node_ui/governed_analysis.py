@@ -259,9 +259,13 @@ def audit_result(workflow, ok, error=None, model_used=None,
          "provider": provider})
 
 
-def audit_denied(workflow, reason):
-    keel_events.append_event("cloud_escalation_denied",
-                             {"workflow": workflow, "reason": reason})
+def audit_denied(workflow, reason, event="cloud_escalation_denied"):
+    """Decision audit may fail; local work continues with an explicit flag."""
+    try:
+        return keel_events.append_event_mandatory(
+            event, {"workflow": workflow, "reason": reason})
+    except (keel_events.LedgerWriteError, ValueError, OSError):
+        return None
 
 
 _GOVERNED_TEXT_PROMPT = (
@@ -306,8 +310,11 @@ def run_text_cloud_assist(items, *, workflow="general_evidence",
     (ReservedWorkflowError), even when authorized."""
     guard_workflow(workflow)
     if not _authorization_granted(operator_authorized):
-        audit_denied(workflow, _DENY_AUTH_REASON)
+        decision_id = audit_denied(workflow, _DENY_AUTH_REASON)
         return {"escalated": True, "ok": False, "available": False,
+                "decision_event_id": decision_id,
+                "decision_audit": "recorded" if decision_id else "failed",
+                "provider_attempted": False,
                 "operator_authorized": False,
                 "authorized": False, "denied": True,
                 "reason": _DENY_AUTH_REASON, "text": "",
@@ -316,12 +323,25 @@ def run_text_cloud_assist(items, *, workflow="general_evidence",
                 "provider_status": None, "latency_ms": None,
                 "project": None, "region": None,
                 "error": _DENY_AUTH_REASON}
+    try:
+        digest, manifest = bounded_text_payload(items, max_chars=max_chars)
+    except ValueError as exc:
+        return {"escalated": True, "ok": False, "available": False,
+                "provider_attempted": False,
+                "operator_authorized": True, "authorized": False,
+                "denied": False, "input_invalid": True,
+                "reason": str(exc),
+                "error": "input_invalid", "text": "", "sent_manifest": [],
+                "provider": None, "attempted_models": [], "attempts": []}
     # Execution authorization is DISTINCT from operator intent: the
     # intent signal only unlocks this check; Keel policy still decides.
     allowed, why = keel_policy.multimodal_escalation_allowed()
     if not allowed:
-        audit_denied(workflow, why)
+        decision_id = audit_denied(workflow, why)
         return {"escalated": True, "ok": False, "available": False,
+                "decision_event_id": decision_id,
+                "decision_audit": "recorded" if decision_id else "failed",
+                "provider_attempted": False,
                 "operator_authorized": True,
                 "authorized": False, "denied": True,
                 "reason": why, "text": "", "sent_manifest": [],
@@ -334,31 +354,39 @@ def run_text_cloud_assist(items, *, workflow="general_evidence",
         # Unavailability / provider refusal after execution
         # authorization — reported as such, NOT as an authorization
         # denial and NOT as a sent/attempted cloud call.
-        audit_denied(workflow, pcfg["reason"])
+        decision_id = audit_denied(workflow, pcfg["reason"], "cloud_escalation_unavailable")
         return {"escalated": True, "ok": False, "available": False,
+                "decision_event_id": decision_id,
+                "decision_audit": "recorded" if decision_id else "failed",
+                "provider_attempted": False,
                 "operator_authorized": True,
                 "authorized": True, "denied": False,
-                "unavailable": True, "provider_attempted": False,
+                "unavailable": True,
                 "reason": pcfg["reason"], "text": "", "sent_manifest": [],
                     "provider": pcfg.get("provider"), "model_used": None,
                     "attempted_models": [], "attempts": [],
                     "provider_status": None, "latency_ms": None,
                     "project": pcfg.get("project"),
                     "region": pcfg.get("region"), "error": pcfg["reason"]}
-    cloud, why = providers.build_cloud_router(selected_model)
+    try:
+        cloud, why = providers.build_cloud_router(selected_model)
+    except Exception as exc:
+        cloud, why = None, "provider setup failed: " + type(exc).__name__
     if cloud is None:
-        audit_denied(workflow, why)
+        decision_id = audit_denied(workflow, why, "cloud_escalation_unavailable")
         return {"escalated": True, "ok": False, "available": False,
+                "decision_event_id": decision_id,
+                "decision_audit": "recorded" if decision_id else "failed",
+                "provider_attempted": False,
                 "operator_authorized": True,
                 "authorized": True, "denied": False,
-                "unavailable": True, "provider_attempted": False,
+                "unavailable": True,
                 "reason": why, "text": "", "sent_manifest": [],
                 "provider": pcfg.get("provider"), "model_used": None,
                 "attempted_models": [], "attempts": [],
                 "provider_status": None, "latency_ms": None,
                 "project": pcfg.get("project"),
                 "region": pcfg.get("region"), "error": why}
-    digest, manifest = bounded_text_payload(items, max_chars=max_chars)
     # Task 3 — MANDATORY ledger authorization BEFORE any generate call.
     # A write failure here means ZERO cloud SDK invocations: the job
     # returns honest audit-write-failed metadata with no sent artifacts
@@ -369,9 +397,10 @@ def run_text_cloud_assist(items, *, workflow="general_evidence",
         auth_eid = audit_authorized(workflow, provider_name, manifest)
     except (keel_events.LedgerWriteError, ValueError, OSError) as exc:
         return {"escalated": True, "ok": False, "available": False,
+                "provider_attempted": False,
                 "operator_authorized": True,
                 "authorized": True, "denied": False,
-                "unavailable": False, "provider_attempted": False,
+                "unavailable": False,
                 "audit_write_failed": True,
                 "reason": ("authorization ledger write failed — cloud "
                            "assist not attempted: " + str(exc)[:200]),
@@ -393,6 +422,10 @@ def run_text_cloud_assist(items, *, workflow="general_evidence",
                "error": f"provider SDK raised {type(exc).__name__}: {str(exc)[:300]}",
                "provider": provider_name,
                "attempted_models": [], "attempts": []}
+    if not isinstance(out, dict) or (out.get("ok") and
+                                    not isinstance(out.get("response"), str)):
+        out = {"ok": False, "error": "malformed provider response",
+               "response": "", "provider": provider_name}
     ok = bool(out.get("ok"))
     # Post-call result audit: a write failure CANNOT undo the provider
     # call that already happened. Keep the truthful provider outcome and
@@ -428,7 +461,7 @@ def run_text_cloud_assist(items, *, workflow="general_evidence",
     }
 
 
-def text_assist_router_meta(res):
+def _text_assist_router_meta(res):
     """Shape a run_text_cloud_assist result into the shared router_meta
     escalation fields, so generic investigations record identical
     provider provenance + custody as media.
@@ -592,30 +625,134 @@ def text_assist_router_meta(res):
 # ---- bounded evidence selection (Part 2) ----
 
 def bounded_text_payload(items, max_chars=6000, max_items=8):
-    """Build the MINIMUM useful cloud payload from text-type evidence:
-    per-item label + a bounded excerpt, never the whole investigation.
-    Returns (digest_text, manifest[]) where manifest records exactly what
-    was selected (type, sha256, size, reason) for the custody record."""
+    """Select bounded excerpts; manifest binds source and exact excerpt bytes.
+
+    The character budget covers excerpt content in aggregate; fixed prompt
+    text and bounded label/type headers are separate overhead.
+    """
     import hashlib
+    for name, value, cap in (("max_chars", max_chars, 6000),
+                             ("max_items", max_items, 8)):
+        if type(value) is not int or not 1 <= value <= cap:
+            raise ValueError(f"{name} must be an integer from 1 to {cap}")
+    if not isinstance(items, list) or not items:
+        raise ValueError("evidence selection must be a nonempty list")
+    # Validate every item, including anything excluded by the selection cap.
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ValueError(f"item {index} must be an evidence object")
+        for field, default in (("text", None), ("label", ""),
+                                ("evidence_type", "freeform_text")):
+            value = item.get(field, default)
+            if not isinstance(value, str) or (field == "text" and not value.strip()):
+                raise ValueError(f"item {index} {field} must be a valid string")
+            try:
+                value.encode("utf-8")
+            except UnicodeEncodeError:
+                raise ValueError(f"item {index} {field} contains invalid Unicode") from None
     lines = ["GOVERNED CLOUD-ASSIST — BOUNDED EVIDENCE DIGEST",
-             "(only the selected excerpts below were sent; the full "
-             "investigation, evidence package, and case remain local)", ""]
-    manifest = []
-    for it in (items or [])[:max_items]:
-        text = str(it.get("text", ""))
-        etype = it.get("evidence_type", "freeform_text")
-        label = str(it.get("label", etype))[:80]
-        excerpt = text[:max_chars]
-        reason = ("full text (within bound)" if len(text) <= max_chars
-                  else f"first {max_chars} chars of {len(text)} "
-                       "(bounded)")
-        sha = hashlib.sha256(excerpt.encode("utf-8", "replace")).hexdigest()
-        manifest.append({"kind": "text_excerpt", "evidence_type": etype,
-                         "label": label, "sha256": sha,
-                         "size_bytes": len(excerpt.encode("utf-8",
-                                                          "replace")),
-                         "reason": reason})
-        lines.append(f"--- {label} [{etype}] (sha256 {sha[:12]}…) ---")
-        lines.append(excerpt)
-        lines.append("")
+             "(selected excerpts for cloud review; selection is not proof of delivery)", ""]
+    manifest, remaining = [], max_chars
+    for index, item in enumerate(items[:max_items]):
+        if remaining <= 0:
+            break
+        text = item["text"]
+        etype = item.get("evidence_type", "freeform_text")
+        label = item.get("label", etype)
+        etype = " ".join(etype.split())[:80]
+        label = " ".join(label.split())[:80]
+        excerpt = text[:remaining]
+        data = excerpt.encode("utf-8")
+        sha = hashlib.sha256(data).hexdigest()
+        manifest.append({
+            "kind": "text_excerpt", "evidence_type": etype, "label": label,
+            "sha256": sha, "source_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "size_bytes": len(data), "excerpt_chars": len(excerpt),
+            "source_chars": len(text), "source_index": index,
+            "reason": ("full text (within aggregate bound)" if len(excerpt) == len(text)
+                       else f"first {len(excerpt)} chars of {len(text)} (aggregate bounded excerpt)"),
+        })
+        lines.extend([f"--- {label} [{etype}] (sha256 {sha[:12]}…) ---", excerpt, ""])
+        remaining -= len(excerpt)
     return "\n".join(lines), manifest
+
+
+
+def text_assist_router_meta(res):
+    """Preserve explicit execution signals in every shaped text result."""
+    if res and res.get("input_invalid"):
+        meta = {"escalated": True, "escalation_provider": None,
+                "escalation_ok": False, "sent_artifacts": [],
+                "attempted_models": [], "provider_error": None,
+                "reason": res.get("reason", ""), "denied": False,
+                "custody": {"sent_to_provider": [],
+                            "sent_but_provider_failed": []}}
+    else:
+        meta = _text_assist_router_meta(res)
+    if res:
+        meta.update({
+            "cloud_requested": bool(res.get("escalated")),
+            "operator_authorized": res.get("operator_authorized") is True,
+            "authorized": res.get("authorized") is True,
+            "provider_attempted": res.get("provider_attempted") is True,
+            "input_invalid": res.get("input_invalid") is True,
+            "decision_event_id": res.get("decision_event_id"),
+            "decision_audit": res.get("decision_audit", "not_required"),
+        })
+    return meta
+
+
+def execution_record(router_meta):
+    """SDK invocation and local audit facts; no remote-delivery guarantee.
+
+    Missing legacy invocation fields are treated as unconfirmed, never
+    inferred from model names, router construction, or operator intent.
+    """
+    rm = router_meta or {}
+    attempted = rm.get("provider_attempted") is True
+    requested = bool(rm.get("cloud_requested") or rm.get("escalated")
+                     or rm.get("audit_write_failed")
+                     or rm.get("escalation_auth_write_failed"))
+    auth_id = (rm.get("authorization_event_id")
+               or rm.get("escalation_auth_event_id"))
+    auth_failed = bool(rm.get("audit_write_failed")
+                       or rm.get("escalation_auth_write_failed"))
+    result_failed = bool(rm.get("result_write_failed")
+                         or rm.get("escalation_result_write_failed"))
+    # Actual invocation takes precedence: a later audit failure cannot
+    # erase an executed call or describe it as blocked before invocation.
+    if attempted:
+        state = "cloud_succeeded" if rm.get("escalation_ok") else "cloud_failed"
+    elif auth_failed:
+        state = "audit_blocked"
+    elif rm.get("input_invalid"):
+        state = "input_blocked"
+    elif rm.get("denied"):
+        state = "denied"
+    elif rm.get("unavailable"):
+        state = "unavailable"
+    elif requested:
+        state = "authorized_not_attempted"
+    else:
+        state = "local_only"
+    authorization_audit = ("failed" if auth_failed else
+                           "recorded" if auth_id else
+                           "not_required" if state in ("denied", "input_blocked",
+                                                       "unavailable", "local_only") else
+                           "not_recorded")
+    result_audit = ("failed" if result_failed else
+                    "recorded" if attempted and auth_id else
+                    "not_recorded" if attempted else "not_required")
+    return {
+        "state": state, "cloud_requested": requested,
+        "operator_authorized": rm.get("operator_authorized"),
+        "authorized": rm.get("authorized") is True,
+        "provider_attempted": attempted,
+        "blocked": requested and not attempted,
+        "authorization_event_id": auth_id,
+        "authorization_audit": authorization_audit,
+        "result_audit": result_audit,
+        "decision_event_id": rm.get("decision_event_id"),
+        "decision_audit": rm.get("decision_audit", "not_required"),
+        "reason": rm.get("reason") or rm.get("escalation_reason") or "",
+    }

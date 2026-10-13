@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Media Evidence Assessment{% endblock %}
 {% block content %}
+{% include "_execution.html" %}
 
 {% if fused %}
 <section class="panel report-head risk-{{ fused.overall_risk }}">

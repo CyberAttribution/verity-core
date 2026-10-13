@@ -34,3 +34,5 @@ include = ["verity_core*"]
 # The vendored dependency includes copies of Core tests; collect canonical
 # Core tests and Node-specific tests once, avoiding duplicate module names.
 testpaths = ["tests", "apps/node/swarmtracker_node_ui"]
+
+python_files = ["test_*.py", "tests_*.py"]

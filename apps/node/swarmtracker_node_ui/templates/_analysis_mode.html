@@ -15,8 +15,8 @@
         <span class="mode-card2-title">Local Analysis
           <span class="badge badge-ok">default</span></span>
         <span class="mode-card2-desc">Runs entirely on this node. Local
-          model, local persistence, local fusion. No network egress;
-          nothing leaves this machine.</span>
+          model, local persistence, local fusion. Cloud-assist is not
+          invoked. These application checks do not enforce an OS network sandbox.</span>
       </span>
     </label>
     <label class="mode-card2 {{ 'mc-disabled' if not escalation_ready }}"
@@ -35,8 +35,11 @@
           <strong>bounded evidence excerpts</strong>{% endif %} are sent
           to <strong>{{ provider.name or 'the cloud provider' }}</strong>
           ({{ provider.default_model_label or 'default model' }}).
-          The source evidence, Evidence Package, Canonical Case, Atlas,
-          audit trail, and final fusion all stay local.{% if not
+          {% if kind == 'media' %}Video source files stay local; image
+          and audio jobs may submit uploaded source bytes.{% else %}
+          Full source text stays local; selected excerpts may be sent.{% endif %}
+          The Evidence Package, Canonical Case, Atlas, audit trail, and
+          final fusion stay local.{% if not
           escalation_ready %}<br><strong>Unavailable:</strong>
           {{ escalation_unready_note or escalation_reason }}{% endif %}</span>
         {% if escalation_ready and provider.models %}

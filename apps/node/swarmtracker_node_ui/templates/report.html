@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Analysis Report{% endblock %}
 {% block content %}
+{% include "_execution.html" %}
 
 <section class="panel report-head risk-{{ report.risk_level }}">
   <div class="report-risk">
@@ -39,7 +40,7 @@
   </div>
   <div class="alert alert-warn" style="margin-top:10px">Cloud-assist was <strong>authorized</strong> for this job, but the provider was <strong>unavailable</strong>{% if router_meta.reason %} ({{ router_meta.reason }}){% endif %}. No provider call was attempted and no evidence left this node. Local findings stand unchanged.</div>
 </section>
-{% elif router_meta and router_meta.escalated %}
+{% elif router_meta and router_meta.escalated and not router_meta.input_invalid %}
 {% set esc_ok = router_meta.escalation_ok %}
 <section class="panel">
   <div class="panel-head">
@@ -58,7 +59,7 @@
   <h3 class="card-label" style="margin-top:12px">Cloud-assisted findings (labeled supplement — local analysis above is authoritative)</h3>
   <p class="verdict" style="white-space:pre-wrap;font-size:13px">{{ cloud_assist.text }}</p>
   {% elif not esc_ok %}
-  <div class="alert alert-bad" style="margin-top:10px">Vertex did <strong>not</strong> examine the evidence (provider error{% if router_meta.provider_status %} HTTP {{ router_meta.provider_status }}{% endif %}). Local findings stand unchanged.</div>
+  <div class="alert alert-bad" style="margin-top:10px">Vertex did <strong>not confirm successful examination</strong> of the evidence (provider error{% if router_meta.provider_status %} HTTP {{ router_meta.provider_status }}{% endif %}). Local findings stand unchanged.</div>
   {% endif %}
 </section>
 {% endif %}
@@ -79,7 +80,7 @@
 {% if not meta.analysis_mode_executed %}
 <div class="alert alert-warn">Roadmap analysis mode selected
 ({{ meta.analysis_mode }}). This version executed <strong>Local Only</strong>;
-no cloud calls were made.</div>
+cloud use is disclosed separately in the execution and audit panel.</div>
 {% endif %}
 
 {% if meta.sample_source or meta.uploaded_filename %}
@@ -88,7 +89,7 @@ no cloud calls were made.</div>
   <code class="mono">{{ meta.sample_source }}</code> — not real customer data.
   {% else %}Evidence source: local uploaded file
   <code class="mono">{{ meta.uploaded_filename }}</code> (read as text on this
-  machine; not persisted).{% endif %}
+  machine; submitted text retained in the local session report).{% endif %}
 </div>
 {% endif %}
 

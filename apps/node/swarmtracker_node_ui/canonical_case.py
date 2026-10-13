@@ -52,6 +52,8 @@ def _escalation_record(rm):
         # operator was authorized but the mandatory authorization row
         # could not be written; no cloud escalation was attempted
         state = "auth_write_failed"
+    elif rm.get("input_invalid"):
+        state = "input_blocked"
     elif not escalated:
         state = "not_authorized"
     elif rm.get("denied"):
@@ -60,13 +62,15 @@ def _escalation_record(rm):
         state = "used"
     elif unavailable:
         state = "unavailable"     # authorized, but NO provider was contacted
-    elif rm.get("multimodal_unavailable"):
+    elif rm.get("multimodal_unavailable") or rm.get("provider_attempted"):
         state = "failed"
     else:
         state = "authorized_no_effect"
+    from .governed_analysis import execution_record
     return {
-        "authorized": (escalated or auth_write_failed)
-                      and not rm.get("denied"),
+        "execution": execution_record(rm),
+        "authorized": (rm.get("authorized") if "authorized" in rm else
+                       (escalated or auth_write_failed) and not rm.get("denied")),
         "provider": rm.get("escalation_provider"),
         "vertex_project": rm.get("vertex_project"),
         "region": rm.get("vertex_region"),

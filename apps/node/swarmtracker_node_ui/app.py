@@ -43,6 +43,8 @@ templates = Jinja2Templates(directory=str(config.PKG_DIR / "templates"))
 
 def render(name: str, ctx: dict):
     """TemplateResponse across Starlette versions (request-first vs legacy)."""
+    if "router_meta" in ctx:
+        ctx["execution"] = governed_analysis.execution_record(ctx["router_meta"])
     try:
         return templates.TemplateResponse(ctx["request"], name, ctx)
     except TypeError:
@@ -178,9 +180,15 @@ def _mode_strings(rm):
                 "No — escalation not attempted "
                 "(authorization ledger write failed)",
                 "ollama_local")
+    execution = governed_analysis.execution_record(rm)
+    if execution["state"] in ("denied", "input_blocked", "unavailable",
+                              "authorized_not_attempted"):
+        return ("Local Only", execution["state"].replace("_", " ").title(),
+                "No — provider not attempted", "ollama_local")
     if esc_ok:
         return ("Governed Hybrid", f"Authorized — {prov_label} (this job)",
-                "Yes — bounded artifacts only",
+                ("Yes — extracted artifacts only" if rm.get("supports_media")
+                 else "Yes — bounded artifacts only"),
                 f"ollama_local + {prov} (authorized)")
     if rm.get("escalated"):
         st = rm.get("provider_status")
@@ -353,13 +361,15 @@ def analyze_run(request: Request,
                  "claimed_sender": claimed_sender,
                  "claimed_org": claimed_org,
                  "requested_action": requested_action}]
-    escalate = bool(escalate_multimodal.strip())
+    escalate = (escalate_multimodal == "1")
     cloud = governed_analysis.run_text_cloud_assist(
         one_item, workflow="single_analysis",
         selected_model=vertex_model.strip() or None,
         operator_authorized=escalate) if escalate else None
     rm = governed_analysis.text_assist_router_meta(cloud) if cloud \
-        else {"escalated": False}
+        else {"escalated": False, "cloud_requested": False,
+              "operator_authorized": False, "authorized": False,
+              "provider_attempted": False}
     executed_mode, cloud_escalation, cloud_used, _pd = _mode_strings(rm)
     token = event_id or ("sa-" + str(len(GENERIC_JOBS)))
     # build an export-ready report dict (indicators as entities) so
@@ -491,13 +501,15 @@ def analyze_fused(request: Request,
         lambda p: oc.generate(p, policy=locked_policy))
 
     # optional governed cloud-assist over a BOUNDED digest (Part 2)
-    escalate = bool(escalate_multimodal.strip())
+    escalate = (escalate_multimodal == "1")
     cloud = governed_analysis.run_text_cloud_assist(
         items, workflow=workflow,
         selected_model=vertex_model.strip() or None,
         operator_authorized=escalate) if escalate else None
     rm = governed_analysis.text_assist_router_meta(cloud) if cloud \
-        else {"escalated": False}
+        else {"escalated": False, "cloud_requested": False,
+              "operator_authorized": False, "authorized": False,
+              "provider_attempted": False}
     executed_mode, cloud_escalation, cloud_used, provider_display = \
         _mode_strings(rm)
 
@@ -1018,7 +1030,7 @@ async def media_upload(request: Request,
         generate_fn=lambda p: oc.generate(p, policy=locked_policy),
         declared=declared,
         case_context="; ".join(case_ctx_bits),
-        escalate=bool(escalate_multimodal.strip()),
+        escalate=(escalate_multimodal == "1"),
         selected_model=vertex_model.strip() or None)
 
     return _finish_media_job(
@@ -1099,37 +1111,8 @@ def _finish_media_job(ctx, result, media_label, investigation_id,
     # Mode display: the header must never present cloud reasoning as
     # local. Escalation flips the executed mode to Governed Hybrid.
     rm = result.get("router_meta") or {}
-    esc_ok = bool(rm.get("escalated")) and bool(rm.get("escalation_ok"))
-    if esc_ok:
-        executed_mode = "Governed Hybrid"
-        cloud_escalation = "Authorized — Gemini (this job)"
-        cloud_used = "Yes — extracted artifacts only"
-        provider_display = "ollama_local + gemini (authorized escalation)"
-    elif rm.get("escalation_auth_write_failed"):
-        # Task 3 — pre-call authorization ledger write failure:
-        # fail-closed Local Only with the explicit audit reason (never
-        # mislabeled as a provider failure or a policy denial).
-        executed_mode = "Local Only"
-        cloud_escalation = ("Not authorized — audit ledger write failed")
-        cloud_used = ("No — escalation not attempted (authorization "
-                      "ledger write failed)")
-        provider_display = "ollama_local"
-    elif rm.get("escalated"):
-        # Authorized but the provider call failed. Per the governance
-        # model the mode stays Governed Hybrid (the operator DID
-        # authorize and artifacts WERE sent); cloud_used is an honest
-        # "Failed" and the local findings are preserved.
-        executed_mode = "Governed Hybrid"
-        cloud_escalation = "Authorized — Gemini (this job)"
-        _st = rm.get("provider_status")
-        cloud_used = ("Failed" + (f" (HTTP {_st})" if _st else "")
-                      + " — local findings preserved")
-        provider_display = "ollama_local (Gemini escalation failed)"
-    else:
-        executed_mode = "Local Only"
-        cloud_escalation = "Disabled"
-        cloud_used = "No"
-        provider_display = "ollama_local"
+    ctx["router_meta"] = rm
+    executed_mode, cloud_escalation, cloud_used, provider_display = _mode_strings(rm)
 
     pol = keel_policy.policy_summary()
     ctx["page"] = "report"
@@ -1230,7 +1213,7 @@ def media_retrieve(request: Request,
         media_url.strip(),
         generate_fn=lambda p: oc.generate(p, policy=locked_policy),
         declared=declared, case_context="; ".join(case_ctx_bits),
-        escalate=bool(escalate_multimodal.strip()),
+        escalate=(escalate_multimodal == "1"),
         selected_model=vertex_model.strip() or None)
     label = media_url.strip()[:80]
     md = result.get("retrieval_metadata") or {}
@@ -1267,7 +1250,7 @@ def media_demo_run(request: Request,
     locked_policy = keel_policy.enforced_policy(policy)
     result = media_runner.run_demo_job(
         generate_fn=lambda p: oc.generate(p, policy=locked_policy),
-        escalate=bool(escalate_multimodal.strip()),
+        escalate=(escalate_multimodal == "1"),
         selected_model=vertex_model.strip() or None)
     return _finish_media_job(
         ctx, result, "swarmtracker-demo-specimen.mp4", investigation_id,
@@ -1335,6 +1318,20 @@ def _sha_of_job(job):
     return None
 
 
+def _execution_markdown(rm):
+    ex = governed_analysis.execution_record(rm)
+    return ["## Cloud execution and audit", "",
+            f"- State: {ex['state']}",
+            f"- Provider SDK attempted: {ex['provider_attempted']}",
+            f"- Blocked before invocation: {ex['blocked']}",
+            f"- Authorization audit: {ex['authorization_audit']}",
+            f"- Result audit: {ex['result_audit']}",
+            f"- Decision audit: {ex['decision_audit']}",
+            f"- Authorization event: {ex['authorization_event_id'] or 'none'}",
+            f"- Reason: {ex['reason'] or 'none'}",
+            "- An SDK invocation does not prove remote delivery or examination.", ""]
+
+
 def _report_markdown(job):
     a = job.get("assessment") or {}
     rm = job.get("router_meta") or {}
@@ -1349,6 +1346,7 @@ def _report_markdown(job):
         f"**{a.get('assessment_conclusion', 'n/a')}**", "",
         a.get("conclusion_rationale", ""), "",
     ]
+    lines += _execution_markdown(rm)
     if rm.get("multimodal_unavailable"):
         lines += ["> Multimodal interpretation unavailable — extracted "
                   "artifacts were preserved locally but not examined; no "
@@ -1375,9 +1373,9 @@ def _report_markdown(job):
     lines.append(f"- Source file: {cust.get('source_file', 'n/a')}")
     lines.append(f"- Artifacts retained locally: "
                  f"{len(cust.get('retained_local') or [])}")
-    lines.append(f"- Sent to provider: "
+    lines.append(f"- Submitted to provider SDK (successful response): "
                  f"{len(cust.get('sent_to_provider') or [])}")
-    lines.append(f"- Sent but provider failed: "
+    lines.append(f"- Submitted to provider SDK (failed; delivery unconfirmed): "
                  f"{len(cust.get('sent_but_provider_failed') or [])}")
     return "\n".join(lines) + "\n"
 
@@ -1398,6 +1396,7 @@ def media_report_json(token: str):
     payload = {k: job.get(k) for k in
                ("report_id", "media_label", "executed_mode", "cloud_used",
                 "assessment", "provenance", "router_meta", "case")}
+    payload["execution"] = governed_analysis.execution_record(job.get("router_meta"))
     body = json.dumps(payload, indent=2, default=str)
     return PlainTextResponse(body, media_type="application/json",
                              headers={"Content-Disposition":
@@ -1504,7 +1503,8 @@ def _generic_report_markdown(job):
              f"**Verdict:** {rep.get('fused_verdict','n/a')}  ",
              f"**Overall risk:** {rep.get('overall_risk','n/a')} "
              f"({rep.get('overall_confidence','?')}/100)", ""]
-    if rm.get("escalated"):
+    lines += _execution_markdown(rm)
+    if governed_analysis.execution_record(rm)["provider_attempted"]:
         lines += ["## Cloud-assisted supplement", ""]
         if rm.get("escalation_ok"):
             lines += [f"Provider: {rm.get('escalation_provider')} · "
@@ -1516,9 +1516,9 @@ def _generic_report_markdown(job):
                       (ca.get("text") or "")[:4000]]
         else:
             lines += [f"> Cloud escalation was AUTHORIZED but FAILED "
-                      f"(HTTP {rm.get('provider_status')}). No cloud "
+                      f"({('HTTP ' + str(rm.get('provider_status'))) if rm.get('provider_status') else 'SDK/transport error'}). No cloud "
                       "findings were produced; local findings preserved. "
-                      "The provider did not examine the evidence.", ""]
+                      "No successful examination was confirmed.", ""]
     elif rm.get("audit_write_failed"):
         lines += ["> No cloud assist was attempted: the mandatory "
                   "authorization record could not be written to the "
@@ -1538,8 +1538,9 @@ def _generic_report_markdown(job):
               "- Local findings, evidence, and Canonical Case: retained "
               "on this node.",
               "- Sent to provider: " + (
-                  "bounded text excerpts only"
-                  if rm.get("escalated") else "nothing (Local Only).")]
+                  "bounded excerpts handed to the provider SDK; delivery is not independently confirmed"
+                  if governed_analysis.execution_record(rm)["provider_attempted"]
+                  else "nothing (no provider invocation).")]
     if rm.get("audit_write_failed"):
         lines += ["- Authorization ledger write failed before any cloud "
                   "call; nothing was authorized or sent."]
@@ -1559,6 +1560,7 @@ def generic_report_json(token: str):
     payload = {k: job.get(k) for k in
                ("report_id", "workflow", "executed_mode", "cloud_used",
                 "report", "cloud_assist", "router_meta", "provenance")}
+    payload["execution"] = governed_analysis.execution_record(job.get("router_meta"))
     body = json.dumps(payload, indent=2, default=str)
     return PlainTextResponse(body, media_type="application/json",
                              headers={"Content-Disposition":

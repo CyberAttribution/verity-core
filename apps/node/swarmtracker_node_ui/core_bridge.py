@@ -93,6 +93,7 @@ class EscalatingRouter(OpenClawRouter):
     def __init__(self, generate_fn, cloud_router):
         super().__init__(generate_fn)
         self._cloud = cloud_router
+        self.provider_attempted = False
         self.multimodal_ok = False
         self.multimodal_error = None
         self.multimodal_attempts = []
@@ -105,6 +106,7 @@ class EscalatingRouter(OpenClawRouter):
         self.region = getattr(cloud_router, "location", None)
 
     def generate_multimodal(self, prompt: str, parts: list) -> dict:
+        self.provider_attempted = True  # SDK invocation, not proof of delivery
         try:
             out = self._cloud.generate_multimodal(prompt, parts) or {}
         except Exception as e:   # never raise into the pipeline

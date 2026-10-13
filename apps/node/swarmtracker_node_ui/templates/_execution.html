@@ -1,0 +1,17 @@
+{% if execution %}
+<section class="panel">
+  <div class="panel-head"><h2>Cloud execution and audit</h2></div>
+  <div class="kv-grid">
+    <div class="kv"><span>State</span><code>{{ execution.state }}</code></div>
+    <div class="kv"><span>Provider SDK attempted</span><code>{{ execution.provider_attempted }}</code></div>
+    <div class="kv"><span>Blocked before invocation</span><code>{{ execution.blocked }}</code></div>
+    <div class="kv"><span>Authorization audit</span><code>{{ execution.authorization_audit }}</code></div>
+    <div class="kv"><span>Decision audit</span><code>{{ execution.decision_audit }}</code></div>
+    <div class="kv"><span>Result audit</span><code>{{ execution.result_audit }}</code></div>
+    <div class="kv"><span>Authorization event</span><code>{{ execution.authorization_event_id or 'none' }}</code></div>
+  </div>
+  {% if execution.reason %}<p>{{ execution.reason }}</p>{% endif %}
+  <p class="hint">An SDK invocation does not prove remote delivery or examination.
+    A local event ID is a correlation reference, not authenticated human approval.</p>
+</section>
+{% endif %}

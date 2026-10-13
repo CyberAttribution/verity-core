@@ -375,6 +375,8 @@ def run_media_job(src_path, orig_filename, *, generate_fn,
         esc_router, esc_reason, sent_manifest = None, "", []
         auth_eid, auth_write_failed, result_write_failed = \
             None, False, False
+        denied, unavailable = False, False
+        decision_id, decision_audit = None, "not_required"
         if escalate and parts:
             # `escalate` is this job's explicit per-job operator
             # selection (form radio / direct caller); forwarded as the
@@ -387,15 +389,26 @@ def run_media_job(src_path, orig_filename, *, generate_fn,
             # router exists, an attempted generate proves only that the
             # SDK call was made, not that bytes reached the remote
             # provider (credential/transport setup can fail pre-HTTP).
-            esc_router, esc_reason = _escalation_router(
-                generate_fn, selected_model,
-                operator_authorized=(escalate is True))
+            if escalate is not True:
+                denied, esc_reason = True, "explicit boolean authorization required"
+            else:
+                allowed, esc_reason = keel_policy.multimodal_escalation_allowed()
+                denied = not allowed
+                if allowed:
+                    esc_router, esc_reason = _escalation_router(
+                        generate_fn, selected_model, operator_authorized=True)
+                    unavailable = esc_router is None
             if esc_router is None:
                 stages.add("analyzing", "degraded",
                            "escalation unavailable: " + esc_reason
                            + " — continuing Local Only")
-                keel_events.append_event("media_escalation_denied",
-                                         {"reason": esc_reason})
+                try:
+                    decision_id = keel_events.append_event_mandatory(
+                        "media_escalation_denied" if denied else
+                        "media_escalation_unavailable", {"reason": esc_reason})
+                    decision_audit = "recorded"
+                except (keel_events.LedgerWriteError, ValueError, OSError):
+                    decision_audit = "failed"
             else:
                 for a in pkg["artifacts"]:
                     if a["kind"] in ("frame", "audio_track"):
@@ -463,6 +476,7 @@ def run_media_job(src_path, orig_filename, *, generate_fn,
                                "(interpretation only; fusion stays "
                                "local)")
         elif escalate and not parts:
+            esc_reason = "no extracted artifacts available for cloud review"
             stages.add("analyzing", "degraded",
                        "escalation requested but this specimen produced "
                        "no artifacts to send — Local Only")
@@ -588,6 +602,14 @@ def run_media_job(src_path, orig_filename, *, generate_fn,
             "media_examined": bool(media_examined),
             "fallback": bool(assessment.get("fallback")),
             "escalated": bool(escalated),
+            "cloud_requested": bool(escalate),
+            "operator_authorized": escalate is True,
+            "authorized": bool(escalate is True and not denied),
+            "provider_attempted": bool(getattr(router, "provider_attempted", False)),
+            "denied": denied,
+            "unavailable": unavailable,
+            "decision_event_id": decision_id,
+            "decision_audit": decision_audit,
             "escalation_reason": esc_reason or None,
             "escalation_provider": (getattr(router, "provider", "vertex")
                                     if escalated else None),
@@ -613,7 +635,8 @@ def run_media_job(src_path, orig_filename, *, generate_fn,
             "sent_artifacts": sent_manifest if escalated else [],
             "custody": {
                 "source_file": "processed locally, deleted after "
-                               "analysis; never sent to any provider",
+                               "analysis; source video is not sent; an authorized "
+                               "image/audio job may submit source bytes",
                 "retained_local": [a.get("sha256") for a in
                                    pkg["artifacts"] if a.get("sha256")],
                 "sent_to_provider": [s.get("sha256") for s in

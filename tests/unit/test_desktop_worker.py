@@ -136,7 +136,8 @@ def _launch(tmp_path, repo=REPO):
         env=env, cwd=str(tmp_path))
 
 
-def test_worker_lifecycle_ready_http_sigterm(tmp_path):
+@pytest.mark.parametrize("stop_signal", [signal.SIGTERM, signal.SIGINT])
+def test_worker_lifecycle_ready_http_sigterm(tmp_path, stop_signal):
     proc = _launch(tmp_path)
     try:
         url = _read_ready(proc)
@@ -146,9 +147,10 @@ def test_worker_lifecycle_ready_http_sigterm(tmp_path):
                 "/api/samples/auth_failed_login_burst", timeout=10) as resp:
             assert resp.status == 200
             resp.read()
-        # SIGTERM: process exits within 8s and port becomes unreachable
-        proc.send_signal(signal.SIGTERM)
+        # Both ordinary termination and terminal interrupt release the port.
+        proc.send_signal(stop_signal)
         proc.wait(timeout=8)
+        assert b"Traceback" not in proc.stderr.read()
         with pytest.raises((ConnectionError, OSError, urllib.error.URLError)):
             s = socket.create_connection(("127.0.0.1", port), timeout=2)
             s.close()
@@ -177,3 +179,105 @@ def test_worker_invalid_repo_fails_without_sentinel_leak(tmp_path):
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=5)
+
+
+def test_worker_http_intake_exports_and_persistence(tmp_path, monkeypatch, synthetic_runtime):
+    """Actual worker, HTTP forms, exports, disk restart; no live providers."""
+    import re
+    import urllib.request
+    import urllib.parse
+    runtime_url, calls = synthetic_runtime
+    monkeypatch.setenv("NODE_UI_OPENCLAW_URL", runtime_url)
+    monkeypatch.setenv("NODE_UI_OLLAMA_URL", runtime_url)
+    monkeypatch.setenv("NODE_UI_HEALTH_TIMEOUT", "0.1")
+    monkeypatch.setenv("NODE_UI_GENERATE_TIMEOUT", "0.1")
+    proc = _launch(tmp_path)
+    def get(path):
+        with urllib.request.urlopen(url + path, timeout=15) as response:
+            return response.read(), response.headers
+    def post(path, fields):
+        request = urllib.request.Request(url + path,
+            data=urllib.parse.urlencode(fields).encode())
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return response.read(), response.headers, response.url
+    try:
+        url = _read_ready(proc)
+        for page in ("/", "/analyze", "/media", "/governance", "/settings", "/investigations"):
+            body, _ = get(page)
+            assert b"<html" in body.lower()
+        health = json.loads(get("/healthz")[0])
+        assert health["runtime_online"] is True
+        assert health["multimodal_escalation_ready"] is False
+        sample = json.loads(get("/api/samples/auth_failed_login_burst")[0])
+        assert isinstance(sample, dict) and sample
+        for selection in ("", "true", "1"):
+            html, _, _ = post("/analyze", {
+                "evidence": "Synthetic test specimen <script>alert('specimen')</script>",
+                "uploaded_filename": "synthetic.txt",
+                "escalate_multimodal": selection})
+            assert b"<script>alert('specimen')</script>" not in html
+            match = re.search(rb'/report/([^/"?]+)/json', html)
+            assert match, "intake did not expose a JSON report"
+            token = match.group(1).decode()
+            payload, headers = get("/report/" + token + "/json")
+            report = json.loads(payload)
+            assert "attachment" in headers["Content-Disposition"]
+            assert report["execution"]["provider_attempted"] is False
+            assert report["execution"]["state"] in (
+                "local_only", "unavailable", "denied")
+            md, _ = get("/report/" + token + "/report")
+            assert report["execution"]["state"].encode() in md
+        assert calls and all(c["execution_location"] == "local" and c["evidence_boundary_enforced"] is True for c in calls)
+        _, _, project_url = post("/investigations/new", {"name": "Synthetic durable worker test"})
+        project_path = urllib.parse.urlsplit(project_url).path
+        assert project_path.startswith("/investigations/")
+        exported = json.loads(get(project_path + "/export")[0])
+        assert exported
+        proc.terminate()
+        proc.wait(timeout=8)
+        proc = _launch(tmp_path)
+        url = _read_ready(proc)
+        assert b"Synthetic durable worker test" in get(project_path)[0]
+        restarted_export = json.loads(get(project_path + "/export")[0])
+        exported.pop("exported_at", None)
+        restarted_export.pop("exported_at", None)
+        assert restarted_export == exported
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=8)
+
+
+@pytest.fixture
+def synthetic_runtime():
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+    calls = []
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args): pass
+        def send_json(self, body):
+            data = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        def do_GET(self):
+            self.send_json({"models": [{"name": "qwen2.5:7b-instruct"}]}
+                if self.path == "/api/tags" else {"ok": True, "provider": "synthetic"})
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            calls.append(body)
+            self.send_json({"ok": True, "provider": "synthetic", "response": json.dumps({
+                "risk_level": "low", "confidence": 10,
+                "verdict": "Synthetic local assessment", "signals": [],
+                "recommended_action": "Corroborate locally"})})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield "http://127.0.0.1:" + str(server.server_port), calls
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)

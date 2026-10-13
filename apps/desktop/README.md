@@ -29,9 +29,11 @@ Mac mini; the intended OpenClaw runtime is on the other Mac mini. This shell
 does not start, install or select an inference model. Its existing Node
 backend still expects loopback OpenClaw/Ollama addresses. A verified private
 connection (for example, a loopback SSH tunnel) to the intended other Mac
-has not yet been configured. Google ADK versus Gemini/Vertex client SDK
-integration has not been resolved; this work does not claim a separate
-Google ADK runtime implementation.
+has not yet been configured. The current Google transport uses Vertex REST requests with google-auth
+Application Default Credentials through the vendored optional adapter.
+It is not a Google Gen AI SDK or Google ADK runtime implementation.
+Google is a governed supplement: text intake must complete local OpenClaw
+analysis before cloud assistance; there is no standalone Google-only mode.
 
 Google cloud assistance remains behind the existing strict per-job intent,
 policy, bounded selection and mandatory authorization-ledger gates.
@@ -48,7 +50,7 @@ with no text or new objects. Built-in image editing produced the PNG;
 macOS sips/iconutil created ICNS packaging sizes.
 
 Validation includes actual worker startup, local sample HTTP response,
-SIGTERM shutdown and released port on Mac and Linux; native compilation,
+SIGTERM/SIGINT shutdown and released port on Mac; native compilation,
 dashboard rendering, JavaScript evaluation, snapshot and quit/child cleanup.
 It does not certify interactive Save-panel completion or an unconfigured
 live inference/cloud workflow. Run:

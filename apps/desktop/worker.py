@@ -3,6 +3,7 @@ import argparse
 import asyncio
 import json
 import os
+import signal
 import socket
 import sys
 from pathlib import Path
@@ -61,9 +62,14 @@ def main(argv=None):
     try:
         repo = validate_repo(args.repo)
         setup_environment(repo)
+        # CLI launches can inherit ignored SIGINT from a background shell.
+        # Restore ordinary interruption; uvicorn handles graceful shutdown.
+        signal.signal(signal.SIGINT, signal.default_int_handler)
         with bind_server_socket() as sock:
             asyncio.run(serve(sock))
         return 0
+    except KeyboardInterrupt:
+        return 130  # graceful terminal interruption, without raw traceback
     except Exception:
         # Native shell shows actionable generic diagnostics; no credential,
         # evidence, environment dump or raw provider exception is printed.

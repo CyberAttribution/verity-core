@@ -9,13 +9,24 @@ import requests
 from . import config, keel_policy
 
 
+def _request_json(method, url, **kwargs):
+    """Loopback only, without proxy inheritance or redirect following."""
+    config.assert_local(url)
+    kwargs["allow_redirects"] = False
+    with requests.Session() as session:
+        session.trust_env = False
+        with session.request(method, url, **kwargs) as response:
+            if 300 <= response.status_code < 400:
+                raise ValueError("Local runtime redirect refused")
+            response.raise_for_status()
+            return response.json()
+
+
 def healthz(timeout: float = None) -> dict:
     """GET /healthz. Returns {} on any failure (caller treats as offline)."""
     try:
-        r = requests.get(config.OPENCLAW_URL.rstrip("/") + "/healthz",
-                         timeout=timeout or config.HEALTH_TIMEOUT)
-        r.raise_for_status()
-        return r.json()
+        return _request_json("GET", config.OPENCLAW_URL.rstrip("/") + "/healthz",
+                             timeout=timeout or config.HEALTH_TIMEOUT)
     except Exception:
         return {}
 
@@ -23,10 +34,9 @@ def healthz(timeout: float = None) -> dict:
 def ollama_models(timeout: float = None) -> list:
     """GET Ollama /api/tags. Returns [] on any failure."""
     try:
-        r = requests.get(config.OLLAMA_URL.rstrip("/") + "/api/tags",
-                         timeout=timeout or config.HEALTH_TIMEOUT)
-        r.raise_for_status()
-        return [m.get("name", "") for m in r.json().get("models", [])]
+        data = _request_json("GET", config.OLLAMA_URL.rstrip("/") + "/api/tags",
+                             timeout=timeout or config.HEALTH_TIMEOUT)
+        return [m.get("name", "") for m in data.get("models", [])]
     except Exception:
         return []
 
@@ -73,17 +83,16 @@ def generate(prompt: str, *, model: str = None, policy: str = None,
         },
     }
     try:
-        r = requests.post(url, json=payload, timeout=config.GENERATE_TIMEOUT)
-        r.raise_for_status()
-        data = r.json()
+        data = _request_json("POST", url, json=payload,
+                             timeout=config.GENERATE_TIMEOUT)
     except requests.exceptions.ConnectionError:
-        return {"ok": False, "error": "Local runtime unreachable on 127.0.0.1:8090. "
+        return {"ok": False, "error": "Local runtime unreachable at the configured loopback endpoint. "
                                       "Is OpenClaw running?"}
     except requests.exceptions.Timeout:
         return {"ok": False, "error": "Local model timed out. The M1 may still be "
                                       "loading the model; try again."}
     except Exception as e:
-        return {"ok": False, "error": f"Local runtime error: {e}"}
+        return {"ok": False, "error": f"Local runtime request failed ({e.__class__.__name__})."}
 
     # Defensive field lookup — response text and event id keys may vary.
     text = None

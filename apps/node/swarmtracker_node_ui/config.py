@@ -51,9 +51,27 @@ VERTEX_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION",
 
 
 def assert_local(url: str) -> str:
-    """Refuse any non-loopback base URL. This UI never calls out."""
-    if not (url.startswith("http://127.0.0.1") or url.startswith("http://localhost")):
-        raise ValueError(f"Non-local URL refused by SwarmTracker Node UI: {url}")
+    """Validate an exact HTTP loopback destination without leaking URL data."""
+    import re
+    from urllib.parse import urlsplit
+    message = "Invalid or non-loopback runtime URL refused by SwarmTracker Node UI"
+    if not isinstance(url, str) or not url or any(
+            ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in url):
+        raise ValueError(message)
+    if "\\" in url or "?" in url or "#" in url:
+        raise ValueError(message)
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+        valid = (parts.scheme == "http"
+                 and re.fullmatch(r"(?:127[.]0[.]0[.]1|localhost)(?::[0-9]+)?",
+                                  parts.netloc, re.IGNORECASE) is not None
+                 and parts.hostname in ("127.0.0.1", "localhost")
+                 and (port is None or 1 <= port <= 65535))
+    except (ValueError, TypeError):
+        raise ValueError(message) from None
+    if not valid:
+        raise ValueError(message)
     return url
 
 

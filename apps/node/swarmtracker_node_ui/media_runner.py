@@ -515,7 +515,7 @@ def run_media_job(src_path, orig_filename, *, generate_fn,
                        "degraded honestly to Local Only")
         media_examined = bool(parts) and \
             getattr(router, "supports_media", False) and \
-            getattr(router, "multimodal_ok", True)
+            getattr(router, "multimodal_ok", False)
         has_frames = media_examined and fam in ("video", "image")
         has_audio = media_examined and (fam == "audio" or
                                         result["extraction"]["audio"])
@@ -634,6 +634,12 @@ def run_media_job(src_path, orig_filename, *, generate_fn,
                 result_write_failed if escalated else False,
             "sent_artifacts": sent_manifest if escalated else [],
             "custody": {
+                "provider_submission": [s.get("sha256") for s in sent_manifest]
+                if getattr(router, "provider_attempted", False) else [],
+                "submission_semantics": (
+                    "provider_submission records SDK invocation, not confirmed delivery; "
+                    "legacy sent_to_provider and sent_but_provider_failed are "
+                    "success/failure outcome buckets, not transport confirmation"),
                 "source_file": "processed locally, deleted after "
                                "analysis; source video is not sent; an authorized "
                                "image/audio job may submit source bytes",
@@ -665,6 +671,10 @@ def run_media_job(src_path, orig_filename, *, generate_fn,
             lat = getattr(router, "latency_ms", None)
             esc_state = (f"{prov_name}: authorized + completed on "
                          f"{mu}" + (f" ({lat} ms)" if lat else ""))
+        elif auth_write_failed:
+            esc_state = "audit blocked before provider invocation: " + esc_reason
+        elif denied:
+            esc_state = "requested but denied: " + esc_reason
         elif escalate:
             esc_state = "requested but unavailable: " + \
                 (esc_reason or "no artifacts to send")
@@ -726,12 +736,20 @@ def run_media_job(src_path, orig_filename, *, generate_fn,
                 # fail safe: withhold the graded report
                 result["ok"] = False
                 result["assessment"] = None
+                result["report"] = None
                 result["error"] = ("Evidence-package validation failed; "
                                    "the graded report was withheld "
                                    "(fail-safe). Issues: "
                                    + "; ".join(issues[:5]))
         except Exception:
-            pass
+            # Integrity cannot be established if finalization/validation raises.
+            # Withhold both graded objects so the UI cannot cache/export them.
+            result["ok"] = False
+            result["assessment"] = None
+            result["report"] = None
+            result["validation_issues"] = ["finalization or validation unavailable"]
+            result["error"] = ("Evidence-package integrity could not be verified; "
+                               "the graded report was withheld (fail-safe).")
         stages.add("complete",
                    "ok" if result.get("ok") else "failed",
                    f"temporary media {cleanup_status}")

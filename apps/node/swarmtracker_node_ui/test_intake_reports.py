@@ -137,6 +137,9 @@ def test_real_image_upload_to_media_export(client, monkeypatch, selection, failu
     assert payload["execution"]["state"] == state
     assert payload["execution"]["provider_attempted"] is bool(calls)
     assert cloud.calls == calls and state in md
+    custody = payload["router_meta"]["custody"]
+    assert bool(custody["provider_submission"]) is bool(calls)
+    assert "not confirmed delivery" in custody["submission_semantics"]
     if not calls:
         assert payload["router_meta"]["media_examined"] is False
 
@@ -242,3 +245,24 @@ def test_setup_and_malformed_output(client, monkeypatch, mode, state, calls):
     if calls:
         assert "delivery is not independently confirmed" in md
         assert "HTTP None" not in md
+
+
+@pytest.mark.parametrize("failure", ["issues", "validate_exception", "finalize_exception"])
+def test_package_final_validation_withholds_all_report_exports(client, monkeypatch, failure):
+    """A failed integrity gate must withhold both assessment and fused report."""
+    from PIL import Image
+    specimen = io.BytesIO()
+    Image.new("RGB", (16, 16), (40, 80, 120)).save(specimen, format="PNG")
+    package = media_runner.core_bridge.media_package
+    def fail(*args, **kwargs):
+        raise RuntimeError("SENSITIVE_INTERNAL_DIAGNOSTIC")
+    if failure == "issues":
+        monkeypatch.setattr(package, "validate", lambda pkg: ["synthetic custody issue"])
+    else:
+        monkeypatch.setattr(package, "validate" if failure == "validate_exception" else "finalize", fail)
+    response = client.post("/media/upload", files={
+        "media_file": ("synthetic.png", specimen.getvalue(), "image/png")})
+    assert response.status_code == 200
+    assert "Evidence-package" in response.text
+    assert "SENSITIVE_INTERNAL_DIAGNOSTIC" not in response.text
+    assert not ui.MEDIA_JOBS, "failed integrity gate exposed an exportable report"

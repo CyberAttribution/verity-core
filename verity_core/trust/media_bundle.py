@@ -81,9 +81,13 @@ def _object_pairs(pairs):
 
 def strict_loads(text):
     """json.loads with duplicate keys, NaN/Infinity, and overflow floats
-    rejected. Raises ValueError on any of these."""
+    rejected. Raises ValueError on any of these. Nesting is capped
+    portably (before json.loads recurses) via verity_core.json_safety,
+    so deep input fails identically on every interpreter; the
+    RecursionError fallback below is retained for defense in depth."""
+    from verity_core.json_safety import bounded_json_loads
     try:
-        return json.loads(
+        return bounded_json_loads(
             text,
             object_pairs_hook=_object_pairs,
             parse_constant=_reject_constant,

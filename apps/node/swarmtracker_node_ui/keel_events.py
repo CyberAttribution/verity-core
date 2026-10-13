@@ -160,7 +160,8 @@ def _verify_complete_tail_locked():
             window_end = window_start
     if last:
         try:
-            json.loads(last.decode("utf-8", "replace"))
+            from verity_core.json_safety import bounded_json_loads
+            bounded_json_loads(last.decode("utf-8", "replace"))
         except (ValueError, RecursionError) as exc:
             raise LedgerWriteError(
                 "ledger ends with an UNREADABLE partial record from a "

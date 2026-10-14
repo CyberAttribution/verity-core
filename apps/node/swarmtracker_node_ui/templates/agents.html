@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Active Agents{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-head"><h2>Connected participants</h2>
+    <span class="badge {{ 'badge-ok' if participant.online else 'badge-warn' }}">{{ participant.status }}</span>
+  </div>
+  <p>Participants integrated with this Verity installation. Status reflects a service health check, not proof of an active task.</p>
+  <h3>{{ participant.name }}</h3>
+  <div class="kv-grid">
+    <div class="kv"><span>Purpose</span><code>Local text analysis</code></div>
+    <div class="kv"><span>Runtime</span><code>Legacy OpenClaw v0 API</code></div>
+    <div class="kv"><span>Identity observation</span><code>{{ participant.identity_scope }}</code></div>
+    <div class="kv"><span>Reported node</span><code>{{ participant.node }}</code></div>
+    <div class="kv"><span>Reported model</span><code>{{ participant.model }}</code></div>
+    <div class="kv"><span>Reported provider</span><code>{{ participant.provider }}</code></div>
+    <div class="kv"><span>Model availability</span><code>{{ 'Present in Ollama model list' if participant.model_available else 'Not confirmed' }}</code></div>
+    <div class="kv"><span>Current task</span><code>{{ participant.current_task }}</code></div>
+    <div class="kv"><span>Last complete health observation</span><code>{{ participant.last_seen }}</code></div>
+    <div class="kv"><span>Checked at</span><code>{{ participant.checked_at }}</code></div>
+    <div class="kv"><span>Creator or deploying organization</span><code>Not provided</code></div>
+    <div class="kv"><span>Configured operator</span><code>{{ participant.operator }} · self-reported</code></div>
+    <div class="kv"><span>Latest Trust Record</span><code>{{ participant.trust_record }}</code></div>
+  </div>
+  <p class="hint">Node, model and provider are self-reported by the runtime; operator is local configuration. Identity has not been independently verified. Last complete health observation is retained only for this app session.</p>
+</section>
+<section class="panel">
+  <div class="panel-head"><h2>Latest matching local ledger event</h2><a class="btn btn-ghost" href="/ledger">Open audit ledger</a></div>
+  {% if participant.latest_event %}
+  {% set e = participant.latest_event %}
+  <div class="kv-grid">
+    <div class="kv"><span>Event ID</span><code>{{ e.id }}</code></div>
+    <div class="kv"><span>Recorded time</span><code>{{ e.time }}</code></div>
+    <div class="kv"><span>Policy</span><code>{{ e.policy }}</code></div>
+    <div class="kv"><span>Decision</span><code>{{ e.decision }}</code></div>
+    <div class="kv"><span>Governance alarm</span><code>{{ 'Recorded' if e.alarm else 'None recorded' }}</code></div>
+  </div>
+  {% else %}<p class="empty">No matching local events in the last 100 ledger entries.</p>{% endif %}
+  <p class="hint">Matches the {{ "current" if participant.online else "last observed" }} self-reported node and model exactly. The local ledger does not automatically include events stored on another Mac. An event ID alone is not a verified Trust Record.</p>
+</section>
+{% endblock %}

@@ -52,3 +52,10 @@ choice, installed credentials, readiness, prior jobs).
 Regression tests:
     python -m pytest swarmtracker_node_ui/tests_governed.py \
         swarmtracker_node_ui/test_service_authorization.py -q
+
+
+## Active Agents view
+
+The `/agents` view observes one configured legacy OpenClaw v0 participant through the existing loopback transport. It shows runtime reachability, the reported model, Ollama model-list availability, configured operator attribution and last successful health observation in this worker session. It does not discover unrelated agents, authenticate identities, infer a running task, or equate an ordinary ledger ID with a verified Trust Record. Latest local events must match both node and model exactly. Remote runtime events are not automatically copied into the local ledger.
+
+Focused checks: `python -m pytest -q apps/node/swarmtracker_node_ui/test_agents.py` from repository root.

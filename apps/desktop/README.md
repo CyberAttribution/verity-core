@@ -27,9 +27,7 @@ for this child process only, without changing shell or system Python settings.
 Runtime architecture: the app/backend and Google client SDK can run on this
 Mac mini; the intended OpenClaw runtime is on the other Mac mini. This shell
 does not start, install or select an inference model. Its existing Node
-backend still expects loopback OpenClaw/Ollama addresses. A verified private
-connection (for example, a loopback SSH tunnel) to the intended other Mac
-has not yet been configured. The current Google transport uses Vertex REST requests with google-auth
+backend still expects loopback OpenClaw/Ollama addresses. On October 13, a loopback SSH tunnel from the M2 Pro to the M1 was configured and synthetic inference was verified. This is a session connection; automatic startup and reconnection are not yet installed. Remote ledger files are not forwarded by the tunnel. The current Google transport uses Vertex REST requests with google-auth
 Application Default Credentials through the vendored optional adapter.
 It is not a Google Gen AI SDK or Google ADK runtime implementation.
 Google is a governed supplement: text intake must complete local OpenClaw

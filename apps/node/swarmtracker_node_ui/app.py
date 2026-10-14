@@ -21,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import adapters, analysis, canonical_case, config, core_bridge
 from . import governance, keel_events, keel_policy, ledger, media_runner
-from . import governed_analysis, providers
+from . import agents, governed_analysis, providers
 from . import openclaw_client as oc
 from . import store as store_mod
 
@@ -1927,6 +1927,13 @@ def atlas_page(request: Request, report: str = "", investigation: str = "",
     ctx["selected"] = selected
     ctx["selected_dict"] = selected.to_dict() if selected else None
     return render("atlas.html", ctx)
+
+
+@app.get("/agents", response_class=HTMLResponse)
+def agents_page(request: Request):
+    ctx = base_ctx(request, "agents")
+    ctx["participant"] = agents.observe()
+    return render("agents.html", ctx)
 
 
 @app.get("/governance", response_class=HTMLResponse)

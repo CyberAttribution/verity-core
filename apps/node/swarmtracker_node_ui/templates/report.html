@@ -68,6 +68,7 @@
 <section class="panel">
   <div class="panel-head"><h2>Findings export</h2></div>
   <div class="form-actions">
+    <a class="btn btn-ghost" href="/decisions/from-report/{{ report_token | urlencode }}">Preserve for decision review</a>
     <a class="btn btn-ghost" href="/report/{{ report_token }}/json" download>Export JSON</a>
     <a class="btn btn-ghost" href="/report/{{ report_token }}/report" download>Export Report</a>
     <a class="btn btn-ghost" href="/report/{{ report_token }}/atlas" download>Export to Atlas</a>

@@ -1,0 +1,12 @@
+<section class="panel">
+  <div class="panel-head"><h2>Recorded decision runs</h2><a class="btn btn-ghost" href="/decisions">Open decisions</a></div>
+  <p>Preserved participants and their work, distinct from live runtime health. Select a run to inspect evidence, disagreement, policy, authorization and outcome.</p>
+  {% for r in decision_runs %}
+    {% if r.integrity_error %}
+    <p class="alert alert-bad">A stored run failed integrity verification. Execution and export are unavailable.</p>
+    {% else %}
+    <p><a href="/decisions/{{ r.id }}">{{ r.manifest.title }}</a> · {{ r.state }} · {{ r.manifest.source_kind }}</p>
+    <ul>{% for p in r.manifest.participants %}<li><a href="/decisions/{{ r.id }}#participants">{{ p.name }}</a> · {{ p.framework }} · {{ p.model }} · {{ p.identity_provenance }}</li>{% endfor %}</ul>
+    {% endif %}
+  {% else %}<p class="empty">No preserved decision runs yet.</p>{% endfor %}
+</section>

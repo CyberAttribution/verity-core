@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Governed decision{% endblock %}
+{% block content %}
+<section class="panel">
+<div class="panel-head"><h2>{{ run.manifest.title }}</h2><span class="badge badge-warn">{{ run.state }}</span></div>
+{% if message %}<p class="alert">{{ message }}</p>{% endif %}
+<p><code>{{ run.id }}</code> · {{ run.manifest.source_kind }} · Trust Record chain and decision sequence verified</p>
+<p><a href="/agents">Active Agents</a> · <a href="/governance?run={{ run.id }}">Governance</a> · <a href="/decisions">All decision runs</a></p>
+<p class="hint">{{ run.limits }}</p>
+</section>
+<section class="panel" id="participants">
+<h2>Participants and delegation</h2>
+{% for p in run.manifest.participants %}
+<h3>{{ p.name }}</h3>
+<p>{{ p.framework }} · {{ p.model }} · {{ p.identity_provenance }}</p>
+<p>Participant: <code>{{ p.id }}</code>{% if p.delegated_by %} · delegated by <code>{{ p.delegated_by }}</code>{% endif %}</p>
+{% endfor %}
+<p class="hint">These are recorded participants, not a live task or model-loaded indicator.</p>
+</section>
+<section class="panel">
+<h2>Preserved evidence</h2>
+{% for e in run.manifest.evidence %}
+<h3>{{ e.label }} · {{ e.id }}</h3><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{ e.text }}</pre>
+<p class="hint" style="overflow-wrap:anywhere">SHA-256: {{ e.sha256 }}</p>
+{% endfor %}
+</section>
+<section class="panel">
+<h2>Findings and disagreement</h2>
+{% for f in run.manifest.findings %}
+<div class="card"><p>{% if f.conflicting %}<strong>Conflicting finding · </strong>{% endif %}{{ f.statement }}</p>
+<p class="hint">{{ f.participant_id }} · evidence {{ f.evidence_ids | join(', ') }} · {{ f.provenance }}</p></div>
+{% endfor %}
+<h3>Recommendation</h3><p>{{ run.manifest.recommendation }}</p>
+</section>
+{% include "_decision_control.html" %}
+<section class="panel">
+<h2>History and integrity</h2>
+<p>{{ run.entry_count }} entries · {{ run.attempts }} execution attempts · simulated action completed: {{ 'yes' if run.executed else 'no' }}</p>
+<p style="overflow-wrap:anywhere">Current head: <code>{{ run.head_hash }}</code></p>
+<p><a class="btn btn-ghost" href="/decisions/{{ run.id }}/export.json">Export decision history</a>
+<a class="btn btn-ghost" href="/decisions/{{ run.id }}/checkpoint.json">Save checkpoint separately</a></p>
+<p class="hint">Retain the checkpoint independently. A checkpoint inside the same export cannot establish resistance to a complete rewrite.</p>
+{% for e in run.record.entries %}
+<details><summary>{{ e.seq }} · {{ e.at_utc }} · {{ e.payload.event }} · {{ e.actor }}</summary>
+<pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{ e.payload | tojson(indent=2) }}</pre></details>
+{% endfor %}
+</section>
+{% endblock %}

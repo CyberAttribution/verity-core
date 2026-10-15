@@ -157,9 +157,9 @@ def assess(window: int = WINDOW) -> dict:
     st = "yellow" if cloud_allowed else "green"
     cats.append(_cat(
         "cloud_escalation", "Cloud Escalation Control", st, _conf(85, 0.5),
-        "No cloud code path exists in this build; analysis modes other than "
-        "Local Only are selectable but cannot execute. Cloud bridge is "
-        "deployed dormant and disabled.",
+        "Optional cloud assistance has per-job local operator intent, policy "
+        "and mandatory authorization-ledger gates. Runtime ledger events alone "
+        "do not establish the current provider configuration or readiness.",
         [("yellow", "Events report cloud_escalation_allowed=true.")]
         if cloud_allowed else [],
         "Design policy-gated escalation: Keel must authorize any future "
@@ -170,8 +170,8 @@ def assess(window: int = WINDOW) -> dict:
 
     # 5. Audit Completeness
     st = "green" if (n and complete_cov >= 0.95) else "yellow"
-    flags = [("yellow", "Ledger is plain JSONL: no hash chain, rotation, or "
-                        "tamper evidence yet.")]
+    flags = [("yellow", "Legacy runtime ledger is plain JSONL. Decision runs use a separate "
+                        "hash-chained Trust Record with checkpoint verification limits.")]
     if not n:
         flags.append(("yellow", "No events in window; completeness unproven."))
     cats.append(_cat(
@@ -193,9 +193,9 @@ def assess(window: int = WINDOW) -> dict:
     cats.append(_cat(
         "provider_model", "Provider / Model Control", st,
         _conf(60, complete_cov),
-        f"Single local provider in window ({', '.join(providers) or 'none'}); "
-        f"models: {', '.join(models) or 'none'}. No cloud providers "
-        "configured.",
+        f"Providers in the legacy runtime ledger: {', '.join(providers) or 'none'}; "
+        f"models: {', '.join(models) or 'none'}. Provider configuration and "
+        "readiness are reported separately in Settings.",
         [] if single_provider else
         [("yellow", "Multiple providers observed in recent events.")],
         "Implement provider-class routing so Keel policy, not caller input, "
@@ -239,9 +239,9 @@ def assess(window: int = WINDOW) -> dict:
     cats.append(_cat(
         "sensitive_data", "Sensitive Data Handling", "yellow",
         _conf(50, 1.0 if n else 0.3),
-        "Evidence never leaves the node: local model, loopback-only calls, "
-        "no connectors. Ledger stores hashes for prompts where schema "
-        "provides them.",
+        "Local analysis stays with the configured local runtime; optional cloud "
+        "assistance can transmit selected evidence under its separate per-job gates. "
+        "Decision-run activation or approval does not authorize cloud submission.",
         [("yellow", "No redaction, classification, or retention policy for "
                     "submitted evidence yet; operators may paste sensitive "
                     "content.")],
@@ -254,13 +254,14 @@ def assess(window: int = WINDOW) -> dict:
     cats.append(_cat(
         "human_approval", "Human Approval", "yellow",
         _conf(55, complete_cov),
-        "Current policy is read_only_analysis: no actions are taken, so no "
-        "approval is required; approval-requiring events in window: "
+        "Analysis remains read-only. Decision runs separately enforce approval "
+        "or denial for a fixed local simulator, with persistent Trust Records. "
+        "Legacy approval-requiring events in window: "
         f"{len(approval_req)}.",
-        [("yellow", "No approval workflow exists yet for any future "
-                    "action-taking policy.")],
-        "Implement a human approval gate that blocks any policy beyond "
-        "read-only analysis until approved.",
+        [("yellow", "Approval records local operator intent, not "
+                    "authenticated human identity. Real action integrations remain unimplemented.")],
+        "Review the governed decision runs above; authenticated operator "
+        "identity and real action integrations require further work.",
         [f"human_approval_required true in {len(approval_req)}/{n} events"]))
 
     # 11. Runtime Isolation

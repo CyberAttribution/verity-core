@@ -1,0 +1,24 @@
+<section class="panel" id="authorization">
+<h2>Policy and controlled action</h2>
+<p>Proposed action: <strong>simulate sender block</strong> · target <code>{{ run.manifest.action.target }}</code></p>
+<p>Policy <code>{{ run.manifest.policy.id }}</code> · version <strong>{{ run.manifest.policy.version }}</strong></p>
+<p>{{ run.manifest.policy.reason }}</p>
+<p>Authorization: <strong>{{ run.decision }}</strong> · execution: <strong>{{ run.state }}</strong></p>
+{% if operator_token %}
+{% if run.decision == 'pending' %}
+<form method="post" action="/decisions/{{ run.id }}/authorization">
+<input type="hidden" name="operator_token" value="{{ operator_token }}">
+<input type="hidden" name="expected_head" value="{{ run.head_hash }}">
+<label>Reason for your decision <input type="text" name="reason" required maxlength="1000"></label>
+<button class="btn" name="decision" value="approved">Record approval</button>
+<button class="btn btn-ghost" name="decision" value="rejected">Reject action</button>
+</form>
+{% endif %}
+<form method="post" action="/decisions/{{ run.id }}/execute" style="margin-top:12px">
+<input type="hidden" name="operator_token" value="{{ operator_token }}">
+<input type="hidden" name="expected_head" value="{{ run.head_hash }}">
+<button class="btn" type="submit">{{ 'Execute approved simulation' if run.can_execute else 'Test backend denial' }}</button>
+</form>
+<p class="hint">The backend reloads and verifies this run for every execution attempt. Only an approved run under version 1 can complete the simulation, once. Approval is a local operator intent record; it is not authenticated human identity.</p>
+{% else %}<p><a class="btn" href="/decisions/{{ run.id }}#authorization">Review and decide</a></p>{% endif %}
+</section>

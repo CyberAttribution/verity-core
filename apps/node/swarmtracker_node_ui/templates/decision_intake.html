@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Preserve analysis for decision review{% endblock %}
+{% block content %}
+<section class="panel">
+<h2>Preserve analysis {{ report_id }}</h2>
+<p>This saves the local analysis finding, input text, hashes and reported runtime identity in a durable run. It does not invent a second participant or conflicting evidence.</p>
+<p>The proposed action is a test against sender@example.invalid, regardless of the original evidence. It does not imply the model recommended blocking.</p>
+<form method="post">
+<input type="hidden" name="operator_token" value="{{ operator_token }}">
+{% include "_decision_policy.html" %}
+<button class="btn" type="submit">Preserve and review simulated action</button>
+</form>
+</section>
+{% endblock %}

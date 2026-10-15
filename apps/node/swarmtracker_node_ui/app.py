@@ -8,6 +8,7 @@ Additive only. Talks to OpenClaw on 127.0.0.1:8090 and reads
 logs/openclaw_events.jsonl. No cloud calls, no writes to existing files.
 """
 import json
+import hashlib
 import os
 import tempfile
 import time
@@ -21,7 +22,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import adapters, analysis, canonical_case, config, core_bridge
 from . import governance, keel_events, keel_policy, ledger, media_runner
-from . import agents, governed_analysis, providers
+from . import agents, governed_analysis, providers, decision_routes
 from . import openclaw_client as oc
 from . import store as store_mod
 
@@ -391,6 +392,14 @@ def analyze_run(request: Request,
                                      "corroborate out-of-band."]}
     _cache_generic_job(token, {
         "report_id": token, "kind": "single_analysis",
+        "decision_participant": {
+            "id": "runtime-" + hashlib.sha256(
+                json.dumps([result.get("node"), result.get("model"), result.get("provider")], sort_keys=True).encode()).hexdigest()[:24],
+            "name": str(result.get("node") or "Unreported runtime"),
+            "framework": "Legacy OpenClaw v0 API",
+            "model": str(result.get("model") or "Not reported"),
+            "identity_provenance": "runtime self-reported; not independently verified",
+            "delegated_by": None, "runtime_event_id": event_id},
         "workflow": "single_analysis", "profile_mode": profile_mode,
         "executed_mode": executed_mode, "cloud_used": cloud_used,
         "report": export_report, "items": one_item,
@@ -1933,6 +1942,10 @@ def atlas_page(request: Request, report: str = "", investigation: str = "",
 def agents_page(request: Request):
     ctx = base_ctx(request, "agents")
     ctx["participant"] = agents.observe()
+    try:
+        ctx["decision_runs"] = decision_routes.runs().recent()
+    except Exception:
+        ctx["decision_runs"] = [{"integrity_error": True}]
     return render("agents.html", ctx)
 
 
@@ -1940,6 +1953,13 @@ def agents_page(request: Request):
 def governance_page(request: Request):
     ctx = base_ctx(request, "governance")
     ctx["gov"] = governance.assess()
+    try:
+        ctx["decision_runs"] = decision_routes.runs().recent()
+        rid = request.query_params.get("run")
+        ctx["run"] = decision_routes.runs().get(rid) if rid else None
+    except Exception:
+        ctx["decision_runs"] = [{"integrity_error": True}]
+        ctx["run"] = None
     ctx["keel"] = keel_policy.policy_summary()
     ctx["selftest"] = keel_policy.self_test()
     ctx["media_ledger_count"] = keel_events.count_events()
@@ -2001,3 +2021,7 @@ def ui_healthz():
             "default_model_id"],
         "media_governance_events": keel_events.count_events(),
     }
+
+
+# Governed decision routes share the existing app and successful report cache.
+decision_routes.install(app, render, base_ctx, GENERIC_JOBS)

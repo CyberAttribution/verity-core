@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Governed decisions{% endblock %}
+{% block content %}
+<section class="panel">
+<h2>Follow one decision from evidence to outcome</h2>
+<p>Create a synthetic delegated case with preserved disagreement, then exercise the controlled approval boundary. The participants and findings are deterministic fixtures, not live model calls.</p>
+<form method="post" action="/decisions/demo">
+<input type="hidden" name="operator_token" value="{{ operator_token }}">
+{% include "_decision_policy.html" %}
+<button class="btn" type="submit">Create synthetic case</button>
+</form>
+<p class="hint">The only action is a local simulation. No messages are sent and no sender is blocked. To preserve a real local single-analysis result, use its report’s decision-review link.</p>
+</section>
+{% set decision_runs = runs %}{% include "_decision_runs.html" %}
+{% endblock %}

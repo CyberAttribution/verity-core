@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Keel Governance{% endblock %}
 {% block content %}
+{% include "_decision_runs.html" %}
+{% if run %}{% include "_decision_control.html" %}{% endif %}
 
 <div class="cards">
   <div class="card gov-overall gov-{{ gov.overall }}">

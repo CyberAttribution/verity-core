@@ -260,7 +260,8 @@ def test_actual_single_intake_can_be_preserved(client, db, monkeypatch):
     monkeypatch.setattr(ui.oc, 'ollama_models', lambda: [])
     response = client.post('/analyze', data={'evidence': 'Synthetic evidence passed through the actual intake route.'})
     assert response.status_code == 200 and 'Preserve for decision review' in response.text
-    path = '/decisions/from-report/actual-intake-regression'
+    path = re.search(r'/decisions/from-report/[^\"<> ]+', response.text).group(0)
+    assert path != '/decisions/from-report/actual-intake-regression'
     assert client.get(path).status_code == 200
     response = client.post(path, data=form(), follow_redirects=False)
     r = db.get(response.headers['location'].split('/')[-1])
@@ -294,3 +295,15 @@ def test_bad_manifest_and_semantics_are_rejected(db):
     manifest = runs.synthetic_manifest()
     manifest['findings'][0]['evidence_ids'] = {'message': 'not a list'}
     with pytest.raises(ValueError): db.create(manifest)
+
+
+def test_reused_runtime_id_does_not_overwrite_prior_analysis(client,monkeypatch):
+    monkeypatch.setattr(ui.oc,'generate',lambda *a,**kw:{'ok':True,'response':'{}','openclaw_event_id':'reused-runtime-id'})
+    monkeypatch.setattr(ui.oc,'healthz',lambda:{})
+    monkeypatch.setattr(ui.oc,'ollama_models',lambda:[])
+    paths=[]
+    for evidence in ('First controlled specimen','Second controlled specimen'):
+        response=client.post('/analyze',data={'evidence':evidence})
+        paths.append(re.search(r'/decisions/from-report/[^"<> ]+',response.text).group(0))
+    assert paths[0]!=paths[1]
+    for path in paths:assert client.get(path).status_code==200

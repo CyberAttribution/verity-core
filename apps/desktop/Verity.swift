@@ -11,6 +11,7 @@ struct DesktopConfig: Codable {
     let worker: String
     let repo: String
     let library_path: String?
+    let bundled: Bool?
 }
 
 func loadConfig() -> DesktopConfig? {
@@ -18,7 +19,14 @@ func loadConfig() -> DesktopConfig? {
     let bundleURL = exeURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let configURL = bundleURL.appendingPathComponent("Contents/Resources/desktop-config.json")
     guard let data = try? Data(contentsOf: configURL) else { return nil }
-    return try? JSONDecoder().decode(DesktopConfig.self, from: data)
+    guard let cfg = try? JSONDecoder().decode(DesktopConfig.self, from: data) else { return nil }
+    if cfg.bundled == true {
+        let resources = bundleURL.appendingPathComponent("Contents/Resources")
+        return DesktopConfig(python: resources.appendingPathComponent(cfg.python).path,
+            worker: resources.appendingPathComponent(cfg.worker).path,
+            repo: resources.path, library_path: nil, bundled: true)
+    }
+    return cfg
 }
 
 func appSupportLogURL() -> URL {
@@ -54,7 +62,7 @@ class WorkerProcess {
     func launch(config: DesktopConfig) -> Bool {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: config.python)
-        p.arguments = [config.worker, "--repo", config.repo]
+        p.arguments = config.bundled == true ? ["--bundled"] : [config.worker, "--repo", config.repo]
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
         if let library = config.library_path, !library.isEmpty { env["DYLD_LIBRARY_PATH"] = library }
@@ -176,7 +184,8 @@ class VerityAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self.initialOrigin = url
             self.startupComplete = true
             self.startupTimer?.invalidate()
-            self.webView?.load(URLRequest(url: url))
+            let destination = CommandLine.arguments.contains("--smoke-agents") ? url.appendingPathComponent("agents") : url
+            self.webView?.load(URLRequest(url: destination))
         }
         worker.onExit = { [weak self] code in
             guard let self = self, !self.terminating else { return }
@@ -241,8 +250,8 @@ class VerityAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
               initialOrigin != nil else { return }
         webView.evaluateJavaScript("document.title") { [weak self] value, error in
             guard let self = self else { return }
-            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-                .appendingPathComponent("Verity", isDirectory: true)
+            let support = ProcessInfo.processInfo.environment["VERITY_SMOKE_DIR"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!.appendingPathComponent("Verity", isDirectory: true)
+            try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
             let record: [String: Any] = ["ui_title": value as? String ?? "",
                 "backend_url": self.initialOrigin?.absoluteString ?? "",
                 "javascript_ok": error == nil]

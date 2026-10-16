@@ -2036,3 +2036,5 @@ decision_routes.install(app, render, base_ctx, GENERIC_JOBS)
 # Development telemetry is observational and cannot authorize execution.
 monitoring.install(app, render, base_ctx)
 
+from . import setup_routes
+setup_routes.install(app, render, base_ctx)

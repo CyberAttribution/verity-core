@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Verity setup{% endblock %}
+{% block content %}
+<section class="panel"><h2>Welcome to Verity</h2><p>{{ message }}</p>
+<p>Installation ID: <code>{{ installation.installation_id }}</code></p>
+<p>Give this installation ID to your pilot administrator to receive a signed activation code. Codes are installation-specific and expire. Offline revocation takes effect after importing a signed issuer list; there is no online revocation check.</p>
+<form method="post" action="/setup"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="action" value="activate"><label>Activation code <input name="code" required maxlength="7500" autocomplete="off"></label><button class="btn" type="submit">Activate installation</button></form>
+<details><summary>Import an issuer revocation list</summary><form method="post" action="/setup"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="action" value="revoke"><label>Signed revocation list <input name="code" required maxlength="7500" autocomplete="off"></label><button class="btn" type="submit">Import revocations</button></form></details>
+</section>
+<section class="panel"><h2>Connect your analysis runtime</h2>
+<p>Verity connects to the existing legacy OpenClaw v0 analysis service and Ollama over loopback. A remote service needs an operator-established private tunnel. Verity does not install a model or start that service.</p>
+<form method="post" action="/setup"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="action" value="configure">
+<label>Operator label <input name="operator" required value="{{ installation.settings.get('operator', cfg.node) }}"></label>
+<label>Model <input name="model" required value="{{ installation.settings.get('model', cfg.model) }}"></label>
+<label>OpenClaw URL <input name="openclaw_url" required value="{{ installation.settings.get('openclaw_url', cfg.openclaw_url) }}"></label>
+<label>Ollama URL <input name="ollama_url" required value="{{ installation.settings.get('ollama_url', 'http://127.0.0.1:11434') }}"></label>
+<button class="btn" type="submit">Save runtime settings</button></form>
+<p>Activation permits product use. Sending evidence to a cloud provider still requires the separate authorization controls for each job.</p>
+{% if active %}<a class="btn" href="/">Open Verity</a>{% endif %}
+</section>
+{% endblock %}

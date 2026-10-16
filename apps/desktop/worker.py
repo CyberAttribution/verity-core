@@ -28,7 +28,7 @@ def bind_server_socket():
 def setup_environment(repo):
     # Keep application data outside the repo/bundle. Inference remains an
     # independently configured service; existing SDK environment is inherited.
-    base = Path.home() / "Library/Application Support/Verity/data"
+    base = Path(os.environ.get("VERITY_DATA_HOME", str(Path.home() / "Library/Application Support/Verity/data")))
     base.mkdir(parents=True, exist_ok=True)
     for key, name in (("NODE_UI_DB", "verity.db"),
                       ("NODE_UI_MEDIA_LEDGER", "media-ledger.jsonl"),
@@ -42,6 +42,9 @@ def emit_ready(url):
 
 async def serve(sock):
     import uvicorn
+    from swarmtracker_node_ui import setup_routes
+    if setup_routes.path().exists():
+        setup_routes.apply_settings(setup_routes.state()["settings"])
     from swarmtracker_node_ui.app import app
     server = uvicorn.Server(uvicorn.Config(
         app, log_level="warning", access_log=False,
@@ -57,11 +60,24 @@ async def serve(sock):
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repo", required=True)
+    parser.add_argument("--repo")
+    parser.add_argument("--bundled", action="store_true")
     args = parser.parse_args(argv)
     try:
-        repo = validate_repo(args.repo)
+        if args.bundled:
+            if not getattr(sys, "frozen", False):
+                raise ValueError("Bundled mode requires a frozen backend")
+            repo = Path(sys._MEIPASS)
+        else:
+            repo = validate_repo(args.repo)
         setup_environment(repo)
+        if args.bundled:
+            import platform
+            os.environ["VERITY_REQUIRE_ACTIVATION"] = "1"
+            os.environ["VERITY_ACTIVATION_PUBLIC_KEY"] = str(Path(sys.executable).parent.parent / "activation-public.pem")
+            os.environ.setdefault("NODE_UI_NODE", socket.gethostname())
+            os.environ.setdefault("NODE_UI_HARDWARE", platform.machine() + " Mac")
+            os.environ.setdefault("NODE_UI_HARDWARE_NEXT", "Not configured")
         # CLI launches can inherit ignored SIGINT from a background shell.
         # Restore ordinary interruption; uvicorn handles graceful shutdown.
         signal.signal(signal.SIGINT, signal.default_int_handler)

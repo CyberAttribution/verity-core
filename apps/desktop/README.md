@@ -1,5 +1,7 @@
 # Verity development Mac app
 
+A bundled Apple Silicon pilot builder and offline enrollment now accompany this development shell. See [pilot installation](../../docs/pilot-installation.md) for its macOS 15 minimum, build and verification limits. The development builder below remains available.
+
 This is a native AppKit/WKWebView shell for the existing Node interface.
 It launches an owned local HTTP worker on an OS-assigned 127.0.0.1 port and
 closes only that worker when the window/app closes. Readiness is correlated

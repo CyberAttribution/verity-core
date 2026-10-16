@@ -1944,7 +1944,7 @@ def agents_page(request: Request):
     ctx = base_ctx(request, "agents")
     ctx["participant"] = agents.observe()
     try:
-        ctx["monitor_runs"] = monitoring.database().recent()
+        ctx["monitor_runs"] = monitoring.participants(monitoring.database().recent())
         ctx["monitor_error"] = False
     except (ValueError, TypeError, KeyError, AttributeError, sqlite3.Error, OSError):
         ctx["monitor_runs"] = []

@@ -6,12 +6,17 @@
   <article>
     <h3><a href="/monitor/runs/{{ run.run_id }}">{{ run.name }}</a> <span class="badge {{ 'badge-ok' if run.status == 'Active' else 'badge-warn' }}">{{ run.status }}</span></h3>
     {% if run.contact_lost_during_activity %}<p class="badge badge-warn">Contact lost during unfinished activity. Execution and outcome are unknown.</p>{% endif %}
+    {% if run.unfinished_disconnected %}<p class="badge badge-warn">{{ run.unfinished_disconnected }} preserved workflow(s) lost contact with unfinished activity. Check those histories before assuming completion.</p>{% endif %}
     <div class="kv-grid">
       <div class="kv"><span>Model / runtime</span><code>{{ run.model }} / {{ run.runtime }}</code></div>
       <div class="kv"><span>Reported task</span><code>{{ run.current_task }}</code></div>
+      <div class="kv"><span>Last reported work</span><code>{{ run.last_reported_work }}</code></div>
       <div class="kv"><span>Last received (UTC)</span><code>{{ run.last_seen_utc }}</code></div>
       <div class="kv"><span>Activity</span><code>{{ run.pending|length }} unfinished; {{ run.activities|length }} recent completed</code></div>
     </div>
+    <details><summary>{{ run.recent_runs|length }} preserved workflow(s)</summary><ul>
+    {% for history in run.recent_runs %}<li><a href="/monitor/runs/{{ history.run_id }}">{{ history.run_id }}</a> · {{ history.status }}{% if history.contact_lost_during_activity %} · unfinished activity{% endif %}</li>{% endfor %}
+    </ul></details>
   </article>
   {% else %}<p class="empty">No development collector has reported to this installation.</p>{% endfor %}
   <p class="hint">Telemetry does not grant permission, enforce policy on unconnected tools, or certify a successful outcome. Prompts, model responses, tool arguments and command text are excluded by the telemetry schema.</p>

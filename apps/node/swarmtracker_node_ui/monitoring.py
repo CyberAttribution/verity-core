@@ -88,6 +88,24 @@ def database():
     return STORE
 
 
+def participants(views):
+    """One visible integration per reported agent ID; preserve every run link.
+
+    Input is status/receipt-sorted. An older interrupted workflow remains
+    prominent even if a newer run completed. This grouping certifies no ID.
+    """
+    groups={}
+    for view in views:
+        group=groups.setdefault(view["agent_id"],dict(view,recent_runs=[],unfinished_disconnected=0))
+        group["recent_runs"].append(view)
+        if view["contact_lost_during_activity"]:group["unfinished_disconnected"]+=1
+    for group in groups.values():
+        history=group["recent_runs"]
+        newest=max(history,key=lambda v:v["last_seen"])
+        group["last_reported_work"]=next((a.get("task") for a in reversed(newest["activities"]) if a.get("task")),newest["current_task"])
+    return list(groups.values())
+
+
 def install(app, render, base_ctx):
     router = APIRouter()
 

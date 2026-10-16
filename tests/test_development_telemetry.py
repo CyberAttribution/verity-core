@@ -107,6 +107,20 @@ def test_disconnect_after_delay_counts_one_interruption_and_clock_skew_is_unknow
     assert view["status"]=="Status unknown"
 
 
+def test_agent_grouping_preserves_old_unfinished_alert_and_all_links():
+    from swarmtracker_node_ui.monitoring import participants
+    old=t.create(MANIFEST,1)
+    t.append(old,ev("request_start",dict(activity_id="req",operation="completion",task="Older unfinished review")),2)
+    new=t.create(dict(MANIFEST,run_id="run-2"),100)
+    t.append(new,ev(),101)
+    recent=t.inspect(new,now=102);stale=t.inspect(old,now=102)
+    grouped=participants([recent,stale])
+    assert len(grouped)==1
+    assert len(grouped[0]["recent_runs"])==2
+    assert grouped[0]["run_id"]=="run-2"
+    assert grouped[0]["unfinished_disconnected"]==1
+
+
 def test_store_atomic_concurrent_idempotency_and_restart(tmp_path):
     from swarmtracker_node_ui.monitoring import MonitorStore
     path = tmp_path / "monitor.db"

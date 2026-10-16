@@ -14,6 +14,7 @@
 <h3>{{ p.name }}</h3>
 <p>{{ p.framework }} · {{ p.model }} · {{ p.identity_provenance }}</p>
 <p>Participant: <code>{{ p.id }}</code>{% if p.delegated_by %} · delegated by <code>{{ p.delegated_by }}</code>{% endif %}</p>
+{% if p.activity_run_id %}<p><a href="/monitor/runs/{{ p.activity_run_id }}">Observed analysis activity</a></p>{% endif %}
 {% endfor %}
 <p class="hint">These are recorded participants, not a live task or model-loaded indicator.</p>
 </section>

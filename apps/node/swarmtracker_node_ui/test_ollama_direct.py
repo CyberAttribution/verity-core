@@ -23,7 +23,7 @@ def trap(monkeypatch):
                 if state["mode"]=="remote":meta["remote_model"]="secret-cloud-alias"
                 if state["mode"]=="no_weights":meta={}
                 self.send_json(meta);return
-            body={"done":True,"done_reason":"stop","response":"Untrusted synthetic assessment","model":"test:latest"}
+            body={"done":True,"done_reason":"stop","response":"Untrusted synthetic assessment","model":data.get("model","test:latest")}
             if state["mode"]=="partial":body["done"]=False
             if state["mode"]=="length":body["done_reason"]="length"
             if state["mode"]=="empty":body["response"]=""
@@ -54,7 +54,7 @@ def test_existing_analysis_call_dispatches_to_local_runtime_without_audit_fabric
     assert body["options"]=={"num_predict":1024,"num_ctx":4096}
     assert result["policy"]==oc.keel_policy.enforced_policy("unknown")
 
-@pytest.mark.parametrize("model",["test:cloud","test-cloud","cloud/model","registry.test/model","bad model"])
+@pytest.mark.parametrize("model",["test:cloud","test-cloud","cloud/model","bad model"])
 def test_cloud_or_ambiguous_model_never_sends_evidence(trap,model):
     assert not oc.generate("Private specimen",model=model)["ok"]
     assert trap["calls"]==[]
@@ -86,3 +86,8 @@ def test_no_local_ledger_event_is_reused_for_direct_analysis(trap,monkeypatch,tm
     assert token!="stale-openclaw-event"
     p=job["decision_participant"]
     assert p["framework"]=="Ollama native API (direct local)" and p["runtime_event_id"] is None
+
+
+def test_namespaced_locally_stored_model_is_allowed(trap):
+    result=oc.generate("Controlled specimen",model="owner/local-model:latest")
+    assert result["ok"] and result["model"]=="owner/local-model:latest"

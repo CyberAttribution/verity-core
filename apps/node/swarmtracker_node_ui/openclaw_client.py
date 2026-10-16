@@ -98,10 +98,13 @@ def generate(prompt: str, *, model: str = None, policy: str = None,
         return {"ok": False, "error": "Local runtime unreachable at the configured loopback endpoint. "
                                       "Is OpenClaw running?"}
     except requests.exceptions.Timeout:
-        return {"ok": False, "error": "Local model timed out. The M1 may still be "
+        return {"ok": False, "error": "Local model timed out. The runtime may still be "
                                       "loading the model; try again."}
     except Exception as e:
         return {"ok": False, "error": f"Local runtime request failed ({e.__class__.__name__})."}
+
+    if not isinstance(data,dict):
+        return {"ok":False,"error":"Local runtime returned an invalid response. Test the connection and retry."}
 
     # Defensive field lookup — response text and event id keys may vary.
     text = None
@@ -109,6 +112,8 @@ def generate(prompt: str, *, model: str = None, policy: str = None,
         if isinstance(data.get(k), str):
             text = data[k]
             break
+    if not text or not text.strip() or data.get("done") is False or data.get("done_reason") == "length":
+        return {"ok":False,"error":"Local runtime returned an empty or incomplete response. Retry with a smaller specimen."}
     raw_id = data.get("id") or data.get("event_id") or data.get("openclaw_event_id")
     event_id = raw_id if isinstance(raw_id,str) and raw_id.strip() and len(raw_id)<160 else None
 

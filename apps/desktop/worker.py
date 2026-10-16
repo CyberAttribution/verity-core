@@ -25,10 +25,12 @@ def bind_server_socket():
         sock.close()
         raise
 
-def setup_environment(repo):
+def setup_environment(repo, pilot=False):
     # Keep application data outside the repo/bundle. Inference remains an
     # independently configured service; existing SDK environment is inherited.
-    base = Path(os.environ.get("VERITY_DATA_HOME", str(Path.home() / "Library/Application Support/Verity/data")))
+    default = Path.home() / ("Library/Application Support/Verity Pilot/data" if pilot else "Library/Application Support/Verity/data")
+    base = Path(os.environ.get("VERITY_DATA_HOME", str(default)))
+    if not base.is_absolute():raise ValueError("Data home must be absolute")
     base.mkdir(parents=True, exist_ok=True)
     for key, name in (("NODE_UI_DB", "verity.db"),
                       ("NODE_UI_MEDIA_LEDGER", "media-ledger.jsonl"),
@@ -71,7 +73,7 @@ def main(argv=None):
             repo = Path(sys._MEIPASS)
         else:
             repo = validate_repo(args.repo)
-        setup_environment(repo)
+        setup_environment(repo,pilot=args.bundled)
         if args.bundled:
             import platform
             os.environ["VERITY_REQUIRE_ACTIVATION"] = "1"
@@ -90,7 +92,7 @@ def main(argv=None):
     except Exception:
         # Native shell shows actionable generic diagnostics; no credential,
         # evidence, environment dump or raw provider exception is printed.
-        print("Verity backend startup failed; verify repository and Python dependencies.", file=sys.stderr)
+        print("Verity backend startup failed; check the app package, data-folder permissions and available storage." if args.bundled else "Verity backend startup failed; verify repository and Python dependencies.", file=sys.stderr)
         return 1
 
 if __name__ == "__main__":

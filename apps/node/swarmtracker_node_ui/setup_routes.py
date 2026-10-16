@@ -10,14 +10,15 @@ import socket
 import tempfile
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 
 from fastapi import HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from verity_core import activation
 from verity_core.json_safety import bounded_json_loads
-from . import config, decision_routes, store
+from . import config, decision_routes, store, runtime_diagnostics
 
 LOCK=RLock()
 
@@ -88,27 +89,42 @@ def install(app,render,base_ctx):
                 with LOCK:
                     value=state();status(value)
                     if time.time()-value["max_seen"]>60:value["max_seen"]=time.time();write(value)
-            except (ValueError,TypeError,KeyError,OSError):
+            except OSError:
+                return JSONResponse({"detail":"Installation state could not be read or saved. Check local storage and restart Verity."},status_code=503)
+            except (ValueError,TypeError,KeyError):
+                if request.url.path.startswith("/api/"):
+                    return JSONResponse({"detail":"Pilot activation is required. Open Installation & Runtime."},status_code=403)
                 return RedirectResponse("/setup",status_code=303)
         return await call_next(request)
 
-    @app.get("/setup")
-    def setup(request:Request):
+    def setup_page(request:Request, diagnostics=None, setup_error=None, status_code=200):
         decision_routes.local_request(request)
         try:
             value=state()
-            try:claims=status(value);active=True;message="Pilot activation valid until Unix time "+str(claims["expires_at"])
+            try:
+                claims=status(value);active=True
+                message="Activation active until "+datetime.fromtimestamp(claims["expires_at"],timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
             except (ValueError,TypeError,OSError):active=False;message="Pilot activation is required, expired, revoked, or not configured."
         except (ValueError,TypeError,OSError):raise HTTPException(503,"Installation state is unavailable; existing state was preserved") from None
-        ctx=base_ctx(request,"setup");ctx.update(installation={"installation_id":value["installation_id"],"settings":value["settings"]},active=active,message=message,operator_token=decision_routes.TOKEN)
-        response=render("setup.html",ctx);response.headers["Cache-Control"]="no-store";return response
+        ctx=base_ctx(request,"setup");ctx.update(installation={"installation_id":value["installation_id"],"settings":value["settings"]},
+                   active=active,message=message,license_id=claims["license_id"] if active else None,
+                   diagnostics=diagnostics,setup_error=setup_error,operator_token=decision_routes.TOKEN)
+        response=render("setup.html",ctx);response.status_code=status_code;response.headers["Cache-Control"]="no-store";return response
+
+    @app.get("/setup")
+    def setup(request:Request):
+        return setup_page(request)
 
     @app.post("/setup")
     async def configure(request:Request):
         form=await decision_routes.operator_form(request)
+        if form.get("action")=="test_connection":
+            return setup_page(request,diagnostics=runtime_diagnostics.check())
         try:
             with LOCK:
                 value=state();action=form.get("action")
+                if time.time()+300<value["max_seen"]:raise ValueError("System clock moved backward")
                 if action=="activate":
                     candidate=dict(value,activation=form.get("code"));status(candidate);value=candidate
                 elif action=="revoke":
@@ -125,5 +141,6 @@ def install(app,render,base_ctx):
                 else:raise ValueError("Unknown setup action")
                 value["max_seen"]=max(time.time(),value["max_seen"]);write(value)
                 if action=="configure":apply_settings(settings)
-        except (ValueError,TypeError,KeyError,OSError):raise HTTPException(422,"Setup change rejected; verify the code, clock and loopback settings") from None
+        except (ValueError,TypeError,KeyError,OSError):
+            return setup_page(request,setup_error=("The change was not saved. Check the installation ID, code signature, expiry, imported revocation list and system clock. Runtime addresses must use HTTP on 127.0.0.1 or localhost."),status_code=422)
         return RedirectResponse("/setup",status_code=303)

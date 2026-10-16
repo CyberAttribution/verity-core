@@ -24,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import adapters, analysis, canonical_case, config, core_bridge
 from . import governance, keel_events, keel_policy, ledger, media_runner
-from . import agents, governed_analysis, providers, decision_routes, monitoring
+from . import agents, governed_analysis, providers, decision_routes, monitoring, local_activity
 from . import openclaw_client as oc
 from . import store as store_mod
 
@@ -68,6 +68,7 @@ def base_ctx(request: Request, page: str) -> dict:
             "hardware_next": config.HARDWARE_NEXT,
             "runtime": "Ollama (direct local)" if config.RUNTIME_KIND == "ollama" else config.RUNTIME_LABEL,
             "openclaw_url": config.OPENCLAW_URL,
+            "ollama_url": config.OLLAMA_URL,
             "ledger_path": str(config.LEDGER_PATH),
         },
     }
@@ -76,8 +77,8 @@ def base_ctx(request: Request, page: str) -> dict:
 def node_status() -> dict:
     hz = oc.healthz()
     models = oc.ollama_models()
-    runtime_online = bool(hz)
-    model_online = any(config.DEFAULT_MODEL in m for m in models) if models else False
+    runtime_online = isinstance(hz,dict) and (hz.get("status")=="ok" or hz.get("ok") is True)
+    model_online = config.DEFAULT_MODEL in models if models else False
     return {
         "runtime_online": runtime_online,
         "model_online": model_online,
@@ -341,7 +342,7 @@ def analyze_run(request: Request,
                                    evidence_type=evidence_type)
     # Regardless of the selected analysis mode, execution is Local Only:
     # the Keel policy file enables no other executable mode (v0.1.3).
-    result = oc.generate(prompt, policy=locked_policy)
+    result = local_activity.generate(lambda: oc.generate(prompt, policy=locked_policy))
 
     if not result.get("ok"):
         ctx["status"] = node_status()
@@ -402,7 +403,7 @@ def analyze_run(request: Request,
             "model": str(result.get("model") or "Not reported"),
             "identity_provenance": ("configured local runtime; self-reported; no runtime audit event or attestation"
                                     if config.RUNTIME_KIND == "ollama" else "runtime self-reported; not independently verified"),
-            "delegated_by": None, "runtime_event_id": event_id},
+            "delegated_by": None, "runtime_event_id": event_id, "activity_run_id":result.get("activity_run_id")},
         "workflow": "single_analysis", "profile_mode": profile_mode,
         "executed_mode": executed_mode, "cloud_used": cloud_used,
         "report": export_report, "items": one_item,

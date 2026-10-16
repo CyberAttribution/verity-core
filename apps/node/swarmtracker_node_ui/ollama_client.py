@@ -6,6 +6,7 @@ is made that the model enforces Keel policy. Existing node policy governs
 operations; this client only transports a prompt and normalizes a reply.
 """
 import requests
+import re
 
 from . import config, keel_policy
 
@@ -36,7 +37,7 @@ def health(timeout: float = None) -> dict:
 
 
 def _refuse_cloud(model: str) -> None:
-    if not isinstance(model,str) or not model or any(c.isspace() for c in model) or "cloud" in model.lower() or "/" in model:
+    if not isinstance(model,str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,239}",model) or model.lower().endswith((":cloud","-cloud")) or model.lower().startswith("cloud/"):
         raise ValueError("Cloud models are refused in direct-local mode")
 
 

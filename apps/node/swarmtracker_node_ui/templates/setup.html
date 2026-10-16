@@ -1,22 +1,28 @@
 {% extends "base.html" %}
 {% block title %}Verity setup{% endblock %}
 {% block content %}
-<section class="panel"><h2>Welcome to Verity</h2><p>{{ message }}</p>
+<section class="panel"><h2>1. Activate your pilot installation</h2>
+{% if setup_error %}<p class="alert" role="alert">{{ setup_error }}</p>{% endif %}
+<p><strong>{{ message }}</strong>{% if license_id %} · License <code>{{ license_id }}</code>{% endif %}</p>
 <p>Installation ID: <code>{{ installation.installation_id }}</code></p>
 <p>Give this installation ID to your pilot administrator to receive a signed activation code. Codes are installation-specific and expire. Offline revocation takes effect after importing a signed issuer list; there is no online revocation check.</p>
-<form method="post" action="/setup"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="action" value="activate"><label>Activation code <input name="code" required maxlength="7500" autocomplete="off"></label><button class="btn" type="submit">Activate installation</button></form>
-<details><summary>Import an issuer revocation list</summary><form method="post" action="/setup"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="action" value="revoke"><label>Signed revocation list <input name="code" required maxlength="7500" autocomplete="off"></label><button class="btn" type="submit">Import revocations</button></form></details>
+<form method="post" action="/setup"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="action" value="activate"><label>Activation code <textarea name="code" required maxlength="7500" rows="3" autocomplete="off"></textarea></label><button class="btn" type="submit">Activate installation</button></form>
+<details><summary>Import an issuer revocation list</summary><form method="post" action="/setup"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="action" value="revoke"><label>Signed revocation list <textarea name="code" required maxlength="7500" rows="3" autocomplete="off"></textarea></label><button class="btn" type="submit">Import revocations</button></form></details>
 </section>
-<section class="panel"><h2>Connect your analysis runtime</h2>
+<section class="panel"><h2>2. Connect your analysis runtime</h2>
 <p>Choose an existing OpenClaw v0 service or a local Ollama model. Verity does not install models or start the runtime. For direct Ollama, disable cloud features in that service; only locally stored GGUF models are accepted. Model output remains untrusted and cannot execute actions.</p>
 <form method="post" action="/setup"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="action" value="configure">
 <label>Analysis runtime <select name="runtime_kind"><option value="openclaw" {% if installation.settings.get("runtime_kind","openclaw")=="openclaw" %}selected{% endif %}>OpenClaw v0</option><option value="ollama" {% if installation.settings.get("runtime_kind")=="ollama" %}selected{% endif %}>Ollama — direct local model</option></select></label>
-<label>Operator label <input name="operator" required value="{{ installation.settings.get('operator', cfg.node) }}"></label>
+<label>Operator label <input name="operator" required value="{{ installation.settings.get('operator', '') }}"></label>
 <label>Model <input name="model" required value="{{ installation.settings.get('model', cfg.model) }}"></label>
 <label>OpenClaw URL <input name="openclaw_url" required value="{{ installation.settings.get('openclaw_url', cfg.openclaw_url) }}"></label>
-<label>Ollama URL <input name="ollama_url" required value="{{ installation.settings.get('ollama_url', 'http://127.0.0.1:11434') }}"></label>
+<label>Ollama URL <input name="ollama_url" required value="{{ installation.settings.get('ollama_url', cfg.ollama_url) }}"></label>
 <button class="btn" type="submit">Save runtime settings</button></form>
+<form method="post" action="/setup" style="margin-top:12px"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="action" value="test_connection"><button class="btn btn-ghost" type="submit">Test saved connection</button></form>
+{% if diagnostics %}<div class="card" role="status"><h3>{{ diagnostics.message }}</h3>
+<p>{{ diagnostics.next_step }}</p>{% if diagnostics.available_models %}<p>Installed model names: {% for name in diagnostics.available_models %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}<p class="hint">{{ diagnostics.scope }}</p>
+<p>Runtime reachable: {{ 'yes' if diagnostics.runtime_reachable else 'no' }} · Model inventory reachable: {{ 'yes' if diagnostics.model_list_reachable else 'no' }} · Selected model listed: {{ 'yes' if diagnostics.model_listed else 'no' }}</p></div>{% endif %}
 <p>Activation permits product use. Sending evidence to a cloud provider still requires the separate authorization controls for each job.</p>
-{% if active %}<a class="btn" href="/">Open Verity</a>{% endif %}
+{% if active %}<h2>3. Run your first analysis</h2><p>Use a small, non-sensitive specimen first. Review the result, inspect Active Agents, preserve it for decision review, then export the Trust Record and retain its checkpoint separately.</p><a class="btn" href="/analyze">Open Analyze</a>{% endif %}
 </section>
 {% endblock %}

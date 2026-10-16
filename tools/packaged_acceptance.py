@@ -14,6 +14,7 @@ def main():
     p.add_argument("--origin",required=True);p.add_argument("--output",required=True)
     p.add_argument("--runtime",choices=["openclaw","ollama"],required=True)
     p.add_argument("--model",required=True);p.add_argument("--activation-code-file")
+    p.add_argument("--require-native-activity",action="store_true");p.add_argument("--require-diagnostics",action="store_true")
     p.add_argument("--collector-token-file");p.add_argument("--relaunch",action="store_true")
     a=p.parse_args()
     parsed=urllib.parse.urlsplit(a.origin)
@@ -66,9 +67,13 @@ def main():
             check("activation survives relaunch",request("/")[0]==200)
             check("runtime settings survive relaunch",f'value="{a.model}"' in page and f'value="{a.runtime}" selected' in page)
         check("missing runtime configured",configure(True)[0]==303)
+        if a.require_diagnostics:
+            check("unreachable connection guidance", "did not answer its health check" in setup({"action":"test_connection"})[2])
         status,h,page=request("/analyze",{"evidence":"SYNTHETIC unavailable-runtime check."})
         check("missing runtime fails without report",status==200 and "/decisions/from-report/" not in page)
         check("connection recovered",configure()[0]==303)
+        if a.require_diagnostics:
+            check("metadata-only saved connection test", "selected model is listed as installed" in setup({"action":"test_connection"})[2])
         emit("heartbeat")
         activity="analysis-"+uuid.uuid4().hex
         emit("request_start",dict(activity_id=activity,operation="packaged_local_analysis",task="Synthetic vendor payment-change triage"))
@@ -117,6 +122,13 @@ def main():
             check(name+" fixed authorized target",m["action"]=={"kind":"simulate_sender_block","target":"sender@example.invalid"})
             check(name+" actual participant identity",len(m["participants"])==1 and a.model==m["participants"][0]["model"])
             results[name]={"path":path,"checkpoint":json.loads(anchor),"events":events,"participant":m["participants"][0]}
+        participant=results["approved"]["participant"]
+        native_run=participant.get("activity_run_id")
+        if a.require_native_activity:check("native product records actual analysis activity",bool(native_run))
+        if native_run:
+            for suffix,filename in [("/export.json","native-activity.telemetry.json"),("/checkpoint.json","native-activity.checkpoint.json")]:
+                s,h,body=request("/monitor/runs/"+native_run+suffix)
+                check(filename,s==200);(out/filename).write_text(body)
         emit("disconnect")
         if a.collector_token_file:
             path="/monitor/runs/"+manifest["run_id"]

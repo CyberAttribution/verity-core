@@ -210,7 +210,7 @@ class VerityAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let win = NSWindow(contentRect: rect,
                            styleMask: [.titled, .closable, .miniaturizable, .resizable],
                            backing: .buffered, defer: false)
-        win.title = "Verity"
+        win.title = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Verity"
         win.center()
 
         let config = WKWebViewConfiguration()

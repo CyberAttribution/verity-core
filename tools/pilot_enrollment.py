@@ -9,7 +9,8 @@ from verity_core.trust.verify_decision import load
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument("operation",choices=["issue","adopt","status","reconcile","ack","record-revocations","retry-export"])
+    p.add_argument("operation",choices=["issue","adopt","status","reconcile","ack","record-revocations","retry-export","invite","retry-invitation"])
+    p.add_argument("--package-file");p.add_argument("--invitation-id")
     p.add_argument("--registry",required=True);p.add_argument("--private-key");p.add_argument("--public-key")
     p.add_argument("--license-id");p.add_argument("--installation-id");p.add_argument("--code-file")
     p.add_argument("--preserve-partial",action="store_true");p.add_argument("--output");p.add_argument("--replace");p.add_argument("--days",type=int,default=7)
@@ -22,6 +23,12 @@ def main():
         key=serialization.load_pem_private_key(read_private(a.private_key),None)
         if not isinstance(key,Ed25519PrivateKey):raise ValueError("Ed25519 issuer required")
         reg.retry_export(a.license_id,key,a.preserve_partial);print(json.dumps(reg.status(a.license_id),indent=2));return
+    if a.operation=="retry-invitation":
+        if not a.invitation_id:p.error("--invitation-id is required")
+        reg.retry_invitation(a.invitation_id,a.preserve_partial);print(json.dumps(reg.status(),indent=2));return
+    if a.operation=="invite":
+        if not a.package_file or not a.output:p.error("invite requires --package-file and --output")
+        print(json.dumps(reg.prepare_invitation(a.package_file,a.output,a.invitation_id,a.days),indent=2));return
     if a.operation=="status":
         print(json.dumps(reg.status(a.license_id),indent=2));return
     if a.operation=="reconcile":
@@ -39,7 +46,7 @@ def main():
         activation._id(a.installation_id);activation._id(lid)
         c=dict(schema="verity_pilot_entitlement/v1",installation_id=a.installation_id,license_id=lid,issued_at=now,expires_at=now+a.days*86400)
         payload=activation.canonical(c);code=activation.encode(payload)+"."+activation.encode(key.sign(payload))
-        print(json.dumps(reg.issue(code,public,a.output,a.replace),indent=2));return
+        print(json.dumps(reg.issue(code,public,a.output,a.replace,invitation_id=a.invitation_id),indent=2));return
     if not a.public_key or not a.code_file:p.error("adopt/record-revocations require --public-key and --code-file")
     code=read_private(a.code_file).decode().strip();public=Path(a.public_key).read_bytes()
     if a.operation=="adopt":result=reg.issue(code,public,a.code_file,a.replace,existing=True)

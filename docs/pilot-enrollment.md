@@ -40,8 +40,13 @@ and its exact SHA-256 through the agreed delivery channel.
 6. Confirm memory headroom before loading a model. The mini's existing
    qwen2.5:7b-instruct Q4_K_M weights occupied 4.36 GiB on disk. A 4K context
    needed roughly 224 MiB of KV cache; its observed model allocation was about
-   4.59 GiB. Pressure remained normal during acceptance, with about 165 MiB
-   swap used after loading. Run one inference at a time on that 16 GB machine.
+   4.59 GiB. Initial pressure was normal, with about 165 MiB swap after loading.
+   Later, multiple QA app windows plus desktop activity reached warning pressure
+   and about 411 MiB swap. Closing the obsolete test app and unloading the test
+   model restored normal pressure. The connection test now shows weight size
+   and this Mac memory pressure, with guidance to close apps or choose a smaller
+   model. It does not guarantee fit. Run one inference at a time and prefer a
+   smaller model when normal desktop work leaves limited headroom.
    The MacBook test instead used qwen2.5:3b-instruct Q4_K_M (1.80 GiB weights).
    These measurements are not a blanket guarantee for other contexts or apps.
 7. Open Analyze and submit a small, non-sensitive specimen. Inspect the finding

@@ -1,5 +1,5 @@
 """Metadata-only first-launch checks. Never load a model or send evidence."""
-from . import config, openclaw_client as oc
+from . import config, openclaw_client as oc, memory_preflight
 
 def check():
     kind=config.RUNTIME_KIND
@@ -25,6 +25,10 @@ def check():
         result["available_models"]=names[:12]
         result["model_list_reachable"]=True
         result["model_listed"]=config.DEFAULT_MODEL in names
+        selected=next((v for v in data["models"] if isinstance(v,dict) and v.get("name")==config.DEFAULT_MODEL),None)
+        result["model_weight_gib"]=memory_preflight.weight_gib(selected)
+        result["memory_pressure"]=memory_preflight.current()
+        result["memory_advice"]=memory_preflight.advice(result["memory_pressure"])
     except Exception:
         return dict(result,state="model_list_unavailable",message="The runtime answered, but the Ollama model inventory could not be checked.",
                     next_step="Check the saved Ollama address and start its local service, then test again.")

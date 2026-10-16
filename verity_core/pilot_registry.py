@@ -29,7 +29,7 @@ def artifact_present(path):
     except FileNotFoundError:return False
 
 def read_private(path,limit=8192):
-    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
     try:
         info=os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o077 or info.st_size>limit:
@@ -37,6 +37,19 @@ def read_private(path,limit=8192):
         raw=os.read(fd,limit+1)
         if len(raw)>limit:raise ValueError("Artifact exceeds size limit")
         return raw
+    finally:os.close(fd)
+
+def file_fingerprint(path,limit=512*1024*1024):
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    try:
+        info=os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size>limit:raise ValueError("Package must be a regular file no larger than 512 MiB")
+        digest=hashlib.sha256();count=0
+        while chunk:=os.read(fd,1024*1024):
+            count+=len(chunk)
+            if count>limit:raise ValueError("Package exceeds size limit")
+            digest.update(chunk)
+        return digest.hexdigest()
     finally:os.close(fd)
 
 def save_private_new(path,data):
@@ -101,7 +114,7 @@ class Registry:
                     (claims["license_id"],claims["installation_id"],json.dumps(claims),code_sha256,str(artifact),supersedes))
         self.event(con,"issuance_prepared",dict(license_id=claims["license_id"],installation_id=claims["installation_id"],code_sha256=code_sha256,supersedes=supersedes))
 
-    def issue(self,code,public_key,output,supersedes=None,existing=False):
+    def issue(self,code,public_key,output,supersedes=None,existing=False,invitation_id=None):
         claims=activation.unpack(code,public_key)
         activation.entitlement(code,public_key,claims.get("installation_id"),time.time())
         raw=code.strip().encode();output=Path(output).absolute()
@@ -111,7 +124,9 @@ class Registry:
             if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o077:
                 raise ValueError("Existing code artifact must be owner-only")
             if read_private(output).strip()!=raw:raise ValueError("Existing artifact does not match code")
-        with self.connection() as con:self._reserve(con,claims,fingerprint(raw),output,supersedes)
+        with self.connection() as con:
+            self._reserve(con,claims,fingerprint(raw),output,supersedes)
+            if invitation_id:self._associate_invitation(con,invitation_id,claims["license_id"])
         if not existing:save_private_new(output,raw)
         self.reconcile(claims["license_id"])
         return self.status(claims["license_id"])
@@ -178,6 +193,54 @@ class Registry:
             self.event(con,"revocation_list_issued",dict(revision=claims["revision"],license_ids=claims["license_ids"],
                        list_sha256=fingerprint(raw),artifact_path=str(Path(path).absolute()),installation_import="not observed"))
 
+    def prepare_invitation(self,package_path,output,invitation_id=None,days=7):
+        from .pilot_invitation import draft
+        package=Path(package_path);output=Path(output).absolute()
+        if output.exists() or output.is_symlink():raise Conflict("Invitation output already exists")
+        iid=invitation_id or "invite-"+uuid.uuid4().hex
+        sha=file_fingerprint(package);text=draft(iid,package.name,sha,days)
+        with self.connection() as con:
+            prior=[json.loads(row[0]) for row in con.execute("SELECT data FROM events WHERE event='invitation_prepared'")]
+            if any(row["invitation_id"]==iid for row in prior):raise Conflict("Invitation IDs are never reused")
+            self.event(con,"invitation_prepared",dict(invitation_id=iid,package_filename=package.name,
+                       package_sha256=sha,draft_path=str(output),draft_sha256=fingerprint(text.encode()),suggested_days=days,sent=False))
+        save_private_new(output,text.encode())
+        self.retry_invitation(iid)
+        return dict(invitation_id=iid,output=str(output),package_sha256=sha,sent=False,grants_authority=False)
+
+    def retry_invitation(self,invitation_id,preserve_partial=False):
+        from .pilot_invitation import draft
+        with self.connection() as con:
+            rows=[json.loads(row[0]) for row in con.execute("SELECT data FROM events WHERE event='invitation_prepared' ORDER BY seq")]
+            data=next((row for row in rows if row["invitation_id"]==invitation_id),None)
+            if not data:raise Conflict("Unknown invitation")
+            raw=draft(invitation_id,data["package_filename"],data["package_sha256"],data["suggested_days"]).encode()
+            if data.get("draft_sha256") and fingerprint(raw)!=data["draft_sha256"]:raise ValueError("Draft template changed; preserve this history and prepare a new invitation ID")
+            path=Path(data["draft_path"])
+            if path.exists() or path.is_symlink():
+                if read_private(path,16384)!=raw:
+                    if not preserve_partial:raise ValueError("Partial draft retained; use --preserve-partial")
+                    path.rename(path.with_name(path.name+".partial-"+uuid.uuid4().hex))
+            if not path.exists():save_private_new(path,raw)
+            if read_private(path,16384)!=raw:raise ValueError("Invitation artifact mismatch")
+            exported=[json.loads(row[0]) for row in con.execute("SELECT data FROM events WHERE event='invitation_draft_exported'")]
+            if not any(row["invitation_id"]==invitation_id for row in exported):
+                self.event(con,"invitation_draft_exported",dict(invitation_id=invitation_id,sent=False))
+
+    def _associate_invitation(self,con,invitation_id,license_id):
+        activation._id(invitation_id)
+        exported=[json.loads(row[0]) for row in con.execute("SELECT data FROM events WHERE event='invitation_draft_exported'")]
+        if not any(row["invitation_id"]==invitation_id for row in exported):raise Conflict("Exported invitation draft required")
+        license=con.execute("SELECT installation_id FROM licenses WHERE license_id=?",(license_id,)).fetchone()
+        if not license:raise Conflict("Unknown license")
+        old=[json.loads(row[0]) for row in con.execute("SELECT data FROM events WHERE event='invitation_associated'")]
+        for row in old:
+            if row["invitation_id"]==invitation_id and row["installation_id"]!=license[0]:
+                raise Conflict("This invitation is associated with a different installation")
+            if row["invitation_id"]==invitation_id and row["license_id"]==license_id:return
+        self.event(con,"invitation_associated",dict(invitation_id=invitation_id,license_id=license_id,installation_id=license[0],
+                   source="administrator bookkeeping; invitation grants no authority"))
+
     def status(self,license_id=None,now=None):
         now=time.time() if now is None else now
         with self.connection() as con:
@@ -193,4 +256,11 @@ class Registry:
                     replacement_license_ids=[r[0] for r in con.execute("SELECT license_id FROM licenses WHERE supersedes=?",(lid,))],
                     acknowledgment_reported=any(e["event"]=="analysis_acknowledged" and e["data"]["license_id"]==lid for e in events),
                     revocation_list_issued=any(e["event"]=="revocation_list_issued" and lid in e["data"]["license_ids"] for e in events)))
-        return {"licenses":out,"events":events,"limits":DISCLAIMER}
+        invitations=[]
+        for e in events:
+            if e["event"]=="invitation_prepared":
+                data=e["data"];iid=data["invitation_id"]
+                invitations.append(dict(invitation_id=iid,sent=False,grants_authority=False,
+                    artifact_state="exported" if any(x["event"]=="invitation_draft_exported" and x["data"]["invitation_id"]==iid for x in events) else "pending_reconciliation",
+                    artifact_present=artifact_present(data["draft_path"]),package_sha256=data["package_sha256"]))
+        return {"licenses":out,"invitations":invitations,"events":events,"limits":DISCLAIMER}

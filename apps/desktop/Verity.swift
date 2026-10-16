@@ -158,6 +158,7 @@ class VerityAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     var terminating = false
     var pendingExternalURL: URL?
     var acceptanceTimer: Timer?
+    var connectionSmokeSubmitted = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let config = loadConfig() else {
@@ -185,7 +186,7 @@ class VerityAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self.initialOrigin = url
             self.startupComplete = true
             self.startupTimer?.invalidate()
-            let destination = CommandLine.arguments.contains("--smoke-agents") ? url.appendingPathComponent("agents") : url
+            let destination = CommandLine.arguments.contains("--smoke-connection-test") ? url.appendingPathComponent("setup") : (CommandLine.arguments.contains("--smoke-agents") ? url.appendingPathComponent("agents") : url)
             self.webView?.load(URLRequest(url: destination))
         }
         worker.onExit = { [weak self] code in
@@ -249,6 +250,16 @@ class VerityAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard CommandLine.arguments.contains("--smoke-test"),
               initialOrigin != nil else { return }
+        if CommandLine.arguments.contains("--smoke-connection-test") {
+            if !connectionSmokeSubmitted {
+                connectionSmokeSubmitted = true
+                webView.evaluateJavaScript("document.querySelector('input[value=test_connection]').form.requestSubmit()") { [weak self] _, error in
+                    if error != nil { self?.failStartup(message: "Connection test form could not be submitted.") }
+                }
+                return
+            }
+            webView.evaluateJavaScript("document.querySelector('[role=status]')?.scrollIntoView()", completionHandler: nil)
+        }
         webView.evaluateJavaScript("document.title") { [weak self] value, error in
             guard let self = self else { return }
             let support = ProcessInfo.processInfo.environment["VERITY_SMOKE_DIR"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!.appendingPathComponent("Verity", isDirectory: true)

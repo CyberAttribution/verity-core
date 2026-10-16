@@ -65,17 +65,18 @@ def status(value):
 
 
 def validate_settings(settings):
-    allowed={"operator","model","openclaw_url","ollama_url"}
+    allowed={"operator","model","openclaw_url","ollama_url","runtime_kind"}
     if set(settings)-allowed:raise ValueError("Unknown first-launch setting")
     for key,value in settings.items():
         if not isinstance(value,str) or not value.strip() or len(value)>240 or any(ord(c)<32 for c in value):raise ValueError("Invalid first-launch setting")
+        if key == "runtime_kind" and value not in ("openclaw","ollama"):raise ValueError("Invalid runtime kind")
         if key.endswith("_url"):config.assert_local(value)
     return settings
 
 
 def apply_settings(settings):
     validate_settings(settings)
-    mapping={"operator":"OPERATOR","model":"DEFAULT_MODEL","openclaw_url":"OPENCLAW_URL","ollama_url":"OLLAMA_URL"}
+    mapping={"operator":"OPERATOR","model":"DEFAULT_MODEL","openclaw_url":"OPENCLAW_URL","ollama_url":"OLLAMA_URL","runtime_kind":"RUNTIME_KIND"}
     for key,value in settings.items():setattr(config,mapping[key],value)
 
 
@@ -118,6 +119,7 @@ def install(app,render,base_ctx):
                     value["revocations"]=form["code"]
                 elif action=="configure":
                     settings={k:form.get(k,"").strip() for k in ("operator","model","openclaw_url","ollama_url")}
+                    settings["runtime_kind"]=form.get("runtime_kind","openclaw")
                     validate_settings(settings)
                     value["settings"]=settings
                 else:raise ValueError("Unknown setup action")

@@ -168,6 +168,11 @@ class RunStore:
             attempt = trust.append_entry(record, 'action_attempted', actor=actor,
                                          payload={'event': 'action_attempted', 'allowed': view['can_execute'],
                                                   'binding': decision.binding(view['manifest'])})
+            if view['can_execute']:
+                trust.append_entry(record, 'note', actor=actor, payload={
+                    'event':'action_executed', 'attempt_hash':attempt['entry_hash'],
+                    'binding':decision.binding(view['manifest']),
+                    'executor':'fixed_local_simulator', 'external_action_executed':False})
             # No externally callable executor: the simulator IS this recorded
             # outcome. It cannot send messages, change files, or block a sender.
             trust.append_entry(record, 'action_result', payload={

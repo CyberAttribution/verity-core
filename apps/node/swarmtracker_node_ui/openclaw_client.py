@@ -24,6 +24,9 @@ def _request_json(method, url, **kwargs):
 
 def healthz(timeout: float = None) -> dict:
     """GET /healthz. Returns {} on any failure (caller treats as offline)."""
+    if config.RUNTIME_KIND == "ollama":
+        from . import ollama_client
+        return ollama_client.health(timeout)
     try:
         return _request_json("GET", config.OPENCLAW_URL.rstrip("/") + "/healthz",
                              timeout=timeout or config.HEALTH_TIMEOUT)
@@ -51,6 +54,11 @@ def generate(prompt: str, *, model: str = None, policy: str = None,
       raw (full JSON), error (message when ok is False).
     Never raises: transport errors come back as ok=False.
     """
+    if config.RUNTIME_KIND == "ollama":
+        from . import ollama_client
+        return ollama_client.generate(prompt, model=model, policy=policy, operator=operator)
+    if config.RUNTIME_KIND != "openclaw":
+        return {"ok":False,"error":"Unsupported runtime kind"}
     url = config.OPENCLAW_URL.rstrip("/") + "/v0/generate"
     # v0.1.3 Keel policy lock: the policy sent to the runtime is always
     # resolved through the local policy file — never raw caller input.
@@ -60,6 +68,7 @@ def generate(prompt: str, *, model: str = None, policy: str = None,
     pol = keel_policy.policy_summary()
     payload = {
         "prompt": prompt,
+        "options": {"num_ctx":4096,"num_predict":1024},
         "model": model or config.DEFAULT_MODEL,
         "policy": locked_policy,
         "operator": operator or config.OPERATOR,
@@ -100,7 +109,8 @@ def generate(prompt: str, *, model: str = None, policy: str = None,
         if isinstance(data.get(k), str):
             text = data[k]
             break
-    event_id = data.get("id") or data.get("event_id") or data.get("openclaw_event_id")
+    raw_id = data.get("id") or data.get("event_id") or data.get("openclaw_event_id")
+    event_id = raw_id if isinstance(raw_id,str) and raw_id.strip() and len(raw_id)<160 else None
 
     return {
         "ok": True,

@@ -35,7 +35,8 @@ def participant_snapshot(health, models, events, *, observed_at=None):
                    and e.get("model") == model), None)
     available = online and isinstance(models, list) and model in models
     return {
-        "name": node or "Configured OpenClaw participant",
+        "name": node or "Configured local participant",
+        "framework": "Ollama native API (direct local)" if config.RUNTIME_KIND == "ollama" else "Legacy OpenClaw v0 API",
         "node": node or "Not observed",
         "model": model or "Not observed",
         "provider": provider or "Not observed",

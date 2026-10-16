@@ -13,6 +13,7 @@ import hashlib
 import os
 import tempfile
 import time
+import uuid
 from collections import OrderedDict
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -65,7 +66,7 @@ def base_ctx(request: Request, page: str) -> dict:
             "model": config.DEFAULT_MODEL,
             "hardware": config.HARDWARE,
             "hardware_next": config.HARDWARE_NEXT,
-            "runtime": config.RUNTIME_LABEL,
+            "runtime": "Ollama (direct local)" if config.RUNTIME_KIND == "ollama" else config.RUNTIME_LABEL,
             "openclaw_url": config.OPENCLAW_URL,
             "ledger_path": str(config.LEDGER_PATH),
         },
@@ -352,7 +353,7 @@ def analyze_run(request: Request,
     report = analysis.parse_result(result["response"],
                                    profile_mode=profile_mode,
                                    evidence_type=evidence_type)
-    event_id = result.get("openclaw_event_id") or ledger.latest_event_id()
+    event_id = result.get("openclaw_event_id")
 
     # v0.5.0: single-artifact Analyze reuses the shared governed service
     # for Local/Governed + provider provenance + exports (no separate
@@ -373,7 +374,7 @@ def analyze_run(request: Request,
               "operator_authorized": False, "authorized": False,
               "provider_attempted": False}
     executed_mode, cloud_escalation, cloud_used, _pd = _mode_strings(rm)
-    token = event_id or ("sa-" + str(len(GENERIC_JOBS)))
+    token = "sa-" + uuid.uuid4().hex
     # build an export-ready report dict (indicators as entities) so
     # JSON/Report/Atlas/Briefing exports work identically to fused
     from verity_core_staging.artifacts import normalize as _norm
@@ -397,9 +398,10 @@ def analyze_run(request: Request,
             "id": "runtime-" + hashlib.sha256(
                 json.dumps([result.get("node"), result.get("model"), result.get("provider")], sort_keys=True).encode()).hexdigest()[:24],
             "name": str(result.get("node") or "Unreported runtime"),
-            "framework": "Legacy OpenClaw v0 API",
+            "framework": result.get("framework") or "Legacy OpenClaw v0 API",
             "model": str(result.get("model") or "Not reported"),
-            "identity_provenance": "runtime self-reported; not independently verified",
+            "identity_provenance": ("configured local runtime; self-reported; no runtime audit event or attestation"
+                                    if config.RUNTIME_KIND == "ollama" else "runtime self-reported; not independently verified"),
             "delegated_by": None, "runtime_event_id": event_id},
         "workflow": "single_analysis", "profile_mode": profile_mode,
         "executed_mode": executed_mode, "cloud_used": cloud_used,

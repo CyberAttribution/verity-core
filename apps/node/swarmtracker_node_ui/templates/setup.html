@@ -8,8 +8,9 @@
 <details><summary>Import an issuer revocation list</summary><form method="post" action="/setup"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="action" value="revoke"><label>Signed revocation list <input name="code" required maxlength="7500" autocomplete="off"></label><button class="btn" type="submit">Import revocations</button></form></details>
 </section>
 <section class="panel"><h2>Connect your analysis runtime</h2>
-<p>Verity connects to the existing legacy OpenClaw v0 analysis service and Ollama over loopback. A remote service needs an operator-established private tunnel. Verity does not install a model or start that service.</p>
+<p>Choose an existing OpenClaw v0 service or a local Ollama model. Verity does not install models or start the runtime. For direct Ollama, disable cloud features in that service; only locally stored GGUF models are accepted. Model output remains untrusted and cannot execute actions.</p>
 <form method="post" action="/setup"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="action" value="configure">
+<label>Analysis runtime <select name="runtime_kind"><option value="openclaw" {% if installation.settings.get("runtime_kind","openclaw")=="openclaw" %}selected{% endif %}>OpenClaw v0</option><option value="ollama" {% if installation.settings.get("runtime_kind")=="ollama" %}selected{% endif %}>Ollama — direct local model</option></select></label>
 <label>Operator label <input name="operator" required value="{{ installation.settings.get('operator', cfg.node) }}"></label>
 <label>Model <input name="model" required value="{{ installation.settings.get('model', cfg.model) }}"></label>
 <label>OpenClaw URL <input name="openclaw_url" required value="{{ installation.settings.get('openclaw_url', cfg.openclaw_url) }}"></label>

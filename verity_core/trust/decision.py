@@ -107,12 +107,15 @@ def policy_snapshot(mode):
 def new_run(manifest):
     validate_manifest(manifest)
     r = trust.new_record({'kind': 'governed_decision', 'identifier': manifest['title']})
+    manifest = copy.deepcopy(manifest)
+    manifest['authorization_scope'] = r['record_id']
     trust.append_entry(r, 'note', payload={'event': 'run_created', 'manifest': manifest})
     return r
 
 
 def binding(manifest):
-    return digest({'action': manifest['action'], 'policy': manifest['policy'],
+    scope = ({'authorization_scope':manifest['authorization_scope']} if 'authorization_scope' in manifest else {})
+    return digest({**scope, 'action': manifest['action'], 'policy': manifest['policy'],
                    'evidence': manifest['evidence'], 'findings': manifest['findings'],
                    'participants': manifest['participants'], 'recommendation': manifest['recommendation']})
 
@@ -125,16 +128,19 @@ def inspect(r):
     if first['entry_type'] != 'note' or first['payload'].get('event') != 'run_created':
         raise ValueError('Missing decision manifest')
     m = validate_manifest(first['payload']['manifest'])
+    if 'authorization_scope' in m and m['authorization_scope'] != r['record_id']:
+        raise ValueError('Authorization scope does not match this record')
     if r['subject'] != {'kind': 'governed_decision', 'identifier': m['title']} or r['refs'] != {}:
         raise ValueError('Record metadata does not match the manifest')
     decision = 'pending'
     executed = False
     pending_attempt = None
     attempts = 0
+    execution_seen = False
     for entry in r['entries'][1:]:
         p = entry['payload']
         event = p.get('event')
-        if pending_attempt is not None and event != 'action_result':
+        if pending_attempt is not None and event not in ('action_executed', 'action_result'):
             raise ValueError('Action attempt is missing its outcome')
         if event == 'authorization_decided':
             if entry['entry_type'] not in ('approval_granted', 'note') or decision != 'pending' or executed:
@@ -154,11 +160,23 @@ def inspect(r):
             if type(p.get('allowed')) is not bool or p['allowed'] != allowed or p.get('binding') != binding(m):
                 raise ValueError('Action boundary state mismatch')
             pending_attempt = entry
+            execution_seen = False
             attempts += 1
+        elif event == 'action_executed':
+            if (entry['entry_type'] != 'note' or pending_attempt is None or execution_seen
+                    or not pending_attempt['payload']['allowed']):
+                raise ValueError('Execution has no authorized attempt')
+            expected = {'event':'action_executed', 'attempt_hash':pending_attempt['entry_hash'],
+                        'binding':binding(m), 'executor':'fixed_local_simulator',
+                        'external_action_executed':False}
+            if p != expected:raise ValueError('Execution does not match the authorized action')
+            execution_seen = True
         elif event == 'action_result':
             if entry['entry_type'] != 'action_result' or pending_attempt is None:
                 raise ValueError('Outcome has no attempt')
             allowed = pending_attempt['payload']['allowed']
+            if allowed and 'authorization_scope' in m and not execution_seen:
+                raise ValueError('Authorized attempt has no execution event')
             expected = {'event': 'action_result', 'attempt_hash': pending_attempt['entry_hash'],
                         'outcome': 'simulated' if allowed else 'denied',
                         'external_action_executed': False}

@@ -142,6 +142,8 @@ def install(app, render, base_ctx, jobs):
 
     async def mutate(request, rid, operation):
         form = await operator_form(request)
+        allowed_fields = {'operator_token','expected_head','decision','reason'} if operation == 'authorize' else {'operator_token','expected_head'}
+        if set(form)-allowed_fields:raise HTTPException(422, 'Unexpected action parameters refused.')
         get(rid)  # verify before processing mutation; store re-verifies under lock
         try:
             if operation == 'authorize':

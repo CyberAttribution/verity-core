@@ -33,7 +33,8 @@ def setup_environment(repo):
     for key, name in (("NODE_UI_DB", "verity.db"),
                       ("NODE_UI_MEDIA_LEDGER", "media-ledger.jsonl"),
                       ("NODE_UI_LEDGER", "runtime-ledger.jsonl")):
-        os.environ[key] = str(base / name)
+        os.environ[key] = (os.environ.get("VERITY_READONLY_RUNTIME_LEDGER", str(base / name))
+                           if key == "NODE_UI_LEDGER" else str(base / name))
     os.environ["NODE_UI_DATA_DIR"] = str(base)
     sys.path[:0] = [str(repo), str(repo / "apps/node")]
 

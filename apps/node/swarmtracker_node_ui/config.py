@@ -26,6 +26,10 @@ HARDWARE_NEXT = os.environ.get(
     "NODE_UI_HARDWARE_NEXT", "Tiiny local AI device (target, Aug 2026)")
 RUNTIME_LABEL = os.environ.get("NODE_UI_RUNTIME", "Ollama (local)")
 
+RUNTIME_KIND = os.environ.get("NODE_UI_RUNTIME_KIND", "openclaw")
+if RUNTIME_KIND not in ("openclaw", "ollama"):
+    raise ValueError("Unsupported local runtime kind")
+
 # v0.1.x has no cloud escalation path implemented, so the mode is Local Only.
 MODE = "Local Only"
 CLOUD_ESCALATION = "Disabled"

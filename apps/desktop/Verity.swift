@@ -157,6 +157,7 @@ class VerityAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     var startupComplete = false
     var terminating = false
     var pendingExternalURL: URL?
+    var acceptanceTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let config = loadConfig() else {
@@ -264,7 +265,24 @@ class VerityAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                    let data = bitmap.representation(using: .png, properties: [:]) {
                     try? data.write(to: support.appendingPathComponent("desktop-smoke.png"))
                 }
-                NSApp.terminate(nil)
+                if !CommandLine.arguments.contains("--smoke-hold") { NSApp.terminate(nil) }
+            }
+            if CommandLine.arguments.contains("--smoke-hold"), self.acceptanceTimer == nil {
+                self.acceptanceTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                    guard let self = self else { return }
+                    if FileManager.default.fileExists(atPath: support.appendingPathComponent("quit").path) {
+                        NSApp.terminate(nil); return
+                    }
+                    let nav = support.appendingPathComponent("navigate")
+                    if let path = try? String(contentsOf: nav, encoding: .utf8) {
+                        try? FileManager.default.removeItem(at: nav)
+                        if path == "/agents" || path == "/setup" || path.hasPrefix("/decisions/") {
+                            if let origin = self.initialOrigin, let url = URL(string: path, relativeTo: origin), sameOrigin(url.absoluteURL, origin) {
+                                self.webView?.load(URLRequest(url: url.absoluteURL))
+                            }
+                        }
+                    }
+                }
             }
         }
     }

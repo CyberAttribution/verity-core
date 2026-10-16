@@ -1,0 +1,9 @@
+{
+  "source_files_sha256": "43a197d54dd638132cbe38e03636429e11f5c6b1f6bf8d705c07de15fcae8bcf",
+  "source_tree_dirty": false,
+  "bundle_runtime": true,
+  "signing": "ad-hoc only",
+  "notarized": false,
+  "python": "3.14.7",
+  "source_commit": "6838cdc502eb6af3f6d19c72590bc34b9145c6a0"
+}

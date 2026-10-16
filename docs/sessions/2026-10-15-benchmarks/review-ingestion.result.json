@@ -1,0 +1,22 @@
+{
+  "case": "review-ingestion",
+  "input_sha256": "dd97c1837996da6e880354943dd670171b1cc49786eb69ede5b59b27407df89d",
+  "original_harness_status": "completed",
+  "acceptance_status": "completed",
+  "completion": {
+    "content": "**PASS**\n\nStatic review of the authenticated loopback ingestion path and SQLite transaction handling found no concrete faults:\n\n- **Auth**: loopback peer check plus existing `local_request`, `hmac.compare_digest` on the full `Bearer <token>` string, and 503 gating when `VERITY_MONITOR_TOKEN` < 32 chars \u2014 consistent with the stated model.\n- **Input bounding**: content-type check, 16 KiB streamed cap with 413, `bounded_json_loads`, strict `{\"manifest\",\"event\"}` envelope, and broad but targeted exception mapping to 422/503 without stack leakage.\n- **Transactions**: `BEGIN IMMEDIATE` is issued on a fresh connection before any DML (the earlier SELECT inside `_load` does not trigger pysqlite's implicit BEGIN, so no nested-transaction error); commit/rollback/close are correctly bracketed by the contextmanager, and `ON CONFLICT DO UPDATE` keeps run upserts atomic. `synchronous=FULL`/WAL are set appropriately per-connection/at init.\n- **Reads**: `rid` validated via `telemetry.identifier` before use (including in the export `Content-Disposition` filename), and stored-record run-ID mismatch is rejected on every `_load`.\n\nNo fixes required.",
+    "finish_reason": "stop",
+    "usage": {
+      "prompt_tokens": 1525,
+      "total_tokens": 3376,
+      "completion_tokens": 1851,
+      "completion_tokens_details": {
+        "reasoning_tokens": 1587
+      }
+    },
+    "elapsed_seconds": 25.567172292001487,
+    "ttft_seconds": 13.593989624998358,
+    "first_content_seconds": 23.922065708997252,
+    "completion_tokens_per_total_second": 72.39752518815202
+  }
+}

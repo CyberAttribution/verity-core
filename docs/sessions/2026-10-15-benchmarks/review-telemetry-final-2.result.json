@@ -1,0 +1,22 @@
+{
+  "case": "review-telemetry-final-2",
+  "input_sha256": "52ee0f593e189bd8ee2aa119281e4109a064116013c7c607e9e584cb2be1ebb7",
+  "original_harness_status": "completed",
+  "acceptance_status": "completed",
+  "completion": {
+    "content": "**NEEDS_FIX**\n\n1. **Idempotent retry path is unreachable (telemetry.append).** `append` first calls `inspect(record, ...)`, and `inspect` raises `ValueError(\"Duplicate or reordered telemetry\")` when it encounters an `event_id` already in `seen`. So for an identical retry the stored event_id trips `inspect` before the duplicate-scan loop ever runs; `return False` is dead code and `MonitorStore.ingest` surfaces a 422 instead of idempotent success. The test asserting `not t.append(r, start, 3)` cannot pass as written. Move the duplicate-event scan before (or out of) the `inspect` call.\n\n2. **Contact-gap double counting (telemetry.inspect).** A single outage while an activity is pending can increment `recorded_contact_gaps` twice: once via `if pending and received-last_seen>stale_seconds` at the next event, and again via `if disconnected and pending` on the disconnect entry. Also, a `disconnect` arriving immediately (no elapsed gap) still increments, misreporting a gap that never occurred. Count a gap only once per outage interval, keyed on time elapsed.\n\n3. **Clock regression reports stale runs as Active (telemetry.inspect).** `age = max(0, now - last_seen)` clamps a negative `now - last_seen` to 0, so if `now` is earlier than the last receipt (caller clock skew or a caller passing a stale `now`, as `append` does with `received_at`), the run is reported \"Active\" with `age_seconds=0` despite no fresh data. Reject `now < last_seen` or report the negative age instead of clamping.",
+    "finish_reason": "stop",
+    "usage": {
+      "prompt_tokens": 5156,
+      "total_tokens": 7977,
+      "completion_tokens": 2821,
+      "completion_tokens_details": {
+        "reasoning_tokens": 2456
+      }
+    },
+    "elapsed_seconds": 17.200066707999213,
+    "ttft_seconds": 0.481431916996371,
+    "first_content_seconds": 15.211547332997725,
+    "completion_tokens_per_total_second": 164.01099181133065
+  }
+}

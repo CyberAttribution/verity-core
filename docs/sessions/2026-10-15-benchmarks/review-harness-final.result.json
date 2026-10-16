@@ -1,0 +1,22 @@
+{
+  "case": "review-harness-final",
+  "input_sha256": "c1949b9ee74422a85063fd12a27f1ebc185ed1076248adadbf1610b9ddf413b2",
+  "original_harness_status": "completed",
+  "acceptance_status": "completed",
+  "completion": {
+    "content": "**NEEDS_FIX**\n\n1. **Shutdown/ownership \u2014 no signal handling leaves a blocking placeholder.** `os.open(output, O_CREAT|O_EXCL)` reserves the output path, but there is no SIGINT/SIGTERM handling; on interruption the run exits (or is killed) before the `finally` cleanup/`os.replace`, leaving the 0600 placeholder in place. Every subsequent run with the same `--output` fails with `FileExistsError` until an operator manually deletes the file. Install signal handlers that raise/interrupt so the `finally` path (or an explicit cleanup) runs, or remove the stale placeholder on the `O_EXCL` collision if it matches this run's ownership (e.g., contains this `run_id`).\n\n2. **Credential handling \u2014 TOCTOU on the token file.** `Collector.__init__` stats the path (symlink/mode check) and then separately calls `token_path.read_text()`. The file can be swapped between the check and the read, so the mode/symlink guarantees don't apply to the bytes actually read. Open with `os.open(..., O_RDONLY | O_NOFOLLOW)`, `fstat` the resulting fd for mode, and read from the fd.\n\nNo issues found in the other reviewed areas: the SSH invocation is option-safe (host rejection of leading `-`/whitespace, no shell, fixed remote command), `--check` uses a direct argv list, the loopback validator correctly pins scheme/host/port and blocks credentials/query/fragment, the bearer token is only sent to the validated loopback origin, and the reserve/replace write path is otherwise sound.",
+    "finish_reason": "stop",
+    "usage": {
+      "prompt_tokens": 2326,
+      "total_tokens": 4568,
+      "completion_tokens": 2242,
+      "completion_tokens_details": {
+        "reasoning_tokens": 1897
+      }
+    },
+    "elapsed_seconds": 15.365024457998516,
+    "ttft_seconds": 0.46843387500121025,
+    "first_content_seconds": 13.189076707996719,
+    "completion_tokens_per_total_second": 145.91581068606044
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "case": "review-activation-1",
+  "input_sha256": "55931929158029e1cca0450c5f208e44b79da980635c66027c9536e213536feb",
+  "original_harness_status": "completed",
+  "acceptance_status": "completed",
+  "completion": {
+    "content": "**PASS**\n\nControl flow traced: activation gate validates the signed code against the stored installation_id on every gated request; `/setup` POST validates the candidate activation (or revocation list, including cumulative-revision and subset checks) *before* the atomic `write()` via temp file + `os.replace`, so a failed activation leaves prior state intact. Corrupt state raises rather than being reset. Retry/duplicate handling in the store is not implicated here.\n\nTwo low-priority observations (non-blocking):\n\n1. The `/setup` GET context embeds the full installation state, including the raw activation code and revocation list, into the rendered HTML. It is loopback-gated, no-store, and operator-token-scoped, so exposure is limited to the local operator, but trimming to non-secret fields would be cleaner.\n\n2. `max_seen` only advances while a valid activation exists, so rollback detection silently stops after expiry/revocation \u2014 acceptable since the entitlement is already invalid at that point, and the docstring correctly labels this best-effort.\n\nNo incorrect success claims found: docstrings accurately disclaim DRM/attestation, and no code path reports success before validation and durable write complete.",
+    "finish_reason": "stop",
+    "usage": {
+      "prompt_tokens": 2252,
+      "total_tokens": 3721,
+      "completion_tokens": 1469,
+      "completion_tokens_details": {
+        "reasoning_tokens": 1226
+      }
+    },
+    "elapsed_seconds": 22.714614374999655,
+    "ttft_seconds": 13.795423874995322,
+    "first_content_seconds": 21.217425041999377,
+    "completion_tokens_per_total_second": 64.6720202134192
+  }
+}

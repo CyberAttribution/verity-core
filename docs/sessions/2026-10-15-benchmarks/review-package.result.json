@@ -1,0 +1,22 @@
+{
+  "case": "review-package",
+  "input_sha256": "08509991174074a74cc249c355744a5a58fa352a4004408ae531ea4d18b27d76",
+  "original_harness_status": "completed",
+  "acceptance_status": "completed",
+  "completion": {
+    "content": "**PASS**\n\nChecked for concrete correctness, credential leakage, ownership/shutdown, and unsafe packaging:\n\n- No credentials embedded or logged; only a public Ed25519 key is bundled, and it's validated as Ed25519 before writing.\n- Worker binds 127.0.0.1 with an ephemeral port; socket is non-inheritable; uvicorn owns the socket lifecycle with graceful shutdown (3s) and SIGINT restored \u2014 reasonable ownership/shutdown behavior.\n- Packaging is ad-hoc (`codesign --sign -`), consistent with the stated pilot scope; no notarization/DRM claims are made; stage directory is cleaned up in `finally`; output path collision (including symlink) is rejected before any writes.\n- Generic error message on startup failure avoids dumping provider exceptions or environment data.\n\nMinor observations (non-blocking, no fix required for pilot): a backend failure *after* readiness (e.g., runtime error inside `await task` in `serve`) surfaces through the same generic \"startup failed\" handler, which slightly mislabels post-startup failures; and `codesign --deep` re-signs embedded PyInstaller binaries ad-hoc, which is acceptable here but would need per-binary handling for any future distribution signing.",
+    "finish_reason": "stop",
+    "usage": {
+      "prompt_tokens": 2380,
+      "total_tokens": 3107,
+      "completion_tokens": 727,
+      "completion_tokens_details": {
+        "reasoning_tokens": 473
+      }
+    },
+    "elapsed_seconds": 5.21471400000155,
+    "ttft_seconds": 0.403872583003249,
+    "first_content_seconds": 3.6901763749992824,
+    "completion_tokens_per_total_second": 139.41320655356822
+  }
+}

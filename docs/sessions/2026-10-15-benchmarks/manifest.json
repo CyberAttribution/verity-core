@@ -1,0 +1,51 @@
+{
+  "kind": "deployment_evaluation",
+  "model": "canada-quant/GLM-5.3-Flash-W4A16-MTP",
+  "revision": "5681f7c2dc6436d63f82ab6fb892b4f5062b8304",
+  "context": 32768,
+  "isolated_quantization_comparison": false,
+  "cases": [
+    {
+      "case": "review-telemetry-1",
+      "input_sha256": "e59bc34ee18ee19180817e3305a4362e09b10d492f1c052e836321b6252fb0df",
+      "original_harness_status": "completed",
+      "acceptance_status": "incomplete"
+    },
+    {
+      "case": "review-telemetry-final-2",
+      "input_sha256": "52ee0f593e189bd8ee2aa119281e4109a064116013c7c607e9e584cb2be1ebb7",
+      "original_harness_status": "completed",
+      "acceptance_status": "completed"
+    },
+    {
+      "case": "review-activation-1",
+      "input_sha256": "55931929158029e1cca0450c5f208e44b79da980635c66027c9536e213536feb",
+      "original_harness_status": "completed",
+      "acceptance_status": "completed"
+    },
+    {
+      "case": "review-ingestion",
+      "input_sha256": "dd97c1837996da6e880354943dd670171b1cc49786eb69ede5b59b27407df89d",
+      "original_harness_status": "completed",
+      "acceptance_status": "completed"
+    },
+    {
+      "case": "review-package",
+      "input_sha256": "08509991174074a74cc249c355744a5a58fa352a4004408ae531ea4d18b27d76",
+      "original_harness_status": "completed",
+      "acceptance_status": "completed"
+    },
+    {
+      "case": "review-harness-final",
+      "input_sha256": "c1949b9ee74422a85063fd12a27f1ebc185ed1076248adadbf1610b9ddf413b2",
+      "original_harness_status": "completed",
+      "acceptance_status": "completed"
+    },
+    {
+      "case": "review-harness-revised",
+      "input_sha256": "98758aef695d16031f5ab3c1dbb9581a6b76eca29b7af75c609e3694a557f91c",
+      "original_harness_status": "completed",
+      "acceptance_status": "completed"
+    }
+  ]
+}

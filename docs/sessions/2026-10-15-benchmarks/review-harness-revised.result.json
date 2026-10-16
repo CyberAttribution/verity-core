@@ -1,0 +1,22 @@
+{
+  "case": "review-harness-revised",
+  "input_sha256": "98758aef695d16031f5ab3c1dbb9581a6b76eca29b7af75c609e3694a557f91c",
+  "original_harness_status": "completed",
+  "acceptance_status": "completed",
+  "completion": {
+    "content": "PASS\n\nBoth prior findings are resolved:\n\n1. **Token read hardening**: `Collector.__init__` now opens the token with `os.O_RDONLY | os.O_NOFOLLOW`, then validates mode/owner via `os.fstat(fd)` on the already-open descriptor (closing the pre-open TOCTOU window), checks no group/other bits, and bounds read size. Correct.\n\n2. **Signal handling**: SIGINT/SIGTERM handlers raise `HarnessInterrupted` in the main thread; it's caught by the broad `except Exception`, which sets `status=\"failed\"`/`error_class`, and the `finally` block performs the atomic temp-file + `os.replace` write with fsync. A signal no longer loses the failed JSON result. Original handlers are also restored in `finally`.\n\nThe acknowledged limitation \u2014 a hard kill/power loss leaving the explicitly `in_progress` record (written with `O_EXCL` and fsynced) \u2014 is acceptable as stated; the placeholder is distinguishable from a completed result.\n\nNo new concrete faults introduced by these changes.",
+    "finish_reason": "stop",
+    "usage": {
+      "prompt_tokens": 2488,
+      "total_tokens": 2775,
+      "completion_tokens": 287,
+      "completion_tokens_details": {
+        "reasoning_tokens": 66
+      }
+    },
+    "elapsed_seconds": 2.1387779580036295,
+    "ttft_seconds": 0.42448775000229944,
+    "first_content_seconds": 0.8298557500020252,
+    "completion_tokens_per_total_second": 134.1887777204748
+  }
+}

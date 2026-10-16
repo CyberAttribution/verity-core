@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Development run{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-head"><h2>{{ run.name }}</h2><span class="badge">{{ run.status }}</span></div>
+  {% if run.contact_lost_during_activity %}<p class="badge badge-warn">Contact lost during unfinished activity. Do not infer completion.</p>{% endif %}
+  {% if run.recorded_contact_gaps %}<p class="badge badge-warn">{{ run.recorded_contact_gaps }} recorded contact gap(s) occurred during unfinished activity, including gaps before reconnection.</p>{% endif %}
+  {% if run.clock_anomaly %}<p class="badge badge-warn">The local clock precedes the latest receipt. Freshness is unknown until the clock is corrected.</p>{% endif %}
+  <p>Run {{ run.run_id }} · Agent {{ run.agent_id }} · {{ run.runtime }} · {{ run.model }}</p>
+  <p>Identity and tasks are integration-reported; receipt times are recorded locally. Request success means the harness reported a completed request. It does not verify correctness, authorization or downstream execution.</p>
+  <p><a class="btn" href="/monitor/runs/{{ run.run_id }}/export.json">Export telemetry</a> <a class="btn btn-ghost" href="/monitor/runs/{{ run.run_id }}/checkpoint.json">Export checkpoint</a> <a href="/agents">Active Agents</a></p>
+  <p class="hint">Retain the checkpoint separately. Hash integrity does not prove complete capture or prevent replacement of a whole history and its checkpoint.</p>
+</section>
+<section class="panel"><h2>Unfinished activity</h2>
+{% for a in run.pending %}<p>{{ a.kind }} · {{ a.operation }} · {{ a.activity_id }} · {{ a.get('task', 'Unknown task') }}</p>{% else %}<p>None recorded.</p>{% endfor %}
+</section>
+<section class="panel"><h2>Recent completed activity</h2>
+{% for a in run.activities|reverse %}<p>{{ a.kind }} · {{ a.operation }} · {{ a.status }} · {{ a.duration_ms }} ms · {{ a.activity_id }}</p>{% else %}<p>None recorded.</p>{% endfor %}
+</section>
+<section class="panel"><h2>Latest GPU sample</h2>
+{% if run.gpu_sample %}<p>Integration-reported GPU readings; {{ 'freshness unknown (clock mismatch)' if run.clock_anomaly else 'stale' if run.gpu_age_seconds > 30 else 'recent' }}. Sample age: {{ run.gpu_age_seconds|round(1) }} seconds.</p>
+{% for g in run.gpu_sample.gpus %}<p>GPU {{ g.index }} · {{ g.name }} · {{ g.memory_used_mib }} / {{ g.memory_total_mib }} MiB · {{ g.utilization_percent }}% utilization at sampling</p>{% endfor %}
+{% else %}<p>No GPU measurements received.</p>{% endif %}
+<p class="hint">GPU utilization does not measure useful work or provider billing.</p>
+</section>
+{% endblock %}

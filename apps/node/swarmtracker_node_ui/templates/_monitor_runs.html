@@ -1,0 +1,18 @@
+<section class="panel">
+  <div class="panel-head"><h2>Development activity</h2></div>
+  <p>Integrated collectors report activity here. Active means recent contact, not continuous model use. Identity and task labels are integration-reported.</p>
+  {% if monitor_error %}<p class="badge badge-warn">Development telemetry is unavailable or failed integrity checks.</p>{% endif %}
+  {% for run in monitor_runs %}
+  <article>
+    <h3><a href="/monitor/runs/{{ run.run_id }}">{{ run.name }}</a> <span class="badge {{ 'badge-ok' if run.status == 'Active' else 'badge-warn' }}">{{ run.status }}</span></h3>
+    {% if run.contact_lost_during_activity %}<p class="badge badge-warn">Contact lost during unfinished activity. Execution and outcome are unknown.</p>{% endif %}
+    <div class="kv-grid">
+      <div class="kv"><span>Model / runtime</span><code>{{ run.model }} / {{ run.runtime }}</code></div>
+      <div class="kv"><span>Reported task</span><code>{{ run.current_task }}</code></div>
+      <div class="kv"><span>Last received (UTC)</span><code>{{ run.last_seen_utc }}</code></div>
+      <div class="kv"><span>Activity</span><code>{{ run.pending|length }} unfinished; {{ run.activities|length }} recent completed</code></div>
+    </div>
+  </article>
+  {% else %}<p class="empty">No development collector has reported to this installation.</p>{% endfor %}
+  <p class="hint">Telemetry does not grant permission, enforce policy on unconnected tools, or certify a successful outcome. Prompts, model responses, tool arguments and command text are excluded by the telemetry schema.</p>
+</section>

@@ -8,6 +8,7 @@ Additive only. Talks to OpenClaw on 127.0.0.1:8090 and reads
 logs/openclaw_events.jsonl. No cloud calls, no writes to existing files.
 """
 import json
+import sqlite3
 import hashlib
 import os
 import tempfile
@@ -22,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import adapters, analysis, canonical_case, config, core_bridge
 from . import governance, keel_events, keel_policy, ledger, media_runner
-from . import agents, governed_analysis, providers, decision_routes
+from . import agents, governed_analysis, providers, decision_routes, monitoring
 from . import openclaw_client as oc
 from . import store as store_mod
 
@@ -1943,6 +1944,12 @@ def agents_page(request: Request):
     ctx = base_ctx(request, "agents")
     ctx["participant"] = agents.observe()
     try:
+        ctx["monitor_runs"] = monitoring.database().recent()
+        ctx["monitor_error"] = False
+    except (ValueError, TypeError, KeyError, AttributeError, sqlite3.Error, OSError):
+        ctx["monitor_runs"] = []
+        ctx["monitor_error"] = True
+    try:
         ctx["decision_runs"] = decision_routes.runs().recent()
     except Exception:
         ctx["decision_runs"] = [{"integrity_error": True}]
@@ -2025,3 +2032,7 @@ def ui_healthz():
 
 # Governed decision routes share the existing app and successful report cache.
 decision_routes.install(app, render, base_ctx, GENERIC_JOBS)
+
+# Development telemetry is observational and cannot authorize execution.
+monitoring.install(app, render, base_ctx)
+

@@ -70,7 +70,7 @@ def test_request_verification_and_termination_with_retained_resource():
     record["events"].append(dict(event("truncated", "result", "model_server", {"task_id": "review", "state": "completed", "finish_reason": "length"}, t), received=t))
     assert derive(record, now=t)["tasks"][0]["state"] == "incomplete output"
     assert derive(record, now=t)["activity"] != "active"
-    record["events"].extend([dict(event("done", "task", "operator", {"task_id": "review", "title": "Review", "scope": "gpu", "state": "verified", "output": "review.json", "verification": "tests passed"}, t), received=t),
+    record["events"].extend([dict(event("done", "task", "operator", {"task_id": "review", "title": "Review", "scope": "gpu", "state": "completed", "output": "review.json", "verification": "tests passed"}, t), received=t),
                              dict(event("complete", "result", "model_server", {"task_id": "review", "state": "completed", "finish_reason": "stop"}, t), received=t),
                              dict(event("stop", "shutdown", "operator", {"requested": True}, t), received=t)])
     assert derive(record, now=t)["shutdown_requested"] and not derive(record, now=t)["termination_confirmed"]
@@ -139,6 +139,8 @@ def test_guest_boot_proxy_is_not_labeled_provider_billing_start():
 
 def test_outcome_chain_requires_completed_result_and_separate_review(tmp_path):
     db = SessionStore(tmp_path / "outcomes.db")
+    with pytest.raises(ValueError, match="separate outcome"):
+        validate_event(event("health-claimed-verified", "task", "model_server", {"task_id": "r1", "title": "Review", "scope": "gpu", "state": "verified"}))
     db.create(IDENTITY)
     sid = IDENTITY["id"]
     db.append(sid, event("task", "task", "operator", {"task_id": "r1", "title": "Review", "scope": "gpu", "state": "ready"}))

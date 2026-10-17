@@ -77,6 +77,8 @@ def validate_event(event):
         raise ValueError("Invalid task state")
     if event["kind"] == "task" and (not data.get("task_id") or not data.get("title") or data.get("scope") not in {"gpu", "local"}):
         raise ValueError("Task requires identity, title and scope")
+    if event["kind"] == "task" and data.get("scope") == "gpu" and data.get("state") == "verified":
+        raise ValueError("GPU task verification requires a separate outcome observation")
     if event["kind"] in {"request", "result"} and not data.get("task_id"):
         raise ValueError("Request or result requires a task ID")
     if event["kind"] == "resource" and not data.get("name"):

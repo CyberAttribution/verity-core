@@ -1985,8 +1985,11 @@ def workflows_page(request: Request):
     ctx=base_ctx(request,"agents")
     try: participants=monitoring.participants(monitoring.database().recent())
     except (ValueError,sqlite3.Error,OSError): participants=[]
+    issues=workflows.attention(snapshot,participants=participants)
+    latest_history={x["issue_id"]:x for x in snapshot["attention_history"]}
     ctx.update(work_guidance=records,work_snapshot=snapshot,capabilities=workflows.CAPABILITIES,
-               operator_token=decision_routes.TOKEN,attention=workflows.attention(snapshot,participants=participants))
+               operator_token=decision_routes.TOKEN,attention=issues,
+               resolved_attention_candidates=[x for x in latest_history.values() if x["status"]=="acknowledged" and x["issue_id"] not in {i["id"] for i in issues}])
     response=render("workflows.html",ctx)
     response.headers["Cache-Control"]="no-store"
     return response

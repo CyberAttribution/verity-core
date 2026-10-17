@@ -70,6 +70,8 @@ class Coordinator:
                   issue_id TEXT NOT NULL, status TEXT NOT NULL, at REAL NOT NULL, detail TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS work_approvals (seq INTEGER PRIMARY KEY AUTOINCREMENT,
                   workflow_id TEXT NOT NULL, at REAL NOT NULL, actor TEXT NOT NULL, evidence TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS work_approval_gates (workflow_id TEXT PRIMARY KEY,
+                  generation INTEGER NOT NULL, approved_generation INTEGER);
                 CREATE TABLE IF NOT EXISTS work_corrections (seq INTEGER PRIMARY KEY AUTOINCREMENT,
                   workflow_id TEXT NOT NULL, at REAL NOT NULL, previous_agent TEXT NOT NULL,
                   current_agent TEXT NOT NULL, evidence TEXT NOT NULL);
@@ -158,8 +160,12 @@ class Coordinator:
             if row["state"]=="finished" and state!="finished":
                 raise ValueError("Finished work is terminal; create a successor")
             if row["state"]=="awaiting_approval" and state not in {"awaiting_approval","failed"}:
-                approved=db.execute("SELECT 1 FROM work_approvals WHERE workflow_id=? AND at>=? ORDER BY seq DESC LIMIT 1",(work_id,row["updated"])).fetchone()
-                if not approved: raise ValueError("Approval wait requires recorded human decision")
+                gate=db.execute("SELECT generation,approved_generation FROM work_approval_gates WHERE workflow_id=?",(work_id,)).fetchone()
+                if not gate or gate["approved_generation"]!=gate["generation"]:
+                    raise ValueError("Approval wait requires recorded human decision")
+            if state=="awaiting_approval" and row["state"]!="awaiting_approval":
+                db.execute("INSERT INTO work_approval_gates(workflow_id,generation,approved_generation) VALUES (?,1,NULL) "
+                           "ON CONFLICT(workflow_id) DO UPDATE SET generation=generation+1,approved_generation=NULL",(work_id,))
             if state=="finished" and (not checkpoint or not evidence):
                 raise ValueError("Finished work requires checkpoint and independent evidence")
             db.execute("UPDATE work_items SET state=?,checkpoint=COALESCE(?,checkpoint),evidence=COALESCE(?,evidence),updated=? WHERE id=?",
@@ -172,8 +178,14 @@ class Coordinator:
             db.execute("BEGIN IMMEDIATE")
             row=db.execute("SELECT state FROM work_items WHERE id=?",(work_id,)).fetchone()
             if not row or row["state"]!="awaiting_approval": raise ValueError("No active approval wait")
+            gate=db.execute("SELECT generation,approved_generation FROM work_approval_gates WHERE workflow_id=?",(work_id,)).fetchone()
+            if not gate:
+                db.execute("INSERT INTO work_approval_gates VALUES (?,1,NULL)",(work_id,))
+                gate=db.execute("SELECT generation,approved_generation FROM work_approval_gates WHERE workflow_id=?",(work_id,)).fetchone()
+            if gate["approved_generation"]==gate["generation"]: raise ValueError("Approval already recorded for this wait")
             db.execute("INSERT INTO work_approvals(workflow_id,at,actor,evidence) VALUES (?,?,?,?)",
                        (work_id,self.clock(),actor,evidence))
+            db.execute("UPDATE work_approval_gates SET approved_generation=generation WHERE workflow_id=?",(work_id,))
 
     def correct_assignment(self, work_id, agent_id, evidence):
         if not agent_id or len(agent_id)>120 or not evidence or len(evidence)>1000:
@@ -542,6 +554,7 @@ class Coordinator:
                     "workflow_links":[dict(r) for r in db.execute("SELECT * FROM workflow_links ORDER BY rowid")],
                     "attention_history":[dict(r) for r in db.execute("SELECT * FROM attention_history ORDER BY seq")],
                     "work_approvals":[dict(r) for r in db.execute("SELECT * FROM work_approvals ORDER BY seq")],
+                    "work_approval_gates":[dict(r) for r in db.execute("SELECT * FROM work_approval_gates ORDER BY rowid")],
                     "work_corrections":[dict(r) for r in db.execute("SELECT * FROM work_corrections ORDER BY seq")],
                     "work_successors":[dict(r) for r in db.execute("SELECT * FROM work_successors ORDER BY rowid")]}
 

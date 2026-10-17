@@ -5,6 +5,8 @@
 <p>Saved product-work contracts and linked fixed GLM review requests. A sent request is a new conversation carrying saved context; it does not resume a remote conversation.</p>
 <h3>Session attention</h3>{% for issue in attention %}<p><a href="{{ issue.link }}">{{ issue.id }}</a> · {{ issue.cause }}{% if issue.acknowledgment %} · {{ issue.acknowledgment.status }} at {{ issue.acknowledgment.at }}{% endif %}</p>
 <form method="post" action="/workflows/attention/{{ issue.id }}"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="status" value="acknowledged"><label>Note <input name="detail" required></label><button>Acknowledge</button></form>{% else %}<p>No current attention item.</p>{% endfor %}
+{% for old in resolved_attention_candidates %}<form method="post" action="/workflows/attention/{{ old.issue_id }}"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="status" value="resolved"><label>{{ old.issue_id }} is no longer active · resolution note <input name="detail" required></label><button>Record resolution</button></form>{% endfor %}
+<details><summary>Attention history · {{ work_snapshot.attention_history|length }} entries</summary>{% for old in work_snapshot.attention_history %}<p>{{ old.issue_id }} · {{ old.status }} · {{ old.at }} · {{ old.detail }}</p>{% else %}<p>No acknowledgments or resolutions recorded.</p>{% endfor %}</details>
 <form method="get"><label>Session <input name="session" value="{{ request.query_params.get('session','') }}"></label>
 <label>Agent <input name="agent" value="{{ request.query_params.get('agent','') }}"></label>
 <label>State <input name="state" value="{{ request.query_params.get('state','') }}"></label>

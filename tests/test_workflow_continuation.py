@@ -125,7 +125,7 @@ def test_followup_setting_rechecked_at_dispatch_boundary(tmp_path):
 
 
 def test_approval_wait_cannot_be_cleared_by_resume_without_human_record(tmp_path):
-    c=Coordinator(tmp_path/"work.db")
+    c=Coordinator(tmp_path/"work.db",clock=lambda:1000)
     c.enqueue_work(json.loads(work()["spec"]))
     c.update_work("guidance","awaiting_approval")
     with pytest.raises(ValueError,match="recorded human"):
@@ -133,6 +133,12 @@ def test_approval_wait_cannot_be_cleared_by_resume_without_human_record(tmp_path
     c.approve_work("guidance","local-operator","Scoped synthetic approval record")
     c.update_work("guidance","working")
     assert c.snapshot()["work_approvals"][0]["actor"]=="local-operator"
+    c.update_work("guidance","awaiting_approval")  # Same timestamp, new generation.
+    with pytest.raises(ValueError,match="recorded human"):
+        c.update_work("guidance","working")
+    c.approve_work("guidance","local-operator","Second scoped decision")
+    c.update_work("guidance","working")
+    assert c.snapshot()["work_approval_gates"][0]["generation"]==2
 
 
 def test_assignment_correction_preserves_original_agent_and_evidence(tmp_path):
@@ -270,6 +276,9 @@ def test_attention_distinguishes_healthy_idle_queue_from_failure_and_keeps_histo
     snap=c.snapshot(); snap["worker"]={"state":"active"}
     assert attention(snap)[0]["acknowledgment"]["detail"]=="No approved task exists"
     c.enqueue(review("blockedSource")); dependent=review("dependent"); dependent["dependencies"]=["blockedSource"]; c.enqueue(dependent)
+    assert not any(i["id"]=="queue:no-eligible" for i in attention(c.snapshot()))
+    c.record_attention("queue:no-eligible","resolved","Eligible work was added",{i["id"] for i in attention(c.snapshot())})
+    assert c.snapshot()["attention_history"][-1]["status"]=="resolved"
     with c.db() as db: c._transition(db,"blockedSource","failed","synthetic failure")
     snap=c.snapshot(); snap["worker"]={"state":"active"}
     issues=attention(snap)

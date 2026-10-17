@@ -67,6 +67,10 @@ def test_request_verification_and_termination_with_retained_resource():
                event("req", "request", "model_server", {"task_id": "review", "state": "running", "request_id": "r-1"}, t - 10)]
     record = {"identity": IDENTITY, "events": [dict(e, received=e["at"]) for e in entries]}
     assert derive(record, now=t)["activity"] == "active"
+    record["events"].append(dict(event("other", "task", "operator", {"task_id": "other", "title": "Other", "scope": "gpu", "state": "running"}, t), received=t))
+    record["events"].append(dict(event("old-done", "task", "operator", {"task_id": "review", "title": "Review", "scope": "gpu", "state": "completed"}, t), received=t))
+    assert derive(record, now=t)["activity"] != "active"
+    record["events"].append(dict(event("again", "task", "operator", {"task_id": "review", "title": "Review", "scope": "gpu", "state": "running"}, t), received=t))
     record["events"].append(dict(event("truncated", "result", "model_server", {"task_id": "review", "state": "completed", "finish_reason": "length"}, t), received=t))
     assert derive(record, now=t)["tasks"][0]["state"] == "incomplete output"
     assert derive(record, now=t)["activity"] != "active"

@@ -217,7 +217,8 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
     running_gpu = [e for e in tasks.values() if e["data"].get("scope") == "gpu" and e["data"]["state"] == "running"]
     last_request = latest.get("request")
     latest_result = latest.get("result")
-    activity = bool(running_gpu and last_request and now - last_request["received"] <= idle_after and last_request["data"].get("state") == "running" and
+    activity = bool(last_request and any(e["data"]["task_id"] == last_request["data"].get("task_id") for e in running_gpu) and
+                    now - last_request["received"] <= idle_after and last_request["data"].get("state") == "running" and
                     not (latest_result and latest_result["received"] > last_request["received"] and latest_result["data"].get("task_id") == last_request["data"].get("task_id")))
     bill = data("billing")
     rate_event = next((e for e in reversed(record["events"]) if e["kind"] == "billing" and "rate" in e["data"]), None)

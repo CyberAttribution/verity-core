@@ -233,3 +233,73 @@ def test_report_input_directory_symlink_refused_before_runtime(tmp_path):
         run(workspace, tmp_path / "state/records.db", tmp_path / "protected", "test-model")
     assert not (workspace / "staging").exists()
     assert (outside / "report.md").read_text() == "Private original report"
+
+
+def test_fifo_observation_rejected_without_blocking(db):
+    import multiprocessing
+    os.mkfifo(db.output_dir / "summary.md")
+    def inspect_fifo(queue):
+        try:
+            db.observed_file()
+        except ValueError as exc:
+            queue.put(str(exc))
+    ctx = multiprocessing.get_context("fork")
+    queue = ctx.Queue()
+    process = ctx.Process(target=inspect_fifo, args=(queue,))
+    process.start()
+    process.join(3)
+    if process.is_alive():
+        process.terminate()
+        process.join()
+        pytest.fail("FIFO inspection blocked before checking file type")
+    assert process.exitcode == 0
+    assert queue.get(timeout=1) == "Output is not a bounded regular file"
+
+
+def test_fifo_source_rejected_without_blocking(tmp_path):
+    import multiprocessing
+    from tools.propose_openclaw_report import run
+    workspace = tmp_path / "agent"
+    (workspace / "input").mkdir(parents=True)
+    os.mkfifo(workspace / "input/report.md")
+    def inspect_fifo(queue):
+        try:
+            run(workspace, tmp_path / "state/record.db", tmp_path / "protected", "test-model")
+        except ValueError as exc:
+            queue.put(str(exc))
+    ctx = multiprocessing.get_context("fork")
+    queue = ctx.Queue()
+    process = ctx.Process(target=inspect_fifo, args=(queue,))
+    process.start()
+    process.join(3)
+    if process.is_alive():
+        process.terminate()
+        process.join()
+        pytest.fail("FIFO source blocked before checking file type")
+    assert process.exitcode == 0
+    assert queue.get(timeout=1) == "Sanitized source outside bounds"
+    assert not (tmp_path / "protected/summary.md").exists()
+
+
+def test_malformed_fenced_runtime_reply_rejected_before_proposal(tmp_path, monkeypatch):
+    from tools import propose_openclaw_report as task
+    workspace = tmp_path / "agent"
+    (workspace / "input").mkdir(parents=True)
+    (workspace / "input/report.md").write_text("Sanitized pilot completed.")
+    model_text = '```json\n{"completed": [], "issues": [], "priorities": []}'
+    reply = {"id": "runtime-malformed", "response": model_text, "done": True,
+             "response_sha256": hashlib.sha256(model_text.encode()).hexdigest()}
+    class Response:
+        status = 200
+        def __init__(self, url): self.url = url
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def read(self, *_): return json.dumps(reply).encode()
+    class Opener:
+        def open(self, request, timeout):
+            return Response(request.full_url)
+    monkeypatch.setattr(task.urllib.request, "build_opener", lambda *_: Opener())
+    with pytest.raises(ValueError, match="Malformed fenced model output"):
+        task.run(workspace, tmp_path / "state/record.db", tmp_path / "protected", "test-model")
+    assert not (workspace / "staging/proposal.json").exists()
+    assert not (tmp_path / "protected/summary.md").exists()

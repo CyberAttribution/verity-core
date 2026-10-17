@@ -102,7 +102,7 @@ def run(workspace, db, output_dir, model):
     try:
         input_fd = os.open("input", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=workspace_fd)
         try:
-            source_fd = os.open("report.md", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=input_fd)
+            source_fd = os.open("report.md", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=input_fd)
             try:
                 import stat
                 info = os.fstat(source_fd)
@@ -158,7 +158,10 @@ def run(workspace, db, output_dir, model):
     text = result["response"].strip()
     fence = chr(96) * 3
     if text.startswith(fence):
-        text = text.split("\n", 1)[1].rsplit(fence, 1)[0].strip()
+        parts = text.split("\n", 1)
+        if len(parts) != 2 or not parts[1].rstrip().endswith(fence):
+            raise ValueError("Malformed fenced model output")
+        text = parts[1].rstrip()[:-len(fence)].strip()
     proposed = render(json.loads(text))
     event_id = result.get("id")
     if not isinstance(event_id, str) or not event_id or len(event_id) > 240:

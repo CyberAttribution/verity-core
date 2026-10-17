@@ -293,7 +293,7 @@ class Store:
         try:
             fd = os.open(self.output_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             try:
-                file_fd = os.open(TARGET, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+                file_fd = os.open(TARGET, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
                 try:
                     info = os.fstat(file_fd)
                     if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_OUTPUT:

@@ -50,7 +50,6 @@ def install(app, render, base_ctx):
     @router.get("/report-actions/{rid}")
     def detail(request: Request, rid: str):
         local_peer(request)
-        local_peer(request)
         view = read(rid)
         try:
             observed = actions().observed_file()
@@ -91,7 +90,7 @@ def install(app, render, base_ctx):
             view = actions().execute(rid, "local-operator", form["expected_head"])
         except report_actions.Conflict:
             raise HTTPException(409, "Action changed or was already attempted") from None
-        except (sqlite3.Error, OSError):
+        except (ValueError, sqlite3.Error, OSError):
             raise HTTPException(503, "Write outcome uncertain; inspect reserved record and disk") from None
         return RedirectResponse("/report-actions/" + view["id"], status_code=303)
 

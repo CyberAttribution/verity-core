@@ -31,11 +31,13 @@ def preview(reg,public,artifact,signed,installation="alpha",installed="1.0.0",sc
 
 def test_registry_two_installations_and_authorization(tmp_path):
     reg,_,public,artifact,claims,signed=setup(tmp_path)
-    reg.observe("alpha",version="1.0.0",channel="pilot",update_state="current",contact_at=int(time.time()))
+    reg.observe("alpha",version="1.0.0",channel="pilot",update_state="current",contact_at=int(time.time()),imported_revocation_revision=1)
     reg.observe("beta",version="0.9.0",channel="pilot",update_state="unknown",contact_at=int(time.time())-90000)
     by_id={r["installation_id"]:r for r in reg.installations()}
     assert by_id["alpha"]["contact_state"]=="reported"
     assert by_id["beta"]["contact_state"]=="stale"
+    assert by_id["alpha"]["reported"]["imported_revocation_revision"]==1
+    assert by_id["beta"]["reported"]["imported_revocation_revision"] is None
     assert all(r["acknowledgment"]=="unknown" for r in by_id.values())
     with pytest.raises(ValueError,match="not authorized"):preview(reg,public,artifact,signed)
     reg.authorize_release("alpha","pilot","release-2",True,"operator grants this release")
@@ -44,6 +46,29 @@ def test_registry_two_installations_and_authorization(tmp_path):
     reg.authorize_release("alpha","pilot","release-2",False,"withdrawn")
     with pytest.raises(ValueError,match="not authorized"):preview(reg,public,artifact,signed)
     assert [e["data"]["allowed"] for e in reg.status()["events"] if e["event"]=="release_authorization_changed"]==[True,False]
+
+
+def test_local_credential_expiry_revocation_and_replacement(tmp_path):
+    reg,key,public,_,_,_=setup(tmp_path)
+    profile=tmp_path/"profile";profile.mkdir()
+    now=int(time.time())
+    older=(tmp_path/"alpha.code").read_text()
+    def write(code,revocations=None):
+        (profile/"installation.json").write_text(json.dumps(dict(installation_id="alpha",settings={},max_seen=now,revocations=revocations,activation=code)))
+    write(older)
+    assert release_update.validate_installation(profile,public,now)["license_id"]=="license-alpha"
+    successor=dict(schema="verity_pilot_entitlement/v1",installation_id="alpha",license_id="license-alpha-2",issued_at=now,expires_at=now+86400)
+    raw=activation.canonical(successor);new=activation.encode(raw)+"."+activation.encode(key.sign(raw))
+    reg.issue(new,public,tmp_path/"new.code",supersedes="license-alpha")
+    # An issued replacement has no remote power over the still-valid older code.
+    assert release_update.validate_installation(profile,public,now)["license_id"]=="license-alpha"
+    rev=dict(schema="verity_pilot_revocations/v1",revision=1,issued_at=now,license_ids=["license-alpha"])
+    raw=activation.canonical(rev);revoked=activation.encode(raw)+"."+activation.encode(key.sign(raw))
+    write(older,revoked)
+    with pytest.raises(ValueError,match="revoked"):release_update.validate_installation(profile,public,now)
+    write(new,revoked)
+    assert release_update.validate_installation(profile,public,now)["license_id"]=="license-alpha-2"
+    with pytest.raises(ValueError,match="expired"):release_update.validate_installation(profile,public,now+86400)
 
 
 def test_signature_digest_compatibility_replay_and_recovery(tmp_path):
@@ -89,16 +114,17 @@ def test_operator_ui_registry_and_signed_preview(tmp_path,monkeypatch):
     monkeypatch.setattr(release_update.platform,"system",lambda:"Darwin")
     monkeypatch.setattr(release_update.platform,"machine",lambda:"arm64")
     monkeypatch.setattr(release_update.platform,"mac_ver",lambda:("15.1",("","",""),""))
-    reg,_,public,artifact,_,signed=setup(tmp_path)
+    reg,key,public,artifact,_,signed=setup(tmp_path)
     reg.authorize_release("alpha","pilot","release-2",True,"synthetic release")
     registry_path=tmp_path/"registry.db";key_path=tmp_path/"publisher.pem";key_path.write_bytes(public)
     manifest=tmp_path/"manifest.signed";manifest.write_text(signed)
     monkeypatch.setenv("VERITY_PILOT_REGISTRY",str(registry_path))
     monkeypatch.setenv("VERITY_RELEASE_PUBLIC_KEY",str(key_path))
+    monkeypatch.setenv("VERITY_ACTIVATION_PUBLIC_KEY",str(key_path))
     monkeypatch.setenv("VERITY_APP_VERSION","1.0.0")
     monkeypatch.delenv("VERITY_REQUIRE_ACTIVATION",raising=False)
     monkeypatch.setattr(setup_routes,"path",lambda:tmp_path/"installation.json")
-    setup_routes.write(dict(installation_id="alpha",settings={},max_seen=0,revocations=None,activation=None))
+    setup_routes.write(dict(installation_id="alpha",settings={},max_seen=0,revocations=None,activation=(tmp_path/"alpha.code").read_text()))
     client=TestClient(ui.app,base_url="http://127.0.0.1")
     response=client.get("/setup/registry")
     assert response.status_code==200 and "alpha" in response.text and "beta" in response.text

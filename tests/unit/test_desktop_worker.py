@@ -9,6 +9,7 @@ shutdown. No network beyond loopback, no model or cloud calls.
 import importlib.util
 import json
 import os
+import plistlib
 import select
 import signal
 import socket
@@ -47,6 +48,15 @@ def worker():
 
 def test_validate_repo_accepts_actual_layout(worker):
     assert worker.validate_repo(REPO) == REPO.resolve()
+
+def test_frozen_worker_reads_own_bundle_version(worker,tmp_path):
+    contents=tmp_path/"Synthetic.app/Contents"
+    binary=contents/"Resources/backend/verity-worker"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("synthetic")
+    with (contents/"Info.plist").open("wb") as out:
+        plistlib.dump({"CFBundleShortVersionString":"0.3.4"},out)
+    assert worker.bundled_version(binary)=="0.3.4"
 
 
 def test_validate_repo_missing_app_raises_valueerror(worker, tmp_path):

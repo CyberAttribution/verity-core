@@ -139,6 +139,7 @@ def install(app,render,base_ctx):
             try:
                 from verity_core.pilot_registry import Registry
                 from verity_core.release_update import inspect
+                status(state())
                 registry=os.environ["VERITY_PILOT_REGISTRY"]
                 key=os.environ["VERITY_RELEASE_PUBLIC_KEY"]
                 manifest=Path(form.get("manifest_path", ""));artifact=Path(form.get("artifact_path", ""))

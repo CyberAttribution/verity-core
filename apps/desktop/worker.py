@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 import json
+import plistlib
 import os
 import signal
 import socket
@@ -43,6 +44,10 @@ def setup_environment(repo, pilot=False):
 def emit_ready(url):
     print(json.dumps({"url": url, "nonce": os.environ.get("VERITY_DESKTOP_NONCE", "")}), flush=True)
 
+def bundled_version(executable):
+    with (Path(executable).parents[2] / "Info.plist").open("rb") as info:
+        return plistlib.load(info)["CFBundleShortVersionString"]
+
 async def serve(sock):
     import uvicorn
     from swarmtracker_node_ui import setup_routes
@@ -76,11 +81,9 @@ def main(argv=None):
         setup_environment(repo,pilot=args.bundled)
         if args.bundled:
             import platform
-            import plistlib
             os.environ["VERITY_REQUIRE_ACTIVATION"] = "1"
             os.environ["VERITY_ACTIVATION_PUBLIC_KEY"] = str(Path(sys.executable).parent.parent / "activation-public.pem")
-            with (Path(sys.executable).parents[3] / "Info.plist").open("rb") as info:
-                os.environ["VERITY_APP_VERSION"] = plistlib.load(info)["CFBundleShortVersionString"]
+            os.environ["VERITY_APP_VERSION"] = bundled_version(sys.executable)
             os.environ.setdefault("NODE_UI_NODE", socket.gethostname())
             os.environ.setdefault("NODE_UI_HARDWARE", platform.machine() + " Mac")
             os.environ.setdefault("NODE_UI_HARDWARE_NEXT", "Not configured")

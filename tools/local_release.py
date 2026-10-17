@@ -20,7 +20,9 @@ def main():
     p.add_argument("--installation-id");p.add_argument("--channel");p.add_argument("--release-id")
     p.add_argument("--allow",action="store_true");p.add_argument("--deny",action="store_true");p.add_argument("--reason")
     p.add_argument("--version");p.add_argument("--update-state");p.add_argument("--source",choices=("operator-entered","installation-report"),default="operator-entered")
+    p.add_argument("--imported-revocation-revision",type=int)
     p.add_argument("--manifest");p.add_argument("--publisher-public-key");p.add_argument("--artifact")
+    p.add_argument("--activation-public-key")
     p.add_argument("--installed-version");p.add_argument("--schema-version",type=int)
     p.add_argument("--rollback",action="store_true");p.add_argument("--approval");p.add_argument("--target");p.add_argument("--profile");p.add_argument("--history")
     a=p.parse_args();reg=Registry(a.registry)
@@ -31,10 +33,13 @@ def main():
         reg.authorize_release(a.installation_id,a.channel,a.release_id,a.allow,a.reason);print(json.dumps(reg.release_allowed(a.installation_id,a.channel,a.release_id)));return
     if a.operation=="report":
         if not all((a.installation_id,a.version,a.channel,a.update_state)):p.error("report requires installation, version, channel and update state")
-        reg.observe(a.installation_id,version=a.version,channel=a.channel,update_state=a.update_state,source=a.source)
+        reg.observe(a.installation_id,version=a.version,channel=a.channel,update_state=a.update_state,source=a.source,imported_revocation_revision=a.imported_revocation_revision)
         print(json.dumps({"recorded":True,"source":a.source,"authentication":"none; operator entry or untrusted report"}));return
-    if not all((a.installation_id,a.manifest,a.publisher_public_key,a.artifact,a.installed_version)) or a.schema_version is None:
-        p.error("inspect/install require installation, signed manifest, publisher public key, artifact, installed version and schema version")
+    if not all((a.installation_id,a.manifest,a.publisher_public_key,a.activation_public_key,a.profile,a.artifact,a.installed_version)) or a.schema_version is None:
+        p.error("inspect/install require installation, profile, activation and publisher public keys, signed manifest, artifact, installed version and schema version")
+    from verity_core.release_update import validate_installation
+    claims=validate_installation(a.profile,Path(a.activation_public_key).read_bytes())
+    if claims["installation_id"]!=a.installation_id:raise ValueError("Profile installation differs from requested release")
     plan=inspect(Path(a.manifest).read_text().strip(),Path(a.publisher_public_key).read_bytes(),a.artifact,
                  installation_id=a.installation_id,installed_version=a.installed_version,schema_version=a.schema_version,
                  authorization=reg.release_allowed,rollback=a.rollback)
@@ -44,6 +49,7 @@ def main():
     with (target/"Contents/Info.plist").open("rb") as stream:
         actual=plistlib.load(stream).get("CFBundleShortVersionString")
     if actual!=a.installed_version:raise ValueError("Installed app version changed since operator inspection")
+    validate_installation(a.profile,Path(a.activation_public_key).read_bytes())
     journal=install(plan,a.artifact,target,a.profile,approval=a.approval,history=a.history,authorization=reg.release_allowed)
     reg.observe(a.installation_id,version=plan["manifest"]["version"],channel=plan["manifest"]["channel"],update_state="current",source="operator-entered")
     print(json.dumps({"journal":str(journal),"installed_version":plan["manifest"]["version"],"source":"operator-entered; no remote installation attestation"}))

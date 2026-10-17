@@ -15,6 +15,7 @@ import time
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from . import activation
 from .activation import canonical, decode, _id
 from .json_safety import bounded_json_loads
 
@@ -57,6 +58,18 @@ def version(value):
     parts=value.split(".")
     if not 1<=len(parts)<=3 or any(not p.isdigit() or len(p)>5 for p in parts):raise ValueError("Expected numeric release version")
     return tuple(int(p) for p in (parts+["0"]*(3-len(parts))))
+
+
+def validate_installation(profile,public_key,now=None):
+    """Check local offline entitlement and imported revocations, not issuer bookkeeping."""
+    now=time.time() if now is None else now
+    path=Path(profile)/"installation.json"
+    if path.is_symlink() or not path.is_file() or path.stat().st_size>32768:raise ValueError("Installation state unavailable")
+    state=bounded_json_loads(path.read_text())
+    if not isinstance(state,dict) or set(state)!={"installation_id","settings","max_seen","revocations","activation"}:raise ValueError("Invalid installation state")
+    if now+300<state["max_seen"]:raise ValueError("Installation clock moved backward")
+    revoked=activation.revocations(state["revocations"],public_key,now)["license_ids"] if state["revocations"] else []
+    return activation.entitlement(state["activation"],public_key,state["installation_id"],now,revoked)
 
 
 def inspect(signed,public_key,artifact,*,installation_id,installed_version,schema_version,authorization,rollback=False,system=None):

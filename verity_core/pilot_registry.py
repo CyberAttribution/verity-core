@@ -210,16 +210,17 @@ class Registry:
             row=con.execute("SELECT allowed,seq FROM release_authorizations WHERE installation_id=? AND channel=? AND release_id=?",(installation_id,channel,release_id)).fetchone()
             return dict(allowed=bool(row["allowed"]),event_seq=row["seq"]) if row else dict(allowed=False,event_seq=None)
 
-    def observe(self,installation_id,*,version,channel,update_state,contact_at=None,source="operator-entered"):
+    def observe(self,installation_id,*,version,channel,update_state,contact_at=None,source="operator-entered",imported_revocation_revision=None):
         """An operator report is never promoted to an authenticated device observation."""
         activation._id(installation_id)
         if source not in ("operator-entered","installation-report") or channel not in ("pilot","stable") or update_state not in ("unknown","current","available","failed","recovered") or not isinstance(version,str) or not version or len(version)>80:
             raise ValueError("Invalid installation report")
         at=int(time.time()) if contact_at is None else contact_at
         if type(at) is not int or at<0 or at>time.time()+60:raise ValueError("Invalid contact timestamp")
+        if imported_revocation_revision is not None and (type(imported_revocation_revision) is not int or imported_revocation_revision<0):raise ValueError("Invalid imported revocation report")
         with self.connection() as con:
             if not con.execute("SELECT 1 FROM licenses WHERE installation_id=?",(installation_id,)).fetchone():raise Conflict("Unknown installation")
-            self.event(con,"installation_reported",dict(installation_id=installation_id,version=version,channel=channel,update_state=update_state,contact_at=at,source=source))
+            self.event(con,"installation_reported",dict(installation_id=installation_id,version=version,channel=channel,update_state=update_state,contact_at=at,source=source,imported_revocation_revision=imported_revocation_revision))
 
     def installations(self,now=None,stale_after=86400):
         now=time.time() if now is None else now

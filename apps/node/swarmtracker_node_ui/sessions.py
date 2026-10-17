@@ -17,7 +17,7 @@ from . import store
 
 DB_PATH = Path(os.environ.get("NODE_UI_SESSIONS_DB", str(store.DB_PATH.with_name("development-sessions.db"))))
 KINDS = {"provider", "connection", "inventory", "model", "task", "request", "result", "contact", "billing", "shutdown", "resource", "note"}
-SOURCES = {"provider_api", "provider_console", "ssh", "model_server", "local_collector", "operator", "test"}
+SOURCES = {"provider_api", "provider_console", "public_pricing", "ssh", "model_server", "local_collector", "operator", "test"}
 STATES = {"provisioning", "running", "stopping", "terminated", "unknown"}
 MODEL_STATES = {"unknown", "absent", "downloading", "loading", "ready", "inference", "failed"}
 TASK_STATES = {"ready", "running", "blocked", "completed", "verified"}

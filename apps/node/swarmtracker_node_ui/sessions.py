@@ -19,7 +19,7 @@ DB_PATH = Path(os.environ.get("NODE_UI_SESSIONS_DB", str(store.DB_PATH.with_name
 KINDS = {"provider", "connection", "inventory", "model", "task", "request", "result", "contact", "billing", "shutdown", "resource", "note"}
 SOURCES = {"provider_api", "provider_console", "public_pricing", "ssh", "model_server", "local_collector", "operator", "test"}
 STATES = {"provisioning", "running", "stopping", "terminated", "unknown"}
-MODEL_STATES = {"unknown", "absent", "downloading", "loading", "ready", "inference", "failed"}
+MODEL_STATES = {"unknown", "absent", "downloading", "downloaded", "loading", "ready", "inference", "failed"}
 TASK_STATES = {"ready", "running", "blocked", "completed", "verified"}
 
 
@@ -208,7 +208,7 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
         alerts.append("Contact stale or unknown")
     if data("model").get("state") == "failed":
         alerts.append("Model failure reported in last model observation")
-    if elapsed and elapsed > idle_after and model in {"unknown", "absent", "downloading", "loading"}:
+    if elapsed and elapsed > idle_after and model in {"unknown", "absent", "downloading", "downloaded", "loading"}:
         alerts.append("Prolonged setup")
     if estimate is not None and isinstance(bill.get("ceiling"), (int, float)) and estimate >= bill["ceiling"] - budget_margin:
         alerts.append("Approaching session budget")

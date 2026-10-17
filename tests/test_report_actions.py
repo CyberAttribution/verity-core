@@ -303,3 +303,18 @@ def test_malformed_fenced_runtime_reply_rejected_before_proposal(tmp_path, monke
         task.run(workspace, tmp_path / "state/record.db", tmp_path / "protected", "test-model")
     assert not (workspace / "staging/proposal.json").exists()
     assert not (tmp_path / "protected/summary.md").exists()
+
+
+def test_hardlinked_original_report_refused_before_runtime(tmp_path):
+    from tools.propose_openclaw_report import run
+    outside = tmp_path / "original-reports"
+    outside.mkdir()
+    original = outside / "report.md"
+    original.write_text("Original report contents")
+    workspace = tmp_path / "agent"
+    (workspace / "input").mkdir(parents=True)
+    os.link(original, workspace / "input/report.md")
+    with pytest.raises(ValueError, match="Sanitized source outside bounds"):
+        run(workspace, tmp_path / "state/record.db", tmp_path / "protected", "test-model")
+    assert original.read_text() == "Original report contents"
+    assert not (tmp_path / "protected/summary.md").exists()

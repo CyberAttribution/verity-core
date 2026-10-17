@@ -106,7 +106,7 @@ def run(workspace, db, output_dir, model):
             try:
                 import stat
                 info = os.fstat(source_fd)
-                if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_SOURCE:
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_SOURCE:
                     raise ValueError("Sanitized source outside bounds")
                 with os.fdopen(source_fd, "rb", closefd=False) as f:
                     data = f.read(MAX_SOURCE + 1)

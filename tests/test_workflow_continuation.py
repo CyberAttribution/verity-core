@@ -53,6 +53,7 @@ def test_continuation_is_persisted_new_request_and_gated(tmp_path):
         c.continue_work("guidance","source",approval=True)
     assert c.run_one("owner")==follow
     assert "Verified saved source checkpoint" in calls[-1]["purpose"]
+    assert "Original approved review input: Read-only source critique" in calls[-1]["purpose"]
     assert c.snapshot()["tasks"][-1]["state"]=="completed"
     assert c.snapshot()["tasks"][-1]["finish_reason"]=="stop"
     assert c.snapshot()["tasks"][-1]["verifier"] is None
@@ -122,6 +123,26 @@ def test_followup_setting_rechecked_at_dispatch_boundary(tmp_path):
     assert c.snapshot()["continuations"]==[]
 
 
+def test_approval_wait_cannot_be_cleared_by_resume_without_human_record(tmp_path):
+    c=Coordinator(tmp_path/"work.db")
+    c.enqueue_work(json.loads(work()["spec"]))
+    c.update_work("guidance","awaiting_approval")
+    with pytest.raises(ValueError,match="recorded human"):
+        c.update_work("guidance","working")
+    c.approve_work("guidance","local-operator","Scoped synthetic approval record")
+    c.update_work("guidance","working")
+    assert c.snapshot()["work_approvals"][0]["actor"]=="local-operator"
+
+
+def test_assignment_correction_preserves_original_agent_and_evidence(tmp_path):
+    c=Coordinator(tmp_path/"work.db")
+    c.enqueue_work(json.loads(work()["spec"]))
+    c.correct_assignment("guidance","trusted-runner","Implementation belongs to the trusted Mac runner")
+    snapshot=c.snapshot()
+    assert json.loads(snapshot["work_items"][0]["spec"])["agent_id"]=="trusted-runner"
+    assert snapshot["work_corrections"][0]["previous_agent"]=="glm-review"
+
+
 def test_followup_does_not_repeat_ambiguous_request(tmp_path):
     now=[1000]
     c=Coordinator(tmp_path/"work.db",clock=lambda:now[0],adapter=lambda s,r: (_ for _ in ()).throw(TimeoutError()))
@@ -137,6 +158,25 @@ def test_followup_does_not_repeat_ambiguous_request(tmp_path):
     assert c.snapshot()["tasks"][-1]["state"]=="unresolved"
     now[0]+=100
     assert c.schedule_followups()==[]
+
+
+def test_automatic_followup_dependency_and_budget_gates(tmp_path):
+    now=[1000]
+    c=Coordinator(tmp_path/"work.db",clock=lambda:now[0])
+    c.configure(rate=10,start=900,ceiling=110)
+    parent=json.loads(work("prerequisite")["spec"]); c.enqueue_work(parent)
+    child=json.loads(work("child")["spec"]); child["dependencies"]=["prerequisite"]
+    c.enqueue_work(child)
+    c.enqueue(review("source")); c.bind_source("child","source")
+    with c.db() as db: c._transition(db,"source","independently_verified","checked")
+    c.update_work("child","working",checkpoint="Reviewed",evidence="Trusted source test")
+    c.control("running"); c.configure_followup("child",mode="running",grace=30,cooldown=60)
+    now[0]+=31
+    assert c.schedule_followups()==[]  # Parent unfinished.
+    c.update_work("prerequisite","finished",checkpoint="commit",evidence="Trusted test")
+    now[0]=900+106*3600/10
+    assert c.schedule_followups()==[]  # Rental dispatch margin exceeded.
+    assert c.snapshot()["followup_settings"][0]["attempts"]==0
 
 
 def test_native_routes_show_guidance_and_persist_operator_followup(tmp_path,monkeypatch):

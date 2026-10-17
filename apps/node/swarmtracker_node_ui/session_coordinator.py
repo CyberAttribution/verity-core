@@ -68,6 +68,13 @@ class Coordinator:
                   PRIMARY KEY(workflow_id,kind,target_id));
                 CREATE TABLE IF NOT EXISTS attention_history (seq INTEGER PRIMARY KEY AUTOINCREMENT,
                   issue_id TEXT NOT NULL, status TEXT NOT NULL, at REAL NOT NULL, detail TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS work_approvals (seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                  workflow_id TEXT NOT NULL, at REAL NOT NULL, actor TEXT NOT NULL, evidence TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS work_corrections (seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                  workflow_id TEXT NOT NULL, at REAL NOT NULL, previous_agent TEXT NOT NULL,
+                  current_agent TEXT NOT NULL, evidence TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS work_successors (predecessor TEXT NOT NULL, successor TEXT UNIQUE NOT NULL,
+                  at REAL NOT NULL, reason TEXT NOT NULL);
             """)
 
     @contextmanager
@@ -139,14 +146,50 @@ class Coordinator:
             raise ValueError("Checkpoint requires independent evidence")
         with self.db() as db:
             db.execute("BEGIN IMMEDIATE")
-            row=db.execute("SELECT state FROM work_items WHERE id=?",(work_id,)).fetchone()
+            row=db.execute("SELECT state,updated FROM work_items WHERE id=?",(work_id,)).fetchone()
             if not row: raise KeyError(work_id)
             if row["state"]=="finished" and state!="finished":
                 raise ValueError("Finished work is terminal; create a successor")
+            if row["state"]=="awaiting_approval" and state not in {"awaiting_approval","failed"}:
+                approved=db.execute("SELECT 1 FROM work_approvals WHERE workflow_id=? AND at>=? ORDER BY seq DESC LIMIT 1",(work_id,row["updated"])).fetchone()
+                if not approved: raise ValueError("Approval wait requires recorded human decision")
             if state=="finished" and (not checkpoint or not evidence):
                 raise ValueError("Finished work requires checkpoint and independent evidence")
             db.execute("UPDATE work_items SET state=?,checkpoint=COALESCE(?,checkpoint),evidence=COALESCE(?,evidence),updated=? WHERE id=?",
                        (state,checkpoint,evidence,self.clock(),work_id))
+
+    def approve_work(self, work_id, actor, evidence):
+        if not actor or not evidence or len(actor)>120 or len(evidence)>1000:
+            raise ValueError("Approval evidence required")
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT state FROM work_items WHERE id=?",(work_id,)).fetchone()
+            if not row or row["state"]!="awaiting_approval": raise ValueError("No active approval wait")
+            db.execute("INSERT INTO work_approvals(workflow_id,at,actor,evidence) VALUES (?,?,?,?)",
+                       (work_id,self.clock(),actor,evidence))
+
+    def correct_assignment(self, work_id, agent_id, evidence):
+        if not agent_id or len(agent_id)>120 or not evidence or len(evidence)>1000:
+            raise ValueError("Correction evidence required")
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT spec FROM work_items WHERE id=?",(work_id,)).fetchone()
+            if not row: raise KeyError(work_id)
+            spec=json.loads(row["spec"]); previous=spec["agent_id"]
+            if previous==agent_id: raise ValueError("No assignment change")
+            spec["agent_id"]=agent_id
+            db.execute("UPDATE work_items SET spec=?,updated=? WHERE id=?",(json.dumps(spec,sort_keys=True),self.clock(),work_id))
+            db.execute("INSERT INTO work_corrections(workflow_id,at,previous_agent,current_agent,evidence) VALUES (?,?,?,?,?)",
+                       (work_id,self.clock(),previous,agent_id,evidence))
+
+    def record_successor(self, predecessor, successor, reason):
+        if not reason or len(reason)>1000 or predecessor==successor:
+            raise ValueError("Successor reason required")
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for item in (predecessor,successor):
+                if not db.execute("SELECT 1 FROM work_items WHERE id=?",(item,)).fetchone(): raise KeyError(item)
+            db.execute("INSERT INTO work_successors VALUES (?,?,?,?)",(predecessor,successor,self.clock(),reason))
 
     def bind_source(self, work_id, task_id):
         with self.db() as db:
@@ -206,8 +249,11 @@ class Coordinator:
             task_id="continue"+uuid.uuid4().hex[:20]
             purpose=("Workflow "+work_id+". Approved scope: "+contract["purpose"]+
                      ". Verified checkpoint: "+(work["checkpoint"] or source["evidence"] or "none")+
-                     ". Continue only this read-only review; remaining criteria: "+contract["acceptance_criteria"])
-            spec={**original,"id":task_id,"dependencies":[],"purpose":purpose[:3900],
+                     ". Continue only this read-only review; remaining criteria: "+contract["acceptance_criteria"]+
+                     ". Original approved review input: "+original["purpose"])
+            if len(purpose)>3900:
+                raise ValueError("Saved source exceeds bounded continuation payload")
+            spec={**original,"id":task_id,"dependencies":[],"purpose":purpose,
                   "acceptance_criteria":contract["acceptance_criteria"],"expected_outputs":contract["expected_outputs"],
                   "validation_gates":contract["validation_gates"]}
             db.execute("INSERT INTO tasks(id,spec,state,updated) VALUES (?,?,'queued',?)",(task_id,json.dumps(spec,sort_keys=True),self.clock()))
@@ -487,7 +533,10 @@ class Coordinator:
                     "followup_settings":[dict(r) for r in db.execute("SELECT * FROM followup_settings ORDER BY rowid")],
                     "continuation_authorizations":[dict(r) for r in db.execute("SELECT * FROM continuation_authorizations ORDER BY rowid")],
                     "workflow_links":[dict(r) for r in db.execute("SELECT * FROM workflow_links ORDER BY rowid")],
-                    "attention_history":[dict(r) for r in db.execute("SELECT * FROM attention_history ORDER BY seq")]}
+                    "attention_history":[dict(r) for r in db.execute("SELECT * FROM attention_history ORDER BY seq")],
+                    "work_approvals":[dict(r) for r in db.execute("SELECT * FROM work_approvals ORDER BY seq")],
+                    "work_corrections":[dict(r) for r in db.execute("SELECT * FROM work_corrections ORDER BY seq")],
+                    "work_successors":[dict(r) for r in db.execute("SELECT * FROM work_successors ORDER BY rowid")]}
 
 
 def glm_review(spec, request_id, endpoint="http://127.0.0.1:18001/v1/chat/completions"):

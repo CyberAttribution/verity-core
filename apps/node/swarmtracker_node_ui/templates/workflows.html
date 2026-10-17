@@ -27,7 +27,8 @@
 <label>Cooldown seconds <input type="number" name="cooldown" value="900" min="60" max="86400"></label>
 <label>Attempt limit <input type="number" name="limit_count" value="2" min="1" max="10"></label><button>Save follow-up setting</button></form>
 {% for setting in work_snapshot.followup_settings if setting.workflow_id == item.id %}<p>Follow-up: {{ setting.mode }} · {{ setting.attempts }}/{{ setting.limit_count }} attempts · last {{ setting.last_at or 'never' }}</p>{% endfor %}
-{% else %}<p>Direct continuation is unsupported. Copy the saved purpose, checkpoint and remaining acceptance criteria for an operator handoff.</p>{% endif %}
+{% else %}<p>Direct continuation is unsupported. This is a copyable operator handoff; it does not wake a ChatGPT or Codex conversation.</p>
+<textarea readonly rows="5" style="width:100%">Session {{ item.session_id }}; workflow {{ item.id }}; assigned agent {{ item.agent_id }}. Authorized purpose: {{ item.purpose }}. Verified checkpoint: {{ item.progress }}. Remaining acceptance: {{ item.acceptance_criteria }}. Evidence: {{ item.evidence }}. Approval: {{ item.approval }}.</textarea>{% endif %}
 <details><summary>Linked requests and transitions</summary><ul>
 {% for link in work_snapshot.continuations if link.workflow_id == item.id %}<li>{{ link.task_id }} · source {{ link.source_task }} · {{ link.created }}
 {% for task in work_snapshot.tasks if task.id == link.task_id %} · {{ task.state }} · {{ task.finish_reason or 'no finish reason' }}{% endfor %}</li>{% endfor %}

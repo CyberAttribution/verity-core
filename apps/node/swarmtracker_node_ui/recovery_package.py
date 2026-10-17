@@ -54,6 +54,9 @@ def build(snapshot, destination, checkpoint_path, *, source_commit, reviewed_out
           "continuation_authorizations":snapshot["continuation_authorizations"],
           "workflow_links":[{**x,"provenance_hash":_digest(x["provenance"].encode()),"provenance":"withheld"} for x in snapshot["workflow_links"]],
           "attention_history":[{**x,"detail_hash":_digest(x["detail"].encode()),"detail":"withheld"} for x in snapshot["attention_history"]],
+          "work_approvals":[{**x,"evidence_hash":_digest(x["evidence"].encode()),"evidence":"withheld"} for x in snapshot["work_approvals"]],
+          "work_corrections":[{**x,"evidence_hash":_digest(x["evidence"].encode()),"evidence":"withheld"} for x in snapshot["work_corrections"]],
+          "work_successors":[{**x,"reason_hash":_digest(x["reason"].encode()),"reason":"withheld"} for x in snapshot["work_successors"]],
           "outputs":{name:{"sha256":_digest(value.encode()),"path":"outputs/"+name} for name,value in outputs.items()}}
     encoded=json.dumps(data,sort_keys=True,ensure_ascii=False,allow_nan=False,indent=2).encode()
     readme=("# Verity recovery handoff\n\nThis is an observation package, not an executable worker database. "

@@ -30,11 +30,11 @@ def guidance(work, *, reachable=None, heartbeat=None, now=None):
         action="Inspect the request and checkpoint before a scoped follow-up."
     else:
         display=state
-        reason={"queued":"Waiting for dependencies and a worker.","working":"No stop recorded.",
+        reason={"queued":"Implementation has not started in this work record.","working":"No stop recorded.",
                 "paused":"The session or workflow is paused.","blocked":"A dependency or gate is blocking work.",
                 "failed":"The recorded attempt failed.","finished":"Independent acceptance evidence is recorded.",
                 "unknown":"The outcome is not established."}.get(state,"No cause recorded.")
-        action={"queued":"Check eligibility and worker ownership.","working":"Observe actual task progress.",
+        action={"queued":"Check dependencies and assign eligible work.","working":"Observe actual task progress.",
                 "paused":"Resume only after checking approval and budget gates.","blocked":"Resolve the recorded blocker.",
                 "failed":"Inspect failure and preserve history before a corrected successor.",
                 "finished":"No continuation needed.","unknown":"Inspect evidence and reconcile."}.get(state,"Inspect the workflow.")

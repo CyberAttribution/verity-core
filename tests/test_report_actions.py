@@ -136,3 +136,63 @@ def test_observer_uses_monitoring_record_schema(tmp_path):
     assert view["agent_id"] == "isolated-openclaw-report-agent"
     assert view["provider"] == "ollama_local"
     assert view["status"] == "Active"
+
+def test_verified_remote_activity_import_has_explicit_provenance(tmp_path):
+    from swarmtracker_node_ui import monitoring
+    from verity_core.trust import telemetry
+    manifest = {"run_id": "import-test", "agent_id": "agent-test", "name": "Remote OpenClaw",
+                "runtime": "OpenClaw", "model": "test-model"}
+    record = telemetry.create(manifest, 100)
+    telemetry.append(record, {"event_id": "heartbeat-1", "kind": "heartbeat", "data": {}}, 101)
+    anchor = telemetry.checkpoint(record)
+    store = monitoring.MonitorStore(tmp_path / "monitor.db")
+    store.import_verified(record, anchor, "M1 mini isolated collector")
+    assert store.provenance("import-test")["source"] == "M1 mini isolated collector"
+    assert store.recent(now=102)[0]["import_provenance"]["verified_head"] == anchor["head"]
+    bad = dict(anchor, head="0" * 64)
+    with pytest.raises(ValueError):
+        store.import_verified(record, bad, "M1 mini isolated collector")
+    store.import_verified(record, anchor, "M1 mini isolated collector")
+    assert len(store.recent(now=102)) == 1
+
+def test_report_route_requires_loopback_peer(db, monkeypatch):
+    monkeypatch.setattr(report_routes, "STORE", db)
+    remote = TestClient(ui.app, base_url="http://127.0.0.1",
+                        client=("198.51.100.9", 12345))
+    view = db.create(manifest())
+    assert remote.get("/report-actions/" + view["id"]).status_code == 403
+    assert remote.post("/report-actions/" + view["id"] + "/execute",
+                       data={"operator_token": decision_routes.TOKEN,
+                             "expected_head": view["head_hash"]}).status_code == 403
+    assert db.get(view["id"])["attempts"] == 0
+
+def test_openclaw_request_metadata_and_response_hash_binding(tmp_path, monkeypatch):
+    from tools import propose_openclaw_report as task
+    workspace = tmp_path / "agent"
+    (workspace / "input").mkdir(parents=True)
+    (workspace / "input/report.md").write_text("Sanitized pilot completed.")
+    captured = {}
+    model_text = json.dumps({"completed": ["Pilot completed"], "issues": [],
+                             "priorities": ["Test approval"]})
+    reply = {"id": "runtime-test-1", "response": model_text, "done": True,
+             "model": "test-model", "provider": "ollama_local",
+             "response_sha256": hashlib.sha256(model_text.encode()).hexdigest()}
+    class Response:
+        status = 200
+        def __init__(self, url): self.url = url
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def read(self, *_): return json.dumps(reply).encode()
+    class Opener:
+        def open(self, request, timeout):
+            captured.update(json.loads(request.data))
+            return Response(request.full_url)
+    monkeypatch.setattr(task.urllib.request, "build_opener", lambda *_: Opener())
+    view = task.run(workspace, tmp_path / "state/record.db",
+                    tmp_path / "protected", "test-model")
+    assert captured["human_approval_required"] is True
+    assert captured["tools_allowed"] == ["generate_text"]
+    assert "shell" in captured["tools_denied"]
+    assert view["manifest"]["response_sha256"] == reply["response_sha256"]
+    assert view["manifest"]["activity_run_id"].startswith("dev-20261016-openclaw-")
+    assert not (tmp_path / "protected/summary.md").exists()

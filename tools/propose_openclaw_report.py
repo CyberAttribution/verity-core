@@ -103,10 +103,10 @@ def run(workspace, db, output_dir, model):
                "system": SYSTEM, "model": model, "stream": False,
                "options": {"num_ctx": 4096, "num_predict": 700},
                "policy": "read_only_analysis", "operator": "isolated-report-agent",
+               "human_approval_required": True, "tools_allowed": ["generate_text"],
+               "tools_denied": ["file_write", "shell", "network"],
                "instruction_source": "operator", "source_document_role": "specimen",
-               "evidence_boundary_enforced": True, "execution_location": "local",
-               "meta": {"tools_allowed": [], "tools_denied": ["file_write", "shell", "network"],
-                        "network_allowed": False, "human_approval_required": True}}
+               "evidence_boundary_enforced": True, "execution_location": "local"}
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     request = urllib.request.Request("http://127.0.0.1:8090/v0/generate",
                                      data=json.dumps(payload).encode(),
@@ -130,6 +130,9 @@ def run(workspace, db, output_dir, model):
                                         "duration_ms": (time.monotonic()-started)*1000,
                                         "error_class": type(exc).__name__})
         raise
+    response_hash = hashlib.sha256(result["response"].encode()).hexdigest()
+    if result.get("response_sha256") != response_hash:
+        raise ValueError("Runtime response hash mismatch")
     text = result["response"].strip()
     fence = chr(96) * 3
     if text.startswith(fence):
@@ -144,8 +147,8 @@ def run(workspace, db, output_dir, model):
                 "provider": str(result.get("provider") or "ollama_local"),
                 "source_name": "sanitized report.md",
                 "source_sha256": hashlib.sha256(data).hexdigest(),
-                "runtime_event_id": event_id, "activity_run_id": observer.run_id,
-                "proposal": proposed,
+                "runtime_event_id": event_id, "response_sha256": response_hash,
+                "activity_run_id": observer.run_id, "proposal": proposed,
                 "action": {"kind": "write_sanitized_summary", "target": report_actions.TARGET,
                            "sha256": hashlib.sha256(proposed.encode()).hexdigest()},
                 "policy": report_actions.POLICY}

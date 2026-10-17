@@ -23,6 +23,11 @@ def actions():
 def install(app, render, base_ctx):
     router = APIRouter()
 
+    def local_peer(request):
+        decision_routes.local_request(request)
+        if not request.client or request.client.host not in ("127.0.0.1", "::1", "testclient"):
+            raise HTTPException(403, "Loopback peer required for report actions")
+
     def read(rid):
         try:
             return actions().get(rid)
@@ -33,7 +38,7 @@ def install(app, render, base_ctx):
 
     @router.get("/report-actions")
     def index(request: Request):
-        decision_routes.local_request(request)
+        local_peer(request)
         try:
             runs = actions().recent()
         except (ValueError, sqlite3.Error, OSError):
@@ -44,7 +49,8 @@ def install(app, render, base_ctx):
 
     @router.get("/report-actions/{rid}")
     def detail(request: Request, rid: str):
-        decision_routes.local_request(request)
+        local_peer(request)
+        local_peer(request)
         view = read(rid)
         try:
             observed = actions().observed_file()
@@ -58,6 +64,7 @@ def install(app, render, base_ctx):
 
     @router.post("/report-actions/{rid}/decision")
     async def decide(request: Request, rid: str):
+        local_peer(request)
         form = await decision_routes.operator_form(request)
         if set(form) != {"operator_token", "expected_head", "choice", "reason"}:
             raise HTTPException(422, "Unexpected decision parameters")
@@ -75,6 +82,7 @@ def install(app, render, base_ctx):
 
     @router.post("/report-actions/{rid}/execute")
     async def execute(request: Request, rid: str):
+        local_peer(request)
         form = await decision_routes.operator_form(request)
         if set(form) != {"operator_token", "expected_head"}:
             raise HTTPException(422, "Unexpected action parameters")
@@ -89,13 +97,13 @@ def install(app, render, base_ctx):
 
     @router.get("/report-actions/{rid}/export.json")
     def export(request: Request, rid: str):
-        decision_routes.local_request(request)
+        local_peer(request)
         return JSONResponse(report_actions.export(read(rid)["record"]),
                             headers={"Cache-Control": "no-store"})
 
     @router.get("/report-actions/{rid}/checkpoint.json")
     def checkpoint(request: Request, rid: str):
-        decision_routes.local_request(request)
+        local_peer(request)
         return JSONResponse(report_actions.checkpoint(read(rid)["record"]),
                             headers={"Cache-Control": "no-store"})
 

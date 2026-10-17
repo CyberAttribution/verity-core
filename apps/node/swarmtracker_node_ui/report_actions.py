@@ -42,7 +42,7 @@ def _label(value, name, limit=240):
 def validate(manifest):
     keys = {"schema", "agent_id", "task_id", "model", "provider", "source_name",
             "source_sha256", "runtime_event_id", "proposal", "action", "policy"}
-    if not isinstance(manifest, dict) or not keys <= set(manifest) or set(manifest) - keys - {"activity_run_id"} or manifest["schema"] != SCHEMA:
+    if not isinstance(manifest, dict) or not keys <= set(manifest) or set(manifest) - keys - {"activity_run_id", "response_sha256"} or manifest["schema"] != SCHEMA:
         raise ValueError("Invalid report proposal")
     for k in ("agent_id", "task_id", "model", "provider", "source_name", "runtime_event_id"):
         _label(manifest[k], k)
@@ -51,6 +51,11 @@ def validate(manifest):
     int(manifest["source_sha256"], 16)
     if "activity_run_id" in manifest:
         _label(manifest["activity_run_id"], "activity run ID", 120)
+    if "response_sha256" in manifest:
+        value = manifest["response_sha256"]
+        if not isinstance(value, str) or len(value) != 64:
+            raise ValueError("Invalid runtime response digest")
+        int(value, 16)
     proposal = manifest["proposal"]
     if not isinstance(proposal, str) or not proposal.strip() or len(proposal.encode()) > MAX_OUTPUT:
         raise ValueError("Invalid proposed output")

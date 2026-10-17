@@ -25,6 +25,7 @@ class MonitorStore:
         with self.connection() as con:
             con.execute("PRAGMA journal_mode=WAL")
             con.execute("CREATE TABLE IF NOT EXISTS monitor_runs (id TEXT PRIMARY KEY, record TEXT NOT NULL)")
+            con.execute("CREATE TABLE IF NOT EXISTS monitor_imports (run_id TEXT PRIMARY KEY, source TEXT NOT NULL, verified_head TEXT NOT NULL, imported_at REAL NOT NULL)")
 
     @contextmanager
     def connection(self):
@@ -64,6 +65,29 @@ class MonitorStore:
                         (manifest["run_id"], trust.canonical_json(record)))
         return telemetry.inspect(record, now=now)
 
+    def import_verified(self, record, anchor, source):
+        """Import separately captured activity without claiming local receipt."""
+        source = telemetry.text(source, 120)
+        if not telemetry.verify(record, anchor):
+            raise ValueError("Imported activity failed its retained checkpoint")
+        rid = anchor["run_id"]
+        with self.connection() as con:
+            con.execute("BEGIN IMMEDIATE")
+            previous = con.execute("SELECT record FROM monitor_runs WHERE id=?", (rid,)).fetchone()
+            serialized = trust.canonical_json(record)
+            if previous and previous[0] != serialized:
+                raise ValueError("Conflicting activity record")
+            if not previous:
+                con.execute("INSERT INTO monitor_runs VALUES (?,?)", (rid, serialized))
+            con.execute("INSERT INTO monitor_imports VALUES (?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET source=excluded.source, verified_head=excluded.verified_head, imported_at=excluded.imported_at",
+                        (rid, source, anchor["head"], time.time()))
+        return telemetry.inspect(record, now=time.time())
+
+    def provenance(self, rid):
+        with self.connection() as con:
+            row = con.execute("SELECT source,verified_head,imported_at FROM monitor_imports WHERE run_id=?", (rid,)).fetchone()
+        return None if row is None else dict(source=row[0], verified_head=row[1], imported_at=row[2])
+
     def get(self, rid):
         telemetry.identifier(rid)
         with self.connection() as con:
@@ -78,6 +102,7 @@ class MonitorStore:
         views.sort(key=lambda v: (order[v["status"]], -v["last_seen"]))
         for view in views:
             view["last_seen_utc"] = datetime.fromtimestamp(view["last_seen"], timezone.utc).isoformat()
+            view["import_provenance"] = self.provenance(view["run_id"])
         return views
 
 
@@ -162,7 +187,7 @@ def install(app, render, base_ctx):
         record = get(request, rid)
         view = telemetry.inspect(record, now=time.time())
         ctx = base_ctx(request, "agents")
-        ctx.update(run=view, entries=record["entries"])
+        ctx.update(run=view, entries=record["entries"], import_provenance=database().provenance(rid))
         response = render("monitor_run.html", ctx)
         response.headers["Cache-Control"] = "no-store"
         return response

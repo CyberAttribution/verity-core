@@ -7,6 +7,7 @@
   {% for run in monitor_groups[status] %}
   <article>
     <h3><a href="/monitor/runs/{{ run.run_id }}">{{ run.name }}</a> <span class="badge {{ 'badge-ok' if run.status == 'Active' else 'badge-warn' }}">{{ run.status }}</span></h3>
+    {% if run.import_provenance %}<p class="hint">Imported verified activity from {{ run.import_provenance.source }}. Contact times were recorded there, not by this MacBook.</p>{% endif %}
     {% if run.contact_lost_during_activity %}<p class="badge badge-warn">Contact lost during unfinished activity. Execution and outcome are unknown.</p>{% endif %}
     {% if run.unfinished_disconnected %}<p class="badge badge-warn">{{ run.unfinished_disconnected }} preserved workflow(s) lost contact with unfinished activity. Check those histories before assuming completion.</p>{% endif %}
     <div class="kv-grid">

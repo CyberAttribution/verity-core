@@ -9,6 +9,7 @@
 <div class="kv"><span>Model / provider</span><code>{{ action.manifest.model }} / {{ action.manifest.provider }}</code></div>
 {% if action.manifest.activity_run_id %}<p><a href="/monitor/runs/{{ action.manifest.activity_run_id }}">Observed OpenClaw activity</a></p>{% endif %}
 <div class="kv"><span>Runtime event</span><code>{{ action.manifest.runtime_event_id }}</code></div>
+{% if action.manifest.response_sha256 %}<div class="kv"><span>Runtime response SHA-256</span><code>{{ action.manifest.response_sha256 }}</code></div>{% endif %}
 <div class="kv"><span>Source</span><code>{{ action.manifest.source_name }} · SHA-256 {{ action.manifest.source_sha256 }}</code></div>
 <div class="kv"><span>Proposed action</span><code>{{ action.manifest.action.kind }} → {{ action.manifest.action.target }}</code></div>
 <div class="kv"><span>Policy</span><code>{{ action.manifest.policy.id }} v{{ action.manifest.policy.version }}</code></div>

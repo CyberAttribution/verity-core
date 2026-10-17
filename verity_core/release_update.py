@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import plistlib
 import shutil
 import tempfile
 import time
@@ -34,6 +35,15 @@ def artifact_digest(root):
             for chunk in iter(lambda:stream.read(1024*1024),b""):digest.update(chunk)
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def app_identity(root):
+    path=Path(root)/"Contents/Info.plist"
+    if path.is_symlink() or not path.is_file() or path.stat().st_size>65536:raise ValueError("Release app metadata unavailable")
+    with path.open("rb") as stream:info=plistlib.load(stream)
+    if info.get("CFBundleIdentifier")!="ai.swarmtracker.verity.pilot" or not isinstance(info.get("CFBundleShortVersionString"),str):
+        raise ValueError("Release is not the expected pilot application")
+    return info["CFBundleShortVersionString"]
 
 
 def verify_manifest(signed,public_key):
@@ -82,6 +92,7 @@ def inspect(signed,public_key,artifact,*,installation_id,installed_version,schem
     if rollback and version(claims["version"])>=version(installed_version):raise ValueError("Rollback requires an older release")
     decision=authorization(installation_id,claims["channel"],claims["release_id"])
     if not decision["allowed"]:raise ValueError("Release is not authorized for this installation")
+    if app_identity(artifact)!=claims["version"]:raise ValueError("Signed release version differs from packaged app")
     if artifact_digest(artifact)!=claims["artifact_sha256"]:raise ValueError("Release artifact digest mismatch")
     return dict(manifest=claims,installation_id=installation_id,authorization_event=decision["event_seq"],rollback=rollback,
                 manifest_sha256=hashlib.sha256(signed.encode()).hexdigest(),verified_at=int(time.time()),
@@ -99,6 +110,7 @@ def install(plan,artifact,target,profile,*,approval,history,authorization,simula
     if tr==pr or tr in pr.parents or pr in tr.parents or any(hr==root or hr in root.parents or root in hr.parents for root in (tr,pr)):
         raise ValueError("Target, profile and history must be separate directories")
     if artifact_digest(artifact)!=plan["manifest"]["artifact_sha256"]:raise ValueError("Release artifact changed since preview")
+    if app_identity(artifact)!=plan["manifest"]["version"]:raise ValueError("Release app identity changed since preview")
     if target.resolve()==Path(artifact).resolve() or target in Path(artifact).parents:raise ValueError("Release source and target must differ")
     if history.exists():raise ValueError("Use a new history directory for each attempt")
     history.mkdir(mode=0o700,parents=True)

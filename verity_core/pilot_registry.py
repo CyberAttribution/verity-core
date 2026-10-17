@@ -13,6 +13,7 @@ import stat
 import time
 import uuid
 from . import activation
+from .json_safety import bounded_json_loads
 from .trust import decision
 
 DISCLAIMER = ("Administrator bookkeeping only. Replacement does not invalidate "
@@ -210,6 +211,23 @@ class Registry:
             row=con.execute("SELECT allowed,seq FROM release_authorizations WHERE installation_id=? AND channel=? AND release_id=?",(installation_id,channel,release_id)).fetchone()
             return dict(allowed=bool(row["allowed"]),event_seq=row["seq"]) if row else dict(allowed=False,event_seq=None)
 
+    def record_update(self,installation_id,plan,journal):
+        activation._id(installation_id)
+        if plan.get("installation_id")!=installation_id:raise ValueError("Update belongs to another installation")
+        result=json.loads(Path(journal).read_text())
+        if result.get("release_id")!=plan["manifest"]["release_id"] or result.get("manifest_sha256")!=plan["manifest_sha256"] or result.get("state")!="installed":
+            raise ValueError("Successful matching installer journal required")
+        with self.connection() as con:
+            prior=[json.loads(r[0]) for r in con.execute("SELECT data FROM events WHERE event='local_update_recorded'")]
+            if any(x["installation_id"]==installation_id and x["manifest_sha256"]==result["manifest_sha256"] for x in prior):return
+            row=con.execute("SELECT allowed,seq FROM release_authorizations WHERE installation_id=? AND channel=? AND release_id=?",
+                (installation_id,plan["manifest"]["channel"],result["release_id"])).fetchone()
+            if not row or not row["allowed"]:raise ValueError("Release authorization withdrawn; preserve journal for reconciliation")
+            self.event(con,"local_update_recorded",dict(installation_id=installation_id,release_id=result["release_id"],
+                version=plan["manifest"]["version"],manifest_sha256=result["manifest_sha256"],
+                artifact_sha256=plan["manifest"]["artifact_sha256"],authorization_event=row["seq"],
+                outcome="installed",source="operator-observed local installer journal; no device attestation"))
+
     def observe(self,installation_id,*,version,channel,update_state,contact_at=None,source="operator-entered",imported_revocation_revision=None):
         """An operator report is never promoted to an authenticated device observation."""
         activation._id(installation_id)
@@ -234,7 +252,8 @@ class Registry:
                 reported=report["data"] if report else None,reported_at=report["at"] if report else None,
                 contact_state="unknown" if not report else ("stale" if now-report["data"]["contact_at"]>stale_after else "reported"),
                 acknowledgment="operator-entered" if any(r["acknowledgment_reported"] for r in licenses) else "unknown",
-                release_authorizations=[e for e in events if e["event"]=="release_authorization_changed" and e["data"]["installation_id"]==iid]))
+                release_authorizations=[e for e in events if e["event"]=="release_authorization_changed" and e["data"]["installation_id"]==iid],
+                updates=[e for e in events if e["event"]=="local_update_recorded" and e["data"]["installation_id"]==iid]))
         return out
 
     def prepare_invitation(self,package_path,output,invitation_id=None,days=7):
@@ -308,3 +327,39 @@ class Registry:
                     artifact_state="exported" if any(x["event"]=="invitation_draft_exported" and x["data"]["invitation_id"]==iid for x in events) else "pending_reconciliation",
                     artifact_present=artifact_present(data["draft_path"]),package_sha256=data["package_sha256"]))
         return {"licenses":out,"invitations":invitations,"events":events,"limits":DISCLAIMER}
+
+
+def export_history(registry,installation_id,output,checkpoint):
+    """Sanitized operator history; the SHA checkpoint must be retained separately."""
+    activation._id(installation_id)
+    snapshot=registry.status()
+    licenses=[x for x in snapshot["licenses"] if x["installation_id"]==installation_id]
+    if not licenses:raise Conflict("Unknown installation")
+    ids={x["license_id"] for x in licenses}
+    events=[]
+    for item in snapshot["events"]:
+        data=item["data"]
+        if data.get("installation_id")==installation_id or data.get("license_id") in ids or item["event"]=="revocation_list_issued" and ids.intersection(data.get("license_ids",[])):
+            clean={k:v for k,v in data.items() if k not in {"artifact_path","draft_path","backup_path","license_ids"}}
+            if item["event"]=="revocation_list_issued":clean["affected_license_ids"]=sorted(ids.intersection(data["license_ids"]))
+            events.append(dict(seq=item["seq"],at=item["at"],event=item["event"],data=clean))
+    bundle=dict(schema="verity_installation_history/v1",installation_id=installation_id,
+                credentials=[{k:v for k,v in row.items() if k not in {"artifact_present","code_sha256"}} for row in licenses],events=events,
+                provenance="Operator registry entries, issued credentials and reported observations; no hardware attestation")
+    raw=activation.canonical(bundle)
+    save_private_new(output,raw)
+    save_private_new(checkpoint,(fingerprint(raw)+"\n").encode())
+    return fingerprint(raw)
+
+
+def verify_history(output,checkpoint):
+    raw=Path(output).read_bytes()
+    if len(raw)>10*1024*1024:return False
+    if fingerprint(raw)!=Path(checkpoint).read_text().strip():return False
+    try:bundle=bounded_json_loads(raw.decode());data=activation.canonical(bundle)
+    except (ValueError,UnicodeError,TypeError):return False
+    if raw!=data:return False
+    events=bundle.get("events")
+    return (bundle.get("schema")=="verity_installation_history/v1" and isinstance(events,list)
+            and all(type(e.get("seq")) is int for e in events)
+            and [e["seq"] for e in events]==sorted(set(e["seq"] for e in events)))

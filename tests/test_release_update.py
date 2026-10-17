@@ -1,4 +1,5 @@
 import json
+import plistlib
 import time
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from verity_core import activation,release_update
-from verity_core.pilot_registry import Registry
+from verity_core.pilot_registry import Registry,export_history,verify_history
 
 
 def setup(tmp_path):
@@ -20,9 +21,16 @@ def setup(tmp_path):
         raw=activation.canonical(claims)
         reg.issue(activation.encode(raw)+"."+activation.encode(key.sign(raw)),public,tmp_path/(name+".code"))
     artifact=tmp_path/"release.app";artifact.mkdir();(artifact/"binary").write_text("new")
+    app_info(artifact,"2.0.0")
     claims=dict(schema="verity_release/v1",release_id="release-2",version="2.0.0",artifact_sha256=release_update.artifact_digest(artifact),platform="macOS",architecture="arm64",min_os="15.0",channel="pilot",min_schema=1,target_schema=1,migration="none",notes="Synthetic local update")
     raw=activation.canonical(claims);signed=activation.encode(raw)+"."+activation.encode(key.sign(raw))
     return reg,key,public,artifact,claims,signed
+
+
+def app_info(app,version):
+    contents=app/"Contents";contents.mkdir(exist_ok=True)
+    with (contents/"Info.plist").open("wb") as out:
+        plistlib.dump(dict(CFBundleIdentifier="ai.swarmtracker.verity.pilot",CFBundleShortVersionString=version),out)
 
 
 def preview(reg,public,artifact,signed,installation="alpha",installed="1.0.0",schema=1,rollback=False):
@@ -79,6 +87,9 @@ def test_signature_digest_compatibility_replay_and_recovery(tmp_path):
     (artifact/"binary").write_text("tampered")
     with pytest.raises(ValueError,match="digest"):preview(reg,public,artifact,signed)
     (artifact/"binary").write_text("new")
+    app_info(artifact,"9.0.0")
+    with pytest.raises(ValueError,match="version differs"):preview(reg,public,artifact,signed)
+    app_info(artifact,"2.0.0")
     with pytest.raises(ValueError,match="Replayed"):preview(reg,public,artifact,signed,installed="2.0.0")
     with pytest.raises(ValueError,match="schema"):preview(reg,public,artifact,signed,schema=2)
     with pytest.raises(ValueError,match="incompatible"):release_update.inspect(signed,public,artifact,installation_id="alpha",installed_version="1.0.0",schema_version=1,authorization=reg.release_allowed,system=("Darwin","x86_64","15.1"))
@@ -97,9 +108,19 @@ def test_signature_digest_compatibility_replay_and_recovery(tmp_path):
     with pytest.raises(RuntimeError):release_update.install(plan,artifact,target,profile,approval=plan["approval_phrase"],history=tmp_path/"migration-failed",authorization=reg.release_allowed,migrate=broken)
     assert (target/"binary").read_text()=="old" and (profile/"evidence.json").read_text()=="preserved"
     release_update.install(plan,artifact,target,profile,approval=plan["approval_phrase"],history=tmp_path/"success",authorization=reg.release_allowed)
+    reg.record_update("alpha",plan,tmp_path/"success/outcome.json")
+    reg.record_update("alpha",plan,tmp_path/"success/outcome.json")
+    exported=tmp_path/"history.json";checkpoint=tmp_path/"history.sha256"
+    export_history(reg,"alpha",exported,checkpoint)
+    assert verify_history(exported,checkpoint)
+    assert exported.read_text().count('local_update_recorded')==1
+    assert (tmp_path/"alpha.code").read_text() not in exported.read_text()
+    assert 'artifact_path' not in exported.read_text()
+    checkpoint.write_text("0"*64)
+    assert not verify_history(exported,checkpoint)
     assert (target/"binary").read_text()=="new" and (profile/"evidence.json").read_text()=="preserved"
     assert (tmp_path/"success/previous.app/binary").read_text()=="old"
-    old=tmp_path/"rollback.app";old.mkdir();(old/"binary").write_text("old")
+    old=tmp_path/"rollback.app";old.mkdir();(old/"binary").write_text("old");app_info(old,"1.0.0")
     older=dict(claims,release_id="release-1",version="1.0.0",artifact_sha256=release_update.artifact_digest(old))
     raw=activation.canonical(older);signed_old=activation.encode(raw)+"."+activation.encode(key.sign(raw))
     reg.authorize_release("alpha","pilot","release-1",True,"explicit recovery rollback")

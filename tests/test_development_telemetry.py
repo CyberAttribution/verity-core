@@ -121,6 +121,24 @@ def test_agent_grouping_preserves_old_unfinished_alert_and_all_links():
     assert grouped[0]["unfinished_disconnected"]==1
 
 
+def test_agent_card_links_newest_run_when_older_run_is_active():
+    from swarmtracker_node_ui.monitoring import participants
+    old=t.create(MANIFEST,90)
+    t.append(old,ev(eid="old-active"),100)
+    new=t.create(dict(MANIFEST,run_id="run-2"),101)
+    t.append(new,ev("request_start",dict(activity_id="req-new",operation="completion",task="New review"),eid="new-start"),102)
+    t.append(new,ev("disconnect",eid="new-disconnect"),103)
+    active=t.inspect(old,now=104);disconnected=t.inspect(new,now=104)
+    assert active["status"]=="Active"
+    assert disconnected["status"]=="Recently disconnected"
+    grouped=participants([active,disconnected])  # store sorts by status first
+    assert grouped[0]["run_id"]=="run-2"
+    assert grouped[0]["status"]=="Recently disconnected"
+    assert grouped[0]["contact_lost_during_activity"] is True
+    assert grouped[0]["unfinished_disconnected"]==1
+    assert [v["run_id"] for v in grouped[0]["recent_runs"]]==["run-2","run-1"]
+
+
 def test_store_atomic_concurrent_idempotency_and_restart(tmp_path):
     from swarmtracker_node_ui.monitoring import MonitorStore
     path = tmp_path / "monitor.db"

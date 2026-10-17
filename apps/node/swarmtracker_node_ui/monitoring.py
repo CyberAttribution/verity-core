@@ -128,8 +128,9 @@ def participants(views):
     for group in groups.values():
         history=sorted(group["recent_runs"], key=lambda v: v["last_seen"], reverse=True)
         newest=history[0]
-        group.update({key: newest[key] for key in ("status", "last_seen",
-                      "current_task", "runtime", "model", "pending", "activities")})
+        # Status grouping may present an older active run first. Keep the card's
+        # title link, provenance, status and contact alert from one latest run.
+        group.update(newest)
         group["recent_runs"] = history
         group["last_seen_utc"] = newest.get("last_seen_utc") or datetime.fromtimestamp(newest["last_seen"], timezone.utc).isoformat()
         group["last_reported_work"]=next((a.get("task") for a in reversed(newest["activities"]) if a.get("task")),newest["current_task"])

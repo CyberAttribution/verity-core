@@ -46,11 +46,14 @@ def number(value, maximum=1e12):
 
 
 def manifest(value):
-    if not isinstance(value, dict) or set(value) != {"run_id", "agent_id", "name", "runtime", "model"}:
+    if not isinstance(value, dict) or not {"run_id", "agent_id", "name", "runtime", "model"} <= set(value) or set(value) - {"run_id", "agent_id", "name", "runtime", "model", "creator", "provider", "permissions"}:
         raise ValueError("Invalid telemetry manifest")
     identifier(value["run_id"]); identifier(value["agent_id"])
     for key in ("name", "runtime", "model"):
         text(value[key])
+    for key in ("creator", "provider", "permissions"):
+        if key in value:
+            text(value[key])
     return dict(value)
 
 

@@ -24,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import adapters, analysis, canonical_case, config, core_bridge
 from . import governance, keel_events, keel_policy, ledger, media_runner
-from . import agents, governed_analysis, providers, decision_routes, monitoring, local_activity
+from . import agents, governed_analysis, providers, decision_routes, monitoring, local_activity, report_routes
 from . import openclaw_client as oc
 from . import store as store_mod
 
@@ -1948,14 +1948,21 @@ def agents_page(request: Request):
     ctx["participant"] = agents.observe()
     try:
         ctx["monitor_runs"] = monitoring.participants(monitoring.database().recent())
+        ctx["monitor_groups"] = {status: [r for r in ctx["monitor_runs"] if r["status"] == status]
+                                 for status in ("Active", "Recently disconnected", "Status unknown")}
         ctx["monitor_error"] = False
     except (ValueError, TypeError, KeyError, AttributeError, sqlite3.Error, OSError):
         ctx["monitor_runs"] = []
+        ctx["monitor_groups"] = {status: [] for status in ("Active", "Recently disconnected", "Status unknown")}
         ctx["monitor_error"] = True
     try:
         ctx["decision_runs"] = decision_routes.runs().recent()
     except Exception:
         ctx["decision_runs"] = [{"integrity_error": True}]
+    try:
+        ctx["report_actions"] = report_routes.actions().recent()
+    except (ValueError, sqlite3.Error, OSError):
+        ctx["report_actions"] = []
     return render("agents.html", ctx)
 
 
@@ -1970,6 +1977,10 @@ def governance_page(request: Request):
     except Exception:
         ctx["decision_runs"] = [{"integrity_error": True}]
         ctx["run"] = None
+    try:
+        ctx["report_actions"] = report_routes.actions().recent()
+    except (ValueError, sqlite3.Error, OSError):
+        ctx["report_actions"] = []
     ctx["keel"] = keel_policy.policy_summary()
     ctx["selftest"] = keel_policy.self_test()
     ctx["media_ledger_count"] = keel_events.count_events()
@@ -1996,6 +2007,10 @@ def ledger_page(request: Request):
 def settings_page(request: Request):
     ctx = base_ctx(request, "settings")
     ctx["status"] = node_status()
+    try:
+        ctx["report_actions"] = report_routes.actions().recent()
+    except (ValueError, sqlite3.Error, OSError):
+        ctx["report_actions"] = []
     ctx["keel"] = keel_policy.policy_summary()
     return render("settings.html", ctx)
 
@@ -2038,6 +2053,7 @@ decision_routes.install(app, render, base_ctx, GENERIC_JOBS)
 
 # Development telemetry is observational and cannot authorize execution.
 monitoring.install(app, render, base_ctx)
+report_routes.install(app, render, base_ctx)
 
 from . import setup_routes
 setup_routes.install(app, render, base_ctx)

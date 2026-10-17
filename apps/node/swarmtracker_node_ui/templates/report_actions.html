@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Governed report actions{% endblock %}
+{% block content %}
+<section class="panel">
+<h2>Governed report writes</h2>
+<p>These records are separate from the fixed sender-block simulation. An OpenClaw text proposal has no write authority. Only this Verity route can write the designated output after a record-specific approval.</p>
+{% for action in report_actions %}
+<p><a href="/report-actions/{{ action.id }}">{{ action.manifest.task_id }}</a> · {{ action.manifest.agent_id }} · {{ action.state }} · {{ action.manifest.action.target }}</p>
+{% else %}<p>No report proposals have been imported.</p>{% endfor %}
+<p class="hint">The agent and model identity are reported by the integration. The operator label is local intent, not authenticated identity.</p>
+</section>
+{% endblock %}

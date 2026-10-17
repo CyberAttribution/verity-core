@@ -99,11 +99,19 @@ def participants(views):
         group=groups.setdefault(view["agent_id"],dict(view,recent_runs=[],unfinished_disconnected=0))
         group["recent_runs"].append(view)
         if view["contact_lost_during_activity"]:group["unfinished_disconnected"]+=1
+    order = {"Active": 0, "Recently disconnected": 1, "Status unknown": 2}
     for group in groups.values():
-        history=group["recent_runs"]
-        newest=max(history,key=lambda v:v["last_seen"])
+        history=sorted(group["recent_runs"], key=lambda v: v["last_seen"], reverse=True)
+        newest=history[0]
+        group.update({key: newest[key] for key in ("status", "last_seen",
+                      "current_task", "runtime", "model", "pending", "activities")})
+        group["recent_runs"] = history
+        group["last_seen_utc"] = newest.get("last_seen_utc") or datetime.fromtimestamp(newest["last_seen"], timezone.utc).isoformat()
         group["last_reported_work"]=next((a.get("task") for a in reversed(newest["activities"]) if a.get("task")),newest["current_task"])
-    return list(groups.values())
+        group["creator"] = newest.get("creator", "Not reported")
+        group["provider"] = newest.get("provider", "Not reported")
+        group["permissions"] = newest.get("permissions", "Not reported")
+    return sorted(groups.values(), key=lambda v: (order[v["status"]], -v["last_seen"]))
 
 
 def install(app, render, base_ctx):

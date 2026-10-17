@@ -1,0 +1,125 @@
+"""Meaningful fixed-file action boundary and crash/retry regressions."""
+import copy
+import hashlib
+import json
+import os
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+from fastapi.testclient import TestClient
+
+from swarmtracker_node_ui import app as ui
+from swarmtracker_node_ui import decision_routes, report_actions, report_routes
+from verity_core.trust import record as trust
+
+
+def manifest(text="# Proposed summary\n\n- A verified item.\n"):
+    return {"schema": report_actions.SCHEMA, "agent_id": "openclaw-test",
+            "task_id": "sanitized-session-report-summary", "model": "test-model",
+            "provider": "ollama_local", "source_name": "sanitized report.md",
+            "source_sha256": hashlib.sha256(b"report").hexdigest(),
+            "runtime_event_id": "runtime-event-1", "proposal": text,
+            "action": {"kind": "write_sanitized_summary", "target": "summary.md",
+                       "sha256": hashlib.sha256(text.encode()).hexdigest()},
+            "policy": report_actions.POLICY}
+
+
+@pytest.fixture
+def db(tmp_path):
+    return report_actions.Store(tmp_path / "records.db", tmp_path / "output")
+
+
+def approve(db, view):
+    return db.decide(view["id"], "approved", "Reviewed exact text", "operator", view["head_hash"])
+
+
+def test_approved_real_write_and_independent_file_digest(db):
+    view = approve(db, db.create(manifest()))
+    assert db.observed_file()["present"] is False
+    result = db.execute(view["id"], "operator", view["head_hash"])
+    observed = db.observed_file()
+    assert result["state"] == "written" and observed["sha256"] == view["manifest"]["action"]["sha256"]
+    assert (db.output_dir / "summary.md").read_text() == view["manifest"]["proposal"]
+    bundle = report_actions.export(result["record"])
+    assert report_actions.verify(bundle, report_actions.checkpoint(result["record"]))
+    with pytest.raises(report_actions.Conflict):
+        db.execute(view["id"], "operator", result["head_hash"])
+
+
+def test_denied_rejected_and_prohibited_path(db, tmp_path):
+    outside = tmp_path / "roadmap.md"
+    outside.write_text("authoritative")
+    view = db.create(manifest())
+    denied = db.execute(view["id"], "operator", view["head_hash"])
+    assert denied["state"] == "denied" and not db.observed_file()["present"]
+    view = db.create(manifest())
+    view = db.decide(view["id"], "rejected", "No", "operator", view["head_hash"])
+    assert db.execute(view["id"], "operator", view["head_hash"])["state"] == "denied"
+    bad = manifest()
+    bad["action"]["target"] = "../roadmap.md"
+    with pytest.raises(ValueError):
+        db.create(bad)
+    assert outside.read_text() == "authoritative"
+
+
+def test_record_specific_binding_and_parameter_change(db):
+    first = approve(db, db.create(manifest()))
+    second = db.create(manifest())
+    copied = copy.deepcopy(second["record"])
+    trust.append_entry(copied, "approval_granted", actor="operator",
+                       payload=first["record"]["entries"][1]["payload"])
+    with pytest.raises(ValueError):
+        report_actions.inspect(copied)
+    altered = copy.deepcopy(first["record"])
+    altered["entries"][0]["payload"]["manifest"]["proposal"] += " changed"
+    assert not report_actions.verify({"schema": report_actions.SCHEMA,
+                                      "record": altered, "checkpoint": report_actions.checkpoint(first["record"])})
+
+
+def test_concurrent_execute_one_real_write(db):
+    view = approve(db, db.create(manifest()))
+    def call(_):
+        try:
+            return report_actions.Store(db.db_path, db.output_dir).execute(view["id"], "operator", view["head_hash"])["state"]
+        except report_actions.Conflict:
+            return "conflict"
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        states = list(pool.map(call, range(6)))
+    assert states.count("written") == 1 and states.count("conflict") == 5
+    assert db.get(view["id"])["attempts"] == 1
+
+
+def test_restart_after_reserved_attempt_fails_closed(db, monkeypatch):
+    view = approve(db, db.create(manifest()))
+    def interrupted(_):
+        raise OSError("simulated power loss before output")
+    monkeypatch.setattr(db, "_write", interrupted)
+    with pytest.raises(OSError):
+        db.execute(view["id"], "operator", view["head_hash"])
+    recovered = report_actions.Store(db.db_path, db.output_dir).get(view["id"])
+    assert recovered["state"] == "in_doubt" and not recovered["can_execute"]
+    with pytest.raises(report_actions.Conflict):
+        db.execute(view["id"], "operator", recovered["head_hash"])
+    assert not db.observed_file()["present"]
+
+
+def test_route_enforces_exact_parameters_and_shows_disk_state(db, tmp_path, monkeypatch):
+    monkeypatch.setattr(report_routes, "STORE", db)
+    client = TestClient(ui.app, base_url="http://127.0.0.1")
+    view = db.create(manifest())
+    path = "/report-actions/" + view["id"]
+    assert client.get(path).status_code == 200
+    form = {"operator_token": decision_routes.TOKEN, "expected_head": view["head_hash"],
+            "choice": "approved", "reason": "Reviewed"}
+    assert client.post(path + "/decision", data=dict(form, target="../roadmap.md")).status_code == 422
+    assert client.post(path + "/decision", data=form, follow_redirects=False).status_code == 303
+    approved = db.get(view["id"])
+    assert client.post(path + "/execute", data={"operator_token": decision_routes.TOKEN,
+          "expected_head": approved["head_hash"], "proposal": "different"}).status_code == 422
+    assert client.post(path + "/execute", data={"operator_token": decision_routes.TOKEN,
+          "expected_head": approved["head_hash"]}, follow_redirects=False).status_code == 303
+    page = client.get(path).text
+    assert "Current file matches this proposal" in page
+    assert report_actions.verify(client.get(path + "/export.json").json(),
+                                 client.get(path + "/checkpoint.json").json())

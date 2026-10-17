@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Governed report action{% endblock %}
+{% block content %}
+<section class="panel">
+<h2>Report action · {{ action.manifest.task_id }}</h2>
+<p><a href="/agents">Swarm Tracker / Agents</a> · <a href="/governance">Governance</a> · <a href="/report-actions">All report actions</a></p>
+<div class="kv-grid">
+<div class="kv"><span>Agent / source</span><code>{{ action.manifest.agent_id }} · OpenClaw v0 generate</code></div>
+<div class="kv"><span>Model / provider</span><code>{{ action.manifest.model }} / {{ action.manifest.provider }}</code></div>
+<div class="kv"><span>Runtime event</span><code>{{ action.manifest.runtime_event_id }}</code></div>
+<div class="kv"><span>Source</span><code>{{ action.manifest.source_name }} · SHA-256 {{ action.manifest.source_sha256 }}</code></div>
+<div class="kv"><span>Proposed action</span><code>{{ action.manifest.action.kind }} → {{ action.manifest.action.target }}</code></div>
+<div class="kv"><span>Policy</span><code>{{ action.manifest.policy.id }} v{{ action.manifest.policy.version }}</code></div>
+<div class="kv"><span>Decision / outcome</span><code>{{ action.decision }} / {{ action.state }}</code></div>
+<div class="kv"><span>Execution attempts</span><code>{{ action.attempts }}</code></div>
+<div class="kv"><span>Proposed bytes SHA-256</span><code>{{ action.manifest.action.sha256 }}</code></div>
+<div class="kv"><span>Current file observed on disk</span><code>{{ observed.sha256 if observed.present else (observed.error if observed.error else 'absent') }}</code></div>
+</div>
+<p>{{ 'Current file matches this proposal.' if observed.present and observed.sha256 == action.manifest.action.sha256 else 'Current file does not match this proposal or is unavailable.' }}</p>
+<details><summary>Exact proposed content</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{ action.manifest.proposal }}</pre></details>
+{% if action.decision == 'pending' %}
+<form method="post" action="/report-actions/{{ action.id }}/decision">
+<input type="hidden" name="operator_token" value="{{ operator_token }}">
+<input type="hidden" name="expected_head" value="{{ action.head_hash }}">
+<label>Reason <input name="reason" required maxlength="1000"></label>
+<button name="choice" value="approved">Approve exact proposal</button>
+<button name="choice" value="rejected">Reject proposal</button>
+</form>
+{% endif %}
+{% if action.can_execute %}
+<form method="post" action="/report-actions/{{ action.id }}/execute">
+<input type="hidden" name="operator_token" value="{{ operator_token }}">
+<input type="hidden" name="expected_head" value="{{ action.head_hash }}">
+<button>Write designated output</button>
+</form>
+{% endif %}
+{% if action.state == 'in_doubt' %}<p class="alert alert-bad">Execution was reserved but no outcome was durably recorded. Check the file and record; retries are blocked.</p>{% endif %}
+<p><a href="/report-actions/{{ action.id }}/export.json">Export linked history</a> · <a href="/report-actions/{{ action.id }}/checkpoint.json">Save checkpoint separately</a></p>
+<p class="hint">The disk check reports current contents only. A matching digest does not prove that the agent lacked another path or that the record captured every event.</p>
+{% for e in action.record.entries %}
+<details><summary>{{ e.seq }} · {{ e.at_utc }} · {{ e.payload.event }}</summary><pre>{{ e.payload | tojson(indent=2) }}</pre></details>
+{% endfor %}
+</section>
+{% endblock %}

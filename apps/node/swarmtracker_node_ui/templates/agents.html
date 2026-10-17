@@ -40,6 +40,6 @@
     <div class="kv"><span>Governance alarm</span><code>{{ 'Recorded' if e.alarm else 'None recorded' }}</code></div>
   </div>
   {% else %}<p class="empty">No matching local events in the last 100 ledger entries.</p>{% endif %}
-  <p class="hint">Matches the {{ "current" if participant.online else "last observed" }} self-reported node and model exactly. The local ledger does not automatically include events stored on another Mac. An event ID alone is not a verified Trust Record.</p>
+  <p class="hint">{% if participant.online and not participant.identity_observed_now %}Current node/model identity is incomplete; no complete current identity match is established.{% else %}Matches the {{ "current" if participant.identity_observed_now else "last observed" }} self-reported node and model exactly.{% endif %} The local ledger does not automatically include events stored on another Mac. An event ID alone is not a verified Trust Record.</p>
 </section>
 {% endblock %}

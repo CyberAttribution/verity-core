@@ -21,6 +21,7 @@ def participant_snapshot(health, models, events, *, observed_at=None):
     node = _text(health.get("node")) if online else None
     model = _text(health.get("default_model")) if online else None
     provider = _text(health.get("provider")) if online else None
+    identity_observed_now = bool(online and node and model)
     with _lock:
         if online:
             if node and model:
@@ -47,7 +48,9 @@ def participant_snapshot(health, models, events, *, observed_at=None):
         "model_available": available,
         "operator": config.OPERATOR,
         "latest_event": latest,
-        "identity_scope": "Current reported identity" if online else "Last observed identity",
+        "identity_scope": ("Current reported identity" if identity_observed_now else
+                           "Incomplete current identity" if online else "Last observed identity"),
+        "identity_observed_now": identity_observed_now,
         "current_task": "Not observed",
         "trust_record": "No verified record link available",
     }

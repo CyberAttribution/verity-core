@@ -89,3 +89,27 @@ def test_offline_cached_model_does_not_claim_current_availability():
     agents.participant_snapshot(HEALTH,[],[])
     result=agents.participant_snapshot({},[HEALTH["default_model"]],[])
     assert not result["model_available"]
+
+
+@pytest.mark.parametrize("health", [{"status": "ok"}, {"status": "ok", "node": "new"}, {"status": "ok", "default_model": "model"}])
+def test_reachable_incomplete_identity_is_not_current(monkeypatch, health):
+    agents.participant_snapshot(HEALTH, [], [], observed_at="first")
+    result = agents.participant_snapshot(health, [], [], observed_at="second")
+    assert result["online"]
+    assert not result["identity_observed_now"]
+    assert result["identity_scope"] == "Incomplete current identity"
+    assert result["last_seen"] == "first"
+    assert result["latest_event"] is None
+    monkeypatch.setattr(agents.oc, "healthz", lambda: health)
+    monkeypatch.setattr(agents.oc, "ollama_models", lambda: [])
+    monkeypatch.setattr(agents.ledger, "read_raw_events", lambda limit: [])
+    text = TestClient(ui.app).get("/agents").text
+    assert "Incomplete current identity" in text
+    assert "no complete current identity match is established" in text
+    assert "Matches the current self-reported" not in text
+
+
+def test_complete_current_identity_is_explicit():
+    result = agents.participant_snapshot(HEALTH, [], [])
+    assert result["identity_observed_now"]
+    assert result["identity_scope"] == "Current reported identity"

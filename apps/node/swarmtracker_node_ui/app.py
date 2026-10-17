@@ -2040,10 +2040,10 @@ def task_queue_page(request: Request):
     entries=[]
     for task in snapshot["tasks"]:
         ctl=controls.get(task["id"])
-        if not ctl: continue
         spec=json.loads(task["spec"])
         blockers=[d for d in spec["dependencies"] if states.get(d)!="independently_verified"]
-        reason=("Cancelled before dispatch" if task["state"]=="cancelled" else
+        reason=("Legacy queued request needs adoption and scoped authorization under active policy" if not ctl else
+                "Cancelled before dispatch" if task["state"]=="cancelled" else
                 "Remote cancellation unsupported; reconcile submission" if ctl["cancellation_requested"] else
                 "Paused" if ctl["paused"] else
                 "Authorization renewal required" if ctl["authorization_hash"]!=workflows.coordinator()._spec_hash(spec) else
@@ -2079,6 +2079,7 @@ async def control_operator_task(request: Request,task_id: str):
     try:
         action=form.get("action")
         if action=="authorize": db.authorize_operator_task(task_id,form.get("evidence",""))
+        elif action=="adopt": db.adopt_queued_task(task_id)
         elif action=="cancel": db.cancel_operator_task(task_id)
         elif action in {"pause","resume","priority"}:
             task=next((x for x in db.snapshot()["tasks"] if x["id"]==task_id),None)

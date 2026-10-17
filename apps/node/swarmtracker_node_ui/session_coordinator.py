@@ -163,6 +163,17 @@ class Coordinator:
             raise ValueError("Priority outside bounded range")
         self.enqueue(spec,_operator_priority=priority)
 
+    def adopt_queued_task(self, task_id):
+        """Bring a legacy queued review under versioned operator controls, pending renewal."""
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            task=db.execute("SELECT state,spec FROM tasks WHERE id=?",(task_id,)).fetchone()
+            if not task or task["state"]!="queued" or db.execute("SELECT 1 FROM task_controls WHERE task_id=?",(task_id,)).fetchone():
+                raise ValueError("Only a legacy queued review can be adopted")
+            db.execute("INSERT INTO task_controls VALUES (?,?,0,0,NULL,0)",(task_id,0))
+            db.execute("INSERT INTO task_audit(task_id,at,action,after_hash,detail) VALUES (?,?,?,?,?)",
+                       (task_id,self.clock(),"adopted",self._spec_hash(json.loads(task["spec"])),"Scoped authorization renewal required"))
+
     def authorize_operator_task(self, task_id, evidence):
         if not evidence or len(evidence)<20 or len(evidence)>1000: raise ValueError("Scoped authorization evidence required")
         with self.db() as db:
@@ -596,7 +607,7 @@ class Coordinator:
                         db.execute("INSERT INTO review_policy_decisions(task_id,at,policy_hash,allowed,reason) VALUES (?,?,?,?,?)",
                                    (row["id"],self.clock(),policy_hash,0,"Active policy denies GLM review at executor boundary"))
                     continue
-                if policy and policy["require_approval"] and ctl and not ctl["authorization_hash"]:
+                if policy and policy["require_approval"] and (not ctl or ctl["authorization_hash"]!=self._spec_hash(spec)):
                     continue
                 if all(db.execute("SELECT state FROM tasks WHERE id=?",(dep,)).fetchone()[0] == "independently_verified" for dep in spec["dependencies"]):
                     request_id=uuid.uuid4().hex

@@ -108,6 +108,8 @@ def attention(snapshot, *, endpoint_reachable=None, participants=(), now=None):
             policies={x["hash"]:json.loads(x["spec"]) for x in snapshot.get("review_policy_versions",[])}
             policy=policies.get(active[0]["hash"])
             if policy and "glm-review" not in policy["permitted_actions"]: eligible=[]
+            elif policy and policy["require_approval"]:
+                eligible=[x for x in eligible if x["id"] in controls and controls[x["id"]]["authorization_hash"]==Coordinator._spec_hash(json.loads(x["spec"]))]
         if control["mode"]=="running" and not budget and not eligible and not any(x["state"] in {"submitted","acknowledged"} for x in snapshot["tasks"]):
             cause=("Queued requests are blocked by dependency, authorization, pause or active policy gates" if queued else
                    "Queue exhausted: no eligible approved request")

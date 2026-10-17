@@ -416,6 +416,21 @@ def test_versioned_review_policy_enforced_on_queued_request(tmp_path):
     assert c.snapshot()["review_policy_decisions"][-1]["allowed"]==1
 
 
+def test_tightened_approval_policy_blocks_legacy_queue_until_adopted(tmp_path):
+    c=Coordinator(tmp_path/"legacy.db",adapter=lambda spec,rid:{"request_id":rid,"content":"ok","finish_reason":"stop"},clock=lambda:1000)
+    c.configure(rate=1,start=900,ceiling=110);c.enqueue(review("legacy"))
+    c.activate_review_policy({"permitted_actions":["glm-review"],"protected_targets":["filesystem","shell"],
+                              "require_approval":True,"spending_limit":90})
+    c.control("running")
+    assert c.claim("worker") is None
+    assert any("blocked by dependency, authorization" in x["cause"] for x in attention(c.snapshot()))
+    c.adopt_queued_task("legacy")
+    assert c.claim("worker") is None
+    c.authorize_operator_task("legacy","Operator renewed approval for saved legacy scope")
+    assert c.run_one("worker")=="legacy"
+    assert c.snapshot()["task_audit"][0]["action"]=="adopted"
+
+
 def test_recovery_carries_policy_and_queue_audit_without_authorization_body(tmp_path):
     from swarmtracker_node_ui.recovery_package import build,load
     c=Coordinator(tmp_path/"queue.db",clock=lambda:1000)

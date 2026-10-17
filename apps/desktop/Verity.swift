@@ -186,7 +186,12 @@ class VerityAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self.initialOrigin = url
             self.startupComplete = true
             self.startupTimer?.invalidate()
-            let destination = CommandLine.arguments.contains("--smoke-connection-test") ? url.appendingPathComponent("setup") : (CommandLine.arguments.contains("--smoke-governance") ? url.appendingPathComponent("governance") : (CommandLine.arguments.contains("--smoke-agents") ? url.appendingPathComponent("agents") : url))
+            let smokePages = ["--smoke-connection-test": "setup", "--smoke-governance": "governance",
+                              "--smoke-agents": "agents", "--smoke-tasks": "tasks",
+                              "--smoke-policy": "review-policy", "--smoke-notifications": "notifications",
+                              "--smoke-demo": "demo"]
+            let selected = smokePages.first { CommandLine.arguments.contains($0.key) }?.value
+            let destination = selected.map { url.appendingPathComponent($0) } ?? url
             self.webView?.load(URLRequest(url: destination))
         }
         worker.onExit = { [weak self] code in

@@ -188,16 +188,21 @@ def assess(window: int = WINDOW) -> dict:
          f"policies seen: {', '.join(policies) or '—'}"]))
 
     # 6. Provider / Model Control
-    single_provider = set(providers) <= {"ollama_local"}
-    st = "green" if single_provider else "yellow"
+    single_provider = set(providers) == {"ollama_local"}
+    provider_evidence_complete = bool(n) and sum(providers.values()) == n
+    st = "green" if single_provider and provider_evidence_complete else "yellow"
+    provider_flags = []
+    if not provider_evidence_complete:
+        provider_flags.append(("yellow", "Provider evidence missing or incomplete; control unproven."))
+    if providers and not single_provider:
+        provider_flags.append(("yellow", "Providers outside the local-only expectation observed."))
     cats.append(_cat(
         "provider_model", "Provider / Model Control", st,
         _conf(60, complete_cov),
         f"Providers in the legacy runtime ledger: {', '.join(providers) or 'none'}; "
         f"models: {', '.join(models) or 'none'}. Provider configuration and "
         "readiness are reported separately in Settings.",
-        [] if single_provider else
-        [("yellow", "Multiple providers observed in recent events.")],
+        provider_flags,
         "Implement provider-class routing so Keel policy, not caller input, "
         "selects the provider (v0.5).",
         [f"providers: {dict(providers) or '—'}",

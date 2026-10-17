@@ -199,6 +199,10 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
         alerts.append("Paid instance: successful inventory found no model")
     if provider == "running" and not activity:
         alerts.append("Paid instance: no recent GPU request activity")
+        idle_since = max((e["received"] for e in record["events"] if e["kind"] in {"request", "result"} and e["data"].get("state") in {"running", "completed", "failed"}), default=None)
+        idle_start = idle_since or (start if isinstance(start, (int, float)) else latest.get("provider", {}).get("received"))
+        if idle_start and now - idle_start >= idle_after:
+            alerts.append("Prolonged paid idle interval")
     if stale and not confirmed:
         alerts.append("Contact stale or unknown")
     if data("model").get("state") == "failed":

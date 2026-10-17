@@ -44,6 +44,7 @@ def test_empty_billing_blocked_ssh_download_local_work_and_stale():
     assert view["estimated_charge"] == pytest.approx(22.32, abs=.01)
     assert view["reported_charge"] is None
     assert any("no recent GPU" in a for a in view["alerts"])
+    assert any("Prolonged paid idle" in a for a in view["alerts"])
     record["events"].append(dict(event("inv", "inventory", "ssh", {"checked": True, "models": []}, t), received=t))
     assert derive(record, now=t)["model"] == "absent"
     record["events"].append(dict(event("dl", "model", "model_server", {"state": "downloading", "download_bytes": 200}, t), received=t + .1))

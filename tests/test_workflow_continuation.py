@@ -4,7 +4,7 @@ import time
 import pytest
 
 from swarmtracker_node_ui.session_coordinator import Coordinator, MODEL
-from swarmtracker_node_ui.workflows import guidance, attention
+from swarmtracker_node_ui.workflows import guidance, attention, records
 
 
 def review(task_id):
@@ -30,6 +30,7 @@ def test_guidance_stall_approval_disconnect_and_finished():
     assert disconnected["state"]=="disconnected" and "unknown" in disconnected["reason"]
     finished=work(state="finished"); finished.update(checkpoint="commit reviewed",evidence="test output")
     assert guidance(finished,reachable=False,now=401)["state"]=="finished"
+    assert guidance(work(),reachable=True,active_request=True,now=401)["state"]=="working"
 
 
 def test_continuation_is_persisted_new_request_and_gated(tmp_path):
@@ -143,6 +144,18 @@ def test_assignment_correction_preserves_original_agent_and_evidence(tmp_path):
     assert snapshot["work_corrections"][0]["previous_agent"]=="glm-review"
 
 
+def test_source_binding_migrates_unique_constraint_and_preserves_history(tmp_path):
+    path=tmp_path/"work.db"
+    with __import__("sqlite3").connect(path) as db:
+        db.execute("CREATE TABLE work_sources (workflow_id TEXT NOT NULL, task_id TEXT UNIQUE NOT NULL, PRIMARY KEY(workflow_id,task_id))")
+        db.execute("INSERT INTO work_sources VALUES ('old','source')")
+    c=Coordinator(path)
+    assert c.snapshot()["work_sources"]==[{"workflow_id":"old","task_id":"source"}]
+    c.enqueue_work(json.loads(work("new")["spec"])); c.enqueue(review("source"))
+    c.bind_source("new","source")
+    assert len(c.snapshot()["work_sources"])==2
+
+
 def test_followup_does_not_repeat_ambiguous_request(tmp_path):
     now=[1000]
     c=Coordinator(tmp_path/"work.db",clock=lambda:now[0],adapter=lambda s,r: (_ for _ in ()).throw(TimeoutError()))
@@ -157,7 +170,10 @@ def test_followup_does_not_repeat_ambiguous_request(tmp_path):
     assert c.run_one("worker")==follow
     assert c.snapshot()["tasks"][-1]["state"]=="unresolved"
     now[0]+=100
-    assert c.schedule_followups()==[]
+    restarted=Coordinator(tmp_path/"work.db",clock=lambda:now[0],adapter=lambda s,r: (_ for _ in ()).throw(AssertionError("duplicate HTTP dispatch")))
+    assert restarted.schedule_followups()==[]
+    assert restarted.run_one("replacement") is None
+    assert restarted.snapshot()["tasks"][-1]["state"]=="unresolved"
 
 
 def test_automatic_followup_dependency_and_budget_gates(tmp_path):
@@ -223,7 +239,7 @@ def test_unified_detail_preserves_synthetic_disagreement_approval_and_execution(
     assert decision.inspect(executed["record"])["head_hash"]==executed["head_hash"]
     page=TestClient(ui.app).get("http://127.0.0.1/workflows/syntheticCase")
     assert page.status_code==200
-    for marker in ("SYNTHETIC EXAMPLE","disagreement","rejected","approval_granted","action_attempted","action_result","independent verification of external output"):
+    for marker in ("SYNTHETIC EXAMPLE","disagreement","rejected","approval_granted","action_attempted","action_result","policy SHA-256","independent verification of external output"):
         assert marker.lower() in page.text.lower()
 
 
@@ -235,6 +251,7 @@ def test_attention_distinguishes_healthy_idle_queue_from_failure_and_keeps_histo
     items=attention(snap,endpoint_reachable=True)
     assert len(items)==1 and items[0]["id"]=="queue:no-eligible"
     assert "worker and endpoint are reachable" in items[0]["cause"]
+    assert "paid compute continues" in items[0]["cause"]
     c.record_attention("queue:no-eligible","acknowledged","No approved task exists",{x["id"] for x in items})
     snap=c.snapshot(); snap["worker"]={"state":"active"}
     assert attention(snap)[0]["acknowledgment"]["detail"]=="No approved task exists"
@@ -246,6 +263,18 @@ def test_attention_distinguishes_healthy_idle_queue_from_failure_and_keeps_histo
     assert any(i["id"]=="request:blockedSource" for i in issues)
     with pytest.raises(ValueError,match="remains active"):
         c.record_attention("request:blockedSource","resolved","Not fixed",{i["id"] for i in issues})
+
+
+def test_attention_reports_disconnected_agent_and_stalled_work(tmp_path):
+    now=[1000]
+    c=Coordinator(tmp_path/"work.db",clock=lambda:now[0]); c.configure(rate=1,start=900,ceiling=110)
+    c.enqueue_work(json.loads(work()["spec"])); c.update_work("guidance","working")
+    now[0]+=301
+    participant={"agent_id":"glm-review","status":"Recently disconnected","last_seen_utc":"sample"}
+    result=records(c.snapshot(),[participant],now=now[0])[0]
+    assert result["state"]=="disconnected" and result["heartbeat"]=="sample"
+    issues=attention(c.snapshot(),participants=[participant],now=now[0])
+    assert {x["id"] for x in issues}>={"stalled:guidance","agent:glm-review"}
 
 
 def test_portable_handoff_separate_process_and_integrity(tmp_path):
@@ -268,6 +297,7 @@ def test_portable_handoff_separate_process_and_integrity(tmp_path):
     reconstructed=json.loads(result.stdout)
     assert reconstructed["request_states"]["independently_verified"]==["source"]
     assert reconstructed["work_items"][0]["spec"]["authorization"]=="explicit-product-development"
+    assert reconstructed["next_eligible_work"]==["guidance"]
     assert load(package,checkpoint)["raw_request_bodies_available"] is False
     package.write_bytes(package.read_bytes()+b"tamper")
     with pytest.raises(ValueError,match="differs"): load(package,checkpoint)

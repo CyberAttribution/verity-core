@@ -87,9 +87,16 @@ def load(package, checkpoint_path):
             if _digest(archive.read(output["path"]))!=output["sha256"]: raise ValueError("Output integrity failed")
     states={state:[x["id"] for x in data["requests"] if x["state"]==state] for state in
             ("queued","submitted","acknowledged","completed","independently_verified","failed","unresolved")}
+    by_id={w["id"]:w for w in data["work_items"]}
+    eligible=[w["id"] for w in data["work_items"] if w["state"]=="queued" and
+              all(by_id.get(dep,{}).get("state")=="finished" for dep in w["spec"]["dependencies"])]
+    blocked=[{"id":w["id"],"dependencies":[dep for dep in w["spec"]["dependencies"]
+                                      if by_id.get(dep,{}).get("state")!="finished"]} for w in data["work_items"]
+             if w["state"]=="queued" and w["id"] not in eligible]
     return {"source_commit":data["source_commit"],"work_items":data["work_items"],"request_states":states,
             "worker":data["worker_observation"],"estimated_charge":data["estimated_charge"],
             "budget_remaining_for_dispatch":max(0,data["control"]["ceiling"]-data["control"]["margin"]-data["estimated_charge"]),
+            "next_eligible_work":eligible,"blocked_work":blocked,"running_work":[w["id"] for w in data["work_items"] if w["state"]=="working"],
             "next_eligible_requires_live_gate_check":True,"raw_request_bodies_available":False}
 
 

@@ -329,8 +329,13 @@ def install(app, render, base_ctx):
         ctx = base_ctx(request, "sessions")
         coordinator=coordinator_view(session_id)
         from .workflows import attention
+        try:
+            from . import monitoring
+            participants=monitoring.participants(monitoring.database().recent())
+        except (ValueError,sqlite3.Error,OSError):
+            participants=[]
         ctx.update(record=record, view=configured_view(record), coordinator=coordinator,
-                   attention=attention(coordinator) if coordinator else [])
+                   attention=attention(coordinator,participants=participants) if coordinator else [])
         return render("session.html", ctx)
 
     @app.get("/sessions/{session_id}/coordinator.json")

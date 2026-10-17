@@ -1983,8 +1983,10 @@ def workflows_page(request: Request):
     if request.query_params.get("attention")=="1":
         records=[r for r in records if r["state"] not in {"finished","working"}]
     ctx=base_ctx(request,"agents")
+    try: participants=monitoring.participants(monitoring.database().recent())
+    except (ValueError,sqlite3.Error,OSError): participants=[]
     ctx.update(work_guidance=records,work_snapshot=snapshot,capabilities=workflows.CAPABILITIES,
-               operator_token=decision_routes.TOKEN,attention=workflows.attention(snapshot))
+               operator_token=decision_routes.TOKEN,attention=workflows.attention(snapshot,participants=participants))
     response=render("workflows.html",ctx)
     response.headers["Cache-Control"]="no-store"
     return response
@@ -2001,7 +2003,10 @@ def workflow_detail(request: Request, work_id: str):
     decisions=[]
     for link in links:
         if link["kind"]=="decision":
-            try: decisions.append(decision_routes.runs().get(link["target_id"]))
+            try:
+                run=decision_routes.runs().get(link["target_id"])
+                run["policy_sha256"]=hashlib.sha256(json.dumps(run["manifest"]["policy"],sort_keys=True,separators=(",",":")).encode()).hexdigest()
+                decisions.append(run)
             except (decision_routes.decision_runs.NotFound,ValueError):
                 decisions.append({"id":link["target_id"],"integrity_error":True})
     ctx=base_ctx(request,"agents")

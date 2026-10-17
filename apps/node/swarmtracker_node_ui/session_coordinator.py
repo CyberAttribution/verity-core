@@ -59,7 +59,7 @@ class Coordinator:
                 CREATE TABLE IF NOT EXISTS followup_settings (workflow_id TEXT PRIMARY KEY,
                   mode TEXT NOT NULL, grace REAL NOT NULL, cooldown REAL NOT NULL,
                   limit_count INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_at REAL);
-                CREATE TABLE IF NOT EXISTS work_sources (workflow_id TEXT NOT NULL, task_id TEXT UNIQUE NOT NULL,
+                CREATE TABLE IF NOT EXISTS work_sources (workflow_id TEXT NOT NULL, task_id TEXT NOT NULL,
                   PRIMARY KEY(workflow_id,task_id));
                 CREATE TABLE IF NOT EXISTS continuation_authorizations (task_id TEXT PRIMARY KEY,
                   mode TEXT NOT NULL, at REAL NOT NULL, basis TEXT NOT NULL);
@@ -76,6 +76,13 @@ class Coordinator:
                 CREATE TABLE IF NOT EXISTS work_successors (predecessor TEXT NOT NULL, successor TEXT UNIQUE NOT NULL,
                   at REAL NOT NULL, reason TEXT NOT NULL);
             """)
+            ddl=db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='work_sources'").fetchone()[0]
+            if "task_id TEXT UNIQUE" in ddl:
+                db.executescript("""ALTER TABLE work_sources RENAME TO work_sources_legacy;
+                    CREATE TABLE work_sources (workflow_id TEXT NOT NULL, task_id TEXT NOT NULL,
+                      PRIMARY KEY(workflow_id,task_id));
+                    INSERT INTO work_sources SELECT workflow_id,task_id FROM work_sources_legacy;
+                    DROP TABLE work_sources_legacy;""")
 
     @contextmanager
     def db(self):

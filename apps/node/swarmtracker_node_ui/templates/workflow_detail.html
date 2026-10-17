@@ -10,7 +10,7 @@
 <section class="panel"><h2>Provenance links</h2>{% for link in links %}<p>{{ link.kind }} · {{ link.target_id }} · {{ link.provenance }} · {{ link.at }}</p>{% else %}<p>No linked decision or external execution evidence.</p>{% endfor %}</section>
 {% for run in decisions %}<section class="panel"><h2>Governed decision · <a href="/decisions/{{ run.id }}">{{ run.id }}</a></h2>
 {% if run.integrity_error %}<p>Stored decision failed integrity verification; outcome unknown.</p>{% else %}
-<p>Source {{ run.manifest.source_kind }}{% if run.manifest.source_kind == 'synthetic' %} · SYNTHETIC EXAMPLE{% endif %} · policy {{ run.manifest.policy.id }} version {{ run.manifest.policy.version }} · record head {{ run.head_hash }}</p>
+<p>Source {{ run.manifest.source_kind }}{% if run.manifest.source_kind == 'synthetic' %} · SYNTHETIC EXAMPLE{% endif %} · policy {{ run.manifest.policy.id }} version {{ run.manifest.policy.version }} · policy SHA-256 {{ run.policy_sha256 }} · record head {{ run.head_hash }}</p>
 <p>Decision {{ run.decision }} · execution state {{ run.state }} · entries {{ run.entry_count }}. A simulated outcome does not imply an external action.</p>
 <h3>Agents, evidence and disagreement</h3>{% for p in run.manifest.participants %}<p>{{ p.id }} · {{ p.identity_provenance }}</p>{% endfor %}
 {% for e in run.manifest.evidence %}<p>{{ e.id }} · SHA-256 {{ e.sha256 }} · {{ e.label }}</p>{% endfor %}

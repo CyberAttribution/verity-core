@@ -11,7 +11,7 @@ def coordinator():
     return Coordinator(os.environ.get("NODE_UI_PRODUCT_DB") or os.environ.get("NODE_UI_COORDINATOR_DB", "session-data/product-work.db"))
 
 
-def guidance(work, *, reachable=None, heartbeat=None, now=None):
+def guidance(work, *, reachable=None, heartbeat=None, active_request=False, now=None):
     now=time.time() if now is None else now
     spec=json.loads(work["spec"])
     state=work["state"]
@@ -25,6 +25,9 @@ def guidance(work, *, reachable=None, heartbeat=None, now=None):
     elif state=="awaiting_review":
         display="awaiting review"; reason="Output exists but independent acceptance is pending."
         action="Review the output against the saved acceptance criteria."
+    elif state=="working" and active_request:
+        display="working"; reason="A submitted request owns the task; outcome is pending."
+        action="Observe the request and preserve uncertainty if contact is lost."
     elif state=="working" and now-work["updated"]>300:
         display="blocked"; reason="No recorded task progress for more than five minutes; this does not establish a runtime failure."
         action="Inspect the request and checkpoint before a scoped follow-up."
@@ -54,7 +57,9 @@ def records(snapshot, participants=(), now=None):
         spec=json.loads(work["spec"])
         p=agents.get(spec["agent_id"])
         reach=None if p is None else p["status"]=="Active"
-        result.append(guidance(work,reachable=reach,heartbeat=p.get("last_seen_utc") if p else None,now=now))
+        linked={x["task_id"] for x in snapshot["work_sources"]+snapshot["continuations"] if x["workflow_id"]==work["id"]}
+        active=any(x["id"] in linked and x["state"] in {"submitted","acknowledged"} for x in snapshot["tasks"])
+        result.append(guidance(work,reachable=reach,heartbeat=p.get("last_seen_utc") if p else None,active_request=active,now=now))
     return result
 
 
@@ -62,17 +67,25 @@ CAPABILITIES={"glm-review":{"observe":True,"submit_new_request":True,"resume_con
                              "retrieve_remote_status":False,"pause_remote":False,"cancel_remote":False}}
 
 
-def attention(snapshot, *, endpoint_reachable=None):
+def attention(snapshot, *, endpoint_reachable=None, participants=(), now=None):
     """Explain blocked work from saved gates, never from utilization or self-assessment."""
     issues=[]
+    now=time.time() if now is None else now
     control=snapshot["control"]
     tasks={x["id"]:x for x in snapshot["tasks"]}
     def add(issue_id,cause,link): issues.append({"id":issue_id,"cause":cause,"link":link})
     for w in snapshot["work_items"]:
         state=w["state"]
+        if state=="working" and now-w["updated"]>300:
+            linked={x["task_id"] for x in snapshot["work_sources"]+snapshot["continuations"] if x["workflow_id"]==w["id"]}
+            if not any(t["id"] in linked and t["state"] in {"submitted","acknowledged"} for t in snapshot["tasks"]):
+                add("stalled:"+w["id"],"No recorded task progress for more than five minutes; inspect the workflow","/workflows/"+w["id"])
         if state in {"awaiting_approval","blocked","failed","unknown"}:
             add("work:"+w["id"],{"awaiting_approval":"Missing approval", "blocked":"Blocked work dependency or gate",
                  "failed":"Recorded work failure", "unknown":"Work outcome unresolved"}[state],"/workflows/"+w["id"])
+    for p in participants:
+        if p["status"]=="Recently disconnected":
+            add("agent:"+p["agent_id"],"Runtime contact lost; task outcome remains unknown","/agents")
     for task in snapshot["tasks"]:
         if task["state"]=="unresolved": add("request:"+task["id"],"Submission or observation unresolved; reconcile before retry","/workflows")
         elif task["state"]=="failed": add("request:"+task["id"],"Failed request (finish "+str(task["finish_reason"] or "unknown")+")","/workflows")
@@ -90,6 +103,8 @@ def attention(snapshot, *, endpoint_reachable=None):
                    "Queue exhausted: no eligible approved request")
             if snapshot["worker"]["state"]=="active" and endpoint_reachable is True:
                 cause+="; worker and endpoint are reachable, but no task may be dispatched"
+            if control["rate"]>0:
+                cause+="; paid compute continues until provider termination is separately confirmed"
             add("queue:no-eligible",cause,"/workflows?attention=1")
     history={}
     for e in snapshot.get("attention_history",[]): history[e["issue_id"]]=e

@@ -92,6 +92,8 @@ def validate_event(event):
         raise ValueError("Request requires a valid state")
     if event["kind"] == "result" and data.get("finish_reason") not in {"stop", "length", "error", "unknown"}:
         raise ValueError("Result requires a finish reason")
+    if event["kind"] == "result" and (data.get("state") not in {"completed", "failed"} or event["source"] != "model_server"):
+        raise ValueError("Result requires a model-server observation and valid state")
     if event["kind"] == "outcome":
         if not data.get("task_id") or data.get("state") not in OUTCOMES:
             raise ValueError("Outcome requires task and valid state")

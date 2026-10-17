@@ -167,6 +167,8 @@ def test_outcome_chain_requires_completed_result_and_separate_review(tmp_path):
     db = SessionStore(tmp_path / "outcomes.db")
     with pytest.raises(ValueError, match="separate outcome"):
         validate_event(event("health-claimed-verified", "task", "model_server", {"task_id": "r1", "title": "Review", "scope": "gpu", "state": "verified"}))
+    with pytest.raises(ValueError, match="model-server observation"):
+        validate_event(event("self-reported", "result", "operator", {"task_id": "r1", "state": "completed", "finish_reason": "stop"}))
     db.create(IDENTITY)
     sid = IDENTITY["id"]
     db.append(sid, event("task", "task", "operator", {"task_id": "r1", "title": "Review", "scope": "gpu", "state": "ready"}))

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Development Session{% endblock %}
+{% block content %}
+<h1>{{ record.identity.id }}</h1><p>{{ record.identity.purpose }}</p>
+<p><a class="btn btn-ghost" href="/sessions/{{ record.identity.id }}/export.json">Export JSON</a></p>
+<section class="panel"><h2>Recovery summary</h2><p>{{ view.summary }}</p>
+{% for alert in view.alerts %}<p class="alert alert-bad">{{ alert }}</p>{% endfor %}
+<div class="kv-grid">
+<div class="kv"><span>Provider / connection</span><code>{{ view.provider }} / {{ view.connection }}</code></div>
+<div class="kv"><span>Model / activity</span><code>{{ view.model }} / {{ view.activity }}</code></div>
+<div class="kv"><span>Last contact</span><code>{{ view.last_contact or 'Unknown' }}</code></div>
+<div class="kv"><span>Instance / type / region</span><code>{{ view.provider_details.instance_id or 'Unknown' }} · {{ view.provider_details.instance_type or 'Unknown' }} · {{ view.provider_details.region or 'Unknown' }}</code></div>
+<div class="kv"><span>Macs</span><code>{{ record.identity.macs | join(', ') }}</code></div>
+<div class="kv"><span>Branch / commits</span><code>{{ record.identity.branch }} · {{ record.identity.commits | join(', ') }}</code></div>
+<div class="kv"><span>Rate / start</span><code>{{ view.billing.rate if view.billing.rate is defined else 'Unknown' }} {{ view.billing.currency or '' }}/hour · {{ view.billing.billing_start if view.billing.billing_start is defined else 'Unknown' }}</code></div>
+<div class="kv"><span>Elapsed / estimate</span><code>{{ view.elapsed_seconds if view.elapsed_seconds is not none else 'Unknown' }} seconds · {{ view.estimated_charge if view.estimated_charge is not none else 'Unknown' }}</code></div>
+<div class="kv"><span>Provider charge</span><code>{{ view.reported_charge if view.reported_charge is not none else 'Not reported' }}</code></div>
+<div class="kv"><span>Ceiling / exclusions</span><code>{{ view.billing.ceiling if view.billing.ceiling is defined else 'Unknown' }} · {{ view.billing.exclusions or 'Unspecified' }}</code></div>
+<div class="kv"><span>Shutdown requested / confirmed</span><code>{{ view.shutdown_requested }} / {{ view.termination_confirmed }}</code></div>
+<div class="kv"><span>Retained billable resources</span><code>{{ view.retained_resources | length }}</code></div>
+</div></section>
+<section class="panel"><h2>Tasks</h2>{% for task in view.tasks %}<p>{{ task.scope or 'unknown scope' }} · {{ task.title }} · reported {{ task.state }} ({{ task.source }}){% if task.run_id %} · <a href="/monitor/runs/{{ task.run_id }}">Agent run</a>{% endif %}{% if task.action_id %} · <a href="/report-actions/{{ task.action_id }}">Governed action</a>{% endif %} · {{ task.verification or 'verification unreported' }}</p>{% else %}<p>No assigned tasks observed.</p>{% endfor %}</section>
+<section class="panel"><h2>Observation history</h2><p>Corrections are appended; earlier observations remain visible.</p>
+{% for e in record.events %}<p><code>{{ e.at }} · {{ e.source }} · {{ e.kind }} · {{ e.id }}</code><br>{{ e.data | tojson }}</p>{% else %}<p>No observations.</p>{% endfor %}</section>
+{% endblock %}

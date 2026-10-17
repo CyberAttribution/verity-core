@@ -1,0 +1,90 @@
+import tempfile
+import time
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from apps.node.swarmtracker_node_ui.sessions import SessionStore, derive, validate_event
+
+
+IDENTITY = {"id": "lambda-20261017", "purpose": "Sessions pilot", "provider": "Lambda", "macs": ["M1", "M2"], "branch": "glm/real-openclaw-action-v0.1", "commits": ["68d66dc"]}
+
+
+def event(eid, kind, source, data, at=None):
+    return {"id": eid, "kind": kind, "source": source, "at": at or time.time(), "data": data}
+
+
+def test_append_history_restart_and_conflicting_id():
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "sessions.db"
+        first = SessionStore(path)
+        first.create(IDENTITY)
+        observation = event("p1", "provider", "provider_console", {"state": "running", "instance_id": "i-123"})
+        assert first.append(IDENTITY["id"], observation)
+        assert not SessionStore(path).append(IDENTITY["id"], observation)
+        with pytest.raises(ValueError, match="Conflicting"):
+            first.append(IDENTITY["id"], {**observation, "data": {"state": "terminated"}})
+        first.append(IDENTITY["id"], event("p2", "provider", "provider_console", {"state": "stopping"}))
+        record = SessionStore(path).get(IDENTITY["id"])
+        assert [e["id"] for e in record["events"]] == ["p1", "p2"]
+        assert derive(record)["provider"] == "stopping"
+        assert derive(record)["provider_details"]["instance_id"] == "i-123"
+
+
+def test_empty_billing_blocked_ssh_download_local_work_and_stale():
+    t = time.time()
+    events = [event("p", "provider", "provider_console", {"state": "running"}, t - 40),
+              event("b", "billing", "provider_console", {"rate": 22.32, "currency": "USD", "billing_start": t - 3600, "ceiling": 110}, t - 40),
+              event("c", "connection", "ssh", {"state": "blocked"}, t - 30),
+              event("l", "task", "operator", {"task_id": "mac", "title": "Local suite", "scope": "local", "state": "running"}, t - 25)]
+    record = {"identity": IDENTITY, "events": [dict(e, received=t - 20) for e in events]}
+    view = derive(record, now=t)
+    assert view["model"] == "unknown" and view["activity"] != "active"
+    assert view["estimated_charge"] == pytest.approx(22.32, abs=.01)
+    assert view["reported_charge"] is None
+    assert any("no recent GPU" in a for a in view["alerts"])
+    record["events"].append(dict(event("inv", "inventory", "ssh", {"checked": True, "models": []}, t), received=t))
+    assert derive(record, now=t)["model"] == "absent"
+    record["events"].append(dict(event("dl", "model", "model_server", {"state": "downloading", "download_bytes": 200}, t), received=t + .1))
+    assert derive(record, now=t + .2)["model"] == "downloading"
+    record["events"].append(dict(event("load", "model", "model_server", {"state": "loading"}, t), received=t + .2))
+    assert derive(record, now=t + .3)["model"] == "loading"
+    assert derive(record, now=t + 600)["model"] == "unknown"
+    assert derive(record, now=t + 600)["stale"]
+
+
+def test_request_verification_and_termination_with_retained_resource():
+    t = time.time()
+    entries = [event("p", "provider", "provider_api", {"state": "running"}, t - 30),
+               event("b", "billing", "provider_console", {"rate": 22.32, "currency": "USD", "billing_start": t - 3600, "ceiling": 110}, t - 30),
+               event("task", "task", "operator", {"task_id": "review", "title": "Review", "scope": "gpu", "state": "running"}, t - 20),
+               event("req", "request", "model_server", {"task_id": "review", "state": "running", "request_id": "r-1"}, t - 10)]
+    record = {"identity": IDENTITY, "events": [dict(e, received=e["at"]) for e in entries]}
+    assert derive(record, now=t)["activity"] == "active"
+    record["events"].append(dict(event("truncated", "result", "model_server", {"task_id": "review", "state": "completed", "finish_reason": "length"}, t), received=t))
+    assert derive(record, now=t)["tasks"][0]["state"] == "incomplete output"
+    record["events"].extend([dict(event("done", "task", "operator", {"task_id": "review", "title": "Review", "scope": "gpu", "state": "verified", "output": "review.json", "verification": "tests passed"}, t), received=t),
+                             dict(event("complete", "result", "model_server", {"task_id": "review", "state": "completed", "finish_reason": "stop"}, t), received=t),
+                             dict(event("stop", "shutdown", "operator", {"requested": True}, t), received=t)])
+    assert derive(record, now=t)["shutdown_requested"] and not derive(record, now=t)["termination_confirmed"]
+    record["events"].extend([dict(event("confirm", "shutdown", "provider_console", {"confirmed": True}, t + 15), received=t + 15),
+                             dict(event("volume", "resource", "provider_console", {"name": "volume", "state": "attached", "billable": True}, t + 16), received=t + 16)])
+    view = derive(record, now=t + 3600)
+    assert view["termination_confirmed"] and view["provider"] == "terminated"
+    assert view["estimated_charge"] == pytest.approx(22.41, abs=.01)
+    assert view["retained_resources"][0]["name"] == "volume"
+    with pytest.raises(ValueError, match="provider confirmation"):
+        validate_event(event("bad", "shutdown", "operator", {"confirmed": True}))
+
+
+def test_read_only_sessions_navigation():
+    import sys
+    sys.path.insert(0, "apps/node")
+    from swarmtracker_node_ui.app import app
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.get("/sessions")
+    assert response.status_code == 200
+    assert "Read-only records" in response.text
+    assert 'href="/sessions"' in response.text
+    assert client.post("/sessions").status_code == 405

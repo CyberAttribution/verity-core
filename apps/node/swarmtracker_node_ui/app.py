@@ -24,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import adapters, analysis, canonical_case, config, core_bridge
 from . import governance, keel_events, keel_policy, ledger, media_runner
-from . import agents, governed_analysis, providers, decision_routes, monitoring, local_activity, report_routes
+from . import agents, governed_analysis, providers, decision_routes, monitoring, local_activity, report_routes, sessions
 from . import openclaw_client as oc
 from . import store as store_mod
 
@@ -2057,6 +2057,7 @@ decision_routes.install(app, render, base_ctx, GENERIC_JOBS)
 
 # Development telemetry is observational and cannot authorize execution.
 monitoring.install(app, render, base_ctx)
+sessions.install(app, render, base_ctx)
 report_routes.install(app, render, base_ctx)
 
 from . import setup_routes

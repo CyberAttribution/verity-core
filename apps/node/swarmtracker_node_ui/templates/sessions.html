@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Development Sessions{% endblock %}
+{% block content %}
+<h1>Sessions</h1>
+<p>Read-only records of provider rentals and associated local work. Unknown means no fresh observation was received.</p>
+{% for identity, view in sessions %}
+<section class="panel"><div class="panel-head"><h2><a href="/sessions/{{ identity.id }}">{{ identity.id }}</a></h2></div>
+<p>{{ identity.purpose }} · {{ identity.provider }}</p>
+<div class="kv-grid">
+<div class="kv"><span>Provider</span><code>{{ view.provider }}</code></div>
+<div class="kv"><span>Model</span><code>{{ view.model }}</code></div>
+<div class="kv"><span>GPU request activity</span><code>{{ view.activity }}</code></div>
+<div class="kv"><span>Estimated accrued charge</span><code>{{ view.estimated_charge if view.estimated_charge is not none else 'Unknown' }} {{ view.billing.currency or '' }}</code></div>
+</div>{% for alert in view.alerts %}<p class="alert alert-bad">{{ alert }}</p>{% endfor %}
+</section>
+{% else %}<p class="empty">No session records have been imported.</p>{% endfor %}
+{% endblock %}

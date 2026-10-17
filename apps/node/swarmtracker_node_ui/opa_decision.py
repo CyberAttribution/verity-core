@@ -60,10 +60,11 @@ def local_opa(input_document, endpoint="http://127.0.0.1:8181/v1/data/verity/all
 
 def execute_if_allowed(document, policy_bytes, action, evaluator=None, keel_approved=False,
                        ledger=None, policy_version=None):
+    if ledger is None:
+        raise PermissionError("Decision ledger required")
     decision=decide(document,policy_bytes,evaluator)
-    if ledger is not None:
-        # Fail closed if evidence cannot be stored, including on an allow.
-        decision["record_id"]=ledger.record(decision,policy_version,keel_approved)
+    # Fail closed if evidence cannot be stored, including on an allow.
+    decision["record_id"]=ledger.record(decision,policy_version,keel_approved)
     if not keel_approved or not decision["allow"]:
         raise PermissionError(decision["reason"] if keel_approved else "Keel approval required")
     return action(),decision

@@ -111,3 +111,16 @@ def test_collector_crash_restart_dedupes_and_alerts(tmp_path):
     pending.write_text(json.dumps(payload))
     collect_once(inbox, SessionStore(tmp_path / "session.db"))
     assert len(db.get(IDENTITY["id"])["events"]) == 1
+
+
+@pytest.mark.parametrize("kind,data", [
+    ("task", {"state": "running", "scope": "gpu"}),
+    ("request", {"state": "running"}),
+    ("result", {"task_id": "x", "state": "completed"}),
+    ("inventory", {"checked": "no", "models": []}),
+    ("resource", {"billable": True}),
+    ("billing", {"billing_start": -1}),
+])
+def test_invalid_observations_fail_before_storage(kind, data):
+    with pytest.raises(ValueError):
+        validate_event(event("bad", kind, "operator", data))

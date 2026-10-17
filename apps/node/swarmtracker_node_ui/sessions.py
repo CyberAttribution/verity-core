@@ -69,10 +69,24 @@ def validate_event(event):
         raise ValueError("Invalid model state")
     if event["kind"] == "task" and data.get("state") not in TASK_STATES:
         raise ValueError("Invalid task state")
+    if event["kind"] == "task" and (not data.get("task_id") or not data.get("title") or data.get("scope") not in {"gpu", "local"}):
+        raise ValueError("Task requires identity, title and scope")
+    if event["kind"] in {"request", "result"} and not data.get("task_id"):
+        raise ValueError("Request or result requires a task ID")
+    if event["kind"] == "resource" and not data.get("name"):
+        raise ValueError("Resource requires a name")
+    if event["kind"] == "model" and data.get("state") not in MODEL_STATES:
+        raise ValueError("Model requires a valid state")
+    if event["kind"] == "request" and data.get("state") not in {"running", "completed", "failed"}:
+        raise ValueError("Request requires a valid state")
+    if event["kind"] == "result" and data.get("finish_reason") not in {"stop", "length", "error", "unknown"}:
+        raise ValueError("Result requires a finish reason")
     if event["kind"] == "inventory" and not isinstance(data.get("checked"), bool):
         raise ValueError("Inventory requires successful-check flag")
     if event["kind"] == "billing" and "rate" in data and (not isinstance(data["rate"], (int, float)) or isinstance(data["rate"], bool) or not 0 <= data["rate"] <= 100000):
         raise ValueError("Invalid rate")
+    if event["kind"] == "billing" and "billing_start" in data and (not isinstance(data["billing_start"], (int, float)) or isinstance(data["billing_start"], bool) or not 0 < data["billing_start"] < 4102444800):
+        raise ValueError("Invalid billing start")
     if event["kind"] == "shutdown" and data.get("confirmed") and event["source"] not in {"provider_api", "provider_console"}:
         raise ValueError("Termination requires provider confirmation")
     return event

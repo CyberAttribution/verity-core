@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from apps.node.swarmtracker_node_ui.session_coordinator import Coordinator, MODEL
+from apps.node.swarmtracker_node_ui.session_coordinator import Coordinator, MODEL, _NoRedirect, glm_review
 from apps.node.swarmtracker_node_ui.sessions import SessionStore,derive
 
 
@@ -41,6 +41,18 @@ def test_uncertain_restart_not_replayed(tmp_path):
     assert c.run_one("new") is None
     assert c.snapshot()["tasks"][0]["state"] == "unresolved"
     assert not calls
+
+
+def test_same_owner_stale_restart_and_redirect_refusal(tmp_path):
+    c=Coordinator(tmp_path/"q.db",adapter=lambda s,r: (_ for _ in ()).throw(AssertionError("replayed")))
+    c.configure(rate=1,start=time.time()-5,ceiling=100)
+    c.enqueue(spec("one"));c.control("running")
+    c.claim("reused")
+    with c.db() as db: db.execute("UPDATE control SET heartbeat=0")
+    assert c.run_one("reused") is None
+    assert c.snapshot()["tasks"][0]["state"] == "unresolved"
+    assert _NoRedirect().redirect_request(None,None,302,"redirect",{},"https://example.com") is None
+    with pytest.raises(ValueError): glm_review(spec("safe"),"request",endpoint="http://127.0.0.1:18001/v1/chat/completions?forward=https://example.com")
 
 
 def test_truncation_pause_budget_and_failure(tmp_path):

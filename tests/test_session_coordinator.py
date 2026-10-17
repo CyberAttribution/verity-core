@@ -1,6 +1,8 @@
 import json
 import time
 import threading
+import multiprocessing
+import os
 
 import pytest
 
@@ -136,3 +138,58 @@ def test_gpu_samples_stale_without_outcome(tmp_path):
     view=derive(s.get("sample"),now=at+1000,stale_after=1)
     assert view["gpu_samples"][0]["state"] == "stale"
     assert view["tasks"] == []
+
+
+def _crash_after_submit(path):
+    worker=Coordinator(path)
+    worker.register_worker("crashed",os.getpid())
+    worker.claim("crashed")  # Request is durable, but network outcome is ambiguous.
+    os._exit(27)
+
+
+def test_unexpected_exit_stale_status_and_safe_operator_recovery(tmp_path):
+    path=tmp_path/"crash.db"
+    now=[time.time()]
+    c=Coordinator(path,clock=lambda:now[0])
+    c.configure(rate=1,start=now[0]-1,ceiling=100)
+    c.enqueue(spec("ambiguous"))
+    c.enqueue(spec("eligible"))
+    c.control("running")
+    child=multiprocessing.Process(target=_crash_after_submit,args=(path,))
+    child.start();child.join(5)
+    assert child.exitcode == 27
+    assert c.snapshot()["control"]["mode"] == "running"
+    assert c.worker_status()["state"] == "stale"  # Mode is not process liveness.
+    assert c.snapshot()["tasks"][0]["state"] == "submitted"
+    now[0]+=31
+    dispatched=[]
+    recovered=Coordinator(path,adapter=lambda s,r: (dispatched.append(s["id"]) or
+                    {"request_id":r,"content":"review","finish_reason":"stop"}),clock=lambda:now[0])
+    recovered.register_worker("recovered",os.getpid())
+    assert recovered.run_one("recovered") == "eligible"
+    assert dispatched == ["eligible"]
+    assert [x["state"] for x in recovered.snapshot()["tasks"][:2]] == ["unresolved","completed"]
+    recovered.unregister_worker("recovered")
+    assert recovered.worker_status()["state"] == "absent"
+
+
+def test_stale_submission_reconciled_while_paused_and_budget_gated(tmp_path):
+    now=[1000.]
+    c=Coordinator(tmp_path/"q.db",clock=lambda:now[0],adapter=lambda s,r: (_ for _ in ()).throw(AssertionError("replay")))
+    c.configure(rate=36,start=900,ceiling=20,margin=1)
+    c.enqueue(spec("ambiguous"));c.control("running")
+    c.claim("dead")
+    c.control("paused")
+    now[0]=3000.  # Rental estimate is well beyond the dispatch budget.
+    assert c.recover_stale()
+    assert c.snapshot()["tasks"][0]["state"] == "unresolved"
+    assert c.snapshot()["control"]["mode"] == "paused"
+    assert c.run_one("new") is None
+
+
+def test_inaccessible_live_pid_is_not_replaced(tmp_path,monkeypatch):
+    c=Coordinator(tmp_path/"q.db")
+    c.register_worker("first",os.getpid())
+    monkeypatch.setattr(os,"kill",lambda pid,sig: (_ for _ in ()).throw(PermissionError()))
+    assert c.worker_status()["state"] == "active"
+    with pytest.raises(RuntimeError): c.register_worker("second",os.getpid())

@@ -20,7 +20,7 @@ except ModuleNotFoundError:  # Isolated approved worker bundle on the MacBook.
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument("action",choices=("configure","enqueue","resume","pause","stop","run","serve","status","verify","reconcile","retry"))
+    p.add_argument("action",choices=("configure","enqueue","resume","pause","stop","run","serve","status","verify","reject","reconcile","retry"))
     p.add_argument("args",nargs="*")
     a=p.parse_args()
     db=Coordinator(os.environ.get("NODE_UI_COORDINATOR_DB","session-data/coordinator.db"))
@@ -29,6 +29,7 @@ def main():
     elif a.action == "enqueue": db.enqueue(json.loads(Path(a.args[0]).read_text()))
     elif a.action in {"resume","pause","stop"}: db.control({"resume":"running","pause":"paused","stop":"stopped"}[a.action])
     elif a.action == "verify": db.verify(*a.args)
+    elif a.action == "reject": db.reject_review(*a.args)
     elif a.action == "reconcile": db.reconcile(*a.args)
     elif a.action == "retry": db.retry_confirmed_not_executed(*a.args)
     elif a.action == "run":
@@ -37,19 +38,26 @@ def main():
             pass
     elif a.action == "serve":
         owner=uuid.uuid4().hex
-        idle_since=time.monotonic()
-        while True:
-            snapshot=db.snapshot()
-            control=snapshot["control"]
-            if not control or control["mode"] == "stopped" or snapshot["estimated_charge"] >= control["ceiling"]-control["margin"]:
-                break
-            if control["mode"] == "running" and db.run_one(owner):
-                idle_since=time.monotonic()
-                continue
-            if time.monotonic()-idle_since >= 600:
-                break  # No eligible work; do not hold an idle paid instance open indefinitely.
-            time.sleep(5)
-    print(json.dumps(db.snapshot(),indent=2))
+        db.register_worker(owner,os.getpid())
+        try:
+            while True:
+                db.worker_heartbeat(owner)
+                db.recover_stale()
+                snapshot=db.snapshot()
+                control=snapshot["control"]
+                if not control or control["mode"] == "stopped" or snapshot["estimated_charge"] >= control["ceiling"]-control["margin"]:
+                    break
+                if control["mode"] == "running" and db.run_one(owner):
+                    continue
+                time.sleep(5)
+        finally:
+            db.unregister_worker(owner)
+    snapshot=db.snapshot()
+    if a.action == "status":
+        print(json.dumps({"control":snapshot["control"],"worker":snapshot["worker"],"estimated_charge":snapshot["estimated_charge"],
+                          "tasks":[{"id":x["id"],"state":x["state"],"finish_reason":x["finish_reason"]} for x in snapshot["tasks"]]},indent=2))
+    else:
+        print(json.dumps(snapshot,indent=2))
 
 
 if __name__ == "__main__": main()

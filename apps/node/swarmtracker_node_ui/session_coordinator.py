@@ -10,6 +10,7 @@ import urllib.request
 import urllib.parse
 import uuid
 import threading
+import os
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -47,6 +48,8 @@ class Coordinator:
                   verifier TEXT, evidence TEXT, updated REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS transitions (seq INTEGER PRIMARY KEY AUTOINCREMENT,
                   task_id TEXT NOT NULL, at REAL NOT NULL, state TEXT NOT NULL, detail TEXT);
+                CREATE TABLE IF NOT EXISTS worker_process (id INTEGER PRIMARY KEY CHECK(id=1),
+                  token TEXT NOT NULL, pid INTEGER NOT NULL, heartbeat REAL NOT NULL, current_task TEXT);
             """)
 
     @contextmanager
@@ -110,6 +113,52 @@ class Coordinator:
     def _budget(self, control):
         return max(0,self.clock()-control["start"])*control["rate"]/3600
 
+    def _worker_active(self, row):
+        try:
+            os.kill(row["pid"],0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True  # An inaccessible PID may still own the worker; fail closed.
+        return 0 <= self.clock()-row["heartbeat"] < 30
+
+    def worker_status(self):
+        with self.db() as db:
+            row=db.execute("SELECT * FROM worker_process WHERE id=1").fetchone()
+        if row is None:
+            return {"state":"absent","pid":None,"heartbeat":None,"current_task":None}
+        return {**dict(row),"state":"active" if self._worker_active(row) else "stale"}
+
+    def register_worker(self, token, pid):
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT * FROM worker_process WHERE id=1").fetchone()
+            if row and row["token"] != token and self._worker_active(row):
+                raise RuntimeError("Another live worker owns this coordinator")
+            db.execute("INSERT OR REPLACE INTO worker_process VALUES (1,?,?,?,NULL)",(token,pid,self.clock()))
+
+    def worker_heartbeat(self, token):
+        with self.db() as db:
+            cursor=db.execute("UPDATE worker_process SET heartbeat=? WHERE id=1 AND token=?",(self.clock(),token))
+            if cursor.rowcount != 1:
+                raise RuntimeError("Worker ownership lost")
+
+    def unregister_worker(self, token):
+        with self.db() as db:
+            db.execute("DELETE FROM worker_process WHERE id=1 AND token=?",(token,))
+
+    def recover_stale(self):
+        """Classify stale in-flight work without lifting pause or budget gates."""
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            c=db.execute("SELECT owner,heartbeat FROM control WHERE id=1").fetchone()
+            if not c or not c["owner"] or self.clock()-(c["heartbeat"] or 0) < 30:
+                return False
+            for row in db.execute("SELECT id FROM tasks WHERE state IN ('submitted','acknowledged')"):
+                self._transition(db,row["id"],"unresolved","Stale owner; remote execution uncertain; no replay")
+            db.execute("UPDATE control SET owner=NULL,heartbeat=NULL WHERE id=1")
+            return True
+
     def claim(self, owner):
         owner = owner + ":" + self._instance_id
         with self.db() as db:
@@ -130,7 +179,9 @@ class Coordinator:
                     request_id=uuid.uuid4().hex
                     db.execute("UPDATE tasks SET request_id=?,attempts=attempts+1 WHERE id=?",(request_id,row["id"]))
                     self._transition(db,row["id"],"submitted","Request persisted before dispatch: "+request_id)
+                    db.execute("UPDATE worker_process SET current_task=? WHERE token=?",(row["id"],owner.split(":")[0]))
                     return dict(spec=spec,request_id=request_id)
+            db.execute("UPDATE control SET owner=NULL,heartbeat=NULL WHERE owner=? AND NOT EXISTS (SELECT 1 FROM tasks WHERE state IN ('submitted','acknowledged'))",(owner,))
             return None
 
     def heartbeat(self, owner):
@@ -141,6 +192,7 @@ class Coordinator:
             if not c or c["owner"] != owner or c["mode"] != "running" or self._budget(c) >= c["ceiling"]-c["margin"]:
                 return False
             db.execute("UPDATE control SET heartbeat=? WHERE id=1",(self.clock(),))
+            db.execute("UPDATE worker_process SET heartbeat=? WHERE token=?",(self.clock(),owner.split(":")[0]))
             return True
 
     def run_one(self, owner):
@@ -154,6 +206,7 @@ class Coordinator:
                     db.execute("BEGIN IMMEDIATE")
                     db.execute("UPDATE control SET owner=NULL,heartbeat=NULL WHERE owner=? AND NOT EXISTS (SELECT 1 FROM tasks WHERE state IN ('submitted','acknowledged'))",
                                (owner+":"+self._instance_id,))
+                    db.execute("UPDATE worker_process SET current_task=NULL WHERE token=?",(owner,))
             finally:
                 self._run_lock.release()
 
@@ -249,10 +302,22 @@ class Coordinator:
             db.execute("UPDATE tasks SET verifier=?,evidence=? WHERE id=?",(verifier,evidence,task_id))
             self._transition(db,task_id,"independently_verified",evidence)
 
+    def reject_review(self, task_id, verifier, evidence):
+        if not verifier or not evidence:
+            raise ValueError("Review evidence required")
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT state FROM tasks WHERE id=?",(task_id,)).fetchone()
+            if not row or row[0] != "completed":
+                raise ValueError("Only complete responses can be reviewed")
+            db.execute("UPDATE tasks SET verifier=?,evidence=? WHERE id=?",(verifier,"Rejected: "+evidence,task_id))
+            db.execute("INSERT INTO transitions(task_id,at,state,detail) VALUES (?,?,?,?)",
+                       (task_id,self.clock(),"completed","Review rejected: "+evidence))
+
     def snapshot(self):
         with self.db() as db:
             c=db.execute("SELECT * FROM control WHERE id=1").fetchone()
-            return {"control":dict(c) if c else None,"estimated_charge":self._budget(c) if c else None,
+            return {"control":dict(c) if c else None,"worker":self.worker_status(),"estimated_charge":self._budget(c) if c else None,
                     "tasks":[dict(r) for r in db.execute("SELECT * FROM tasks ORDER BY seq")],
                     "transitions":[dict(r) for r in db.execute("SELECT * FROM transitions ORDER BY seq")]}
 

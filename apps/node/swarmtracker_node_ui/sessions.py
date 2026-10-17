@@ -16,11 +16,16 @@ from fastapi.responses import JSONResponse
 from . import store
 
 DB_PATH = Path(os.environ.get("NODE_UI_SESSIONS_DB", str(store.DB_PATH.with_name("development-sessions.db"))))
-KINDS = {"provider", "connection", "inventory", "model", "task", "request", "result", "contact", "billing", "shutdown", "resource", "note"}
+KINDS = {"provider", "connection", "inventory", "model", "task", "request", "result", "outcome", "contact", "billing", "shutdown", "resource", "note"}
 SOURCES = {"provider_api", "provider_console", "public_pricing", "ssh", "model_server", "local_collector", "operator", "test"}
 STATES = {"provisioning", "running", "stopping", "terminated", "unknown"}
 MODEL_STATES = {"unknown", "absent", "downloading", "downloaded", "loading", "ready", "inference", "failed"}
 TASK_STATES = {"ready", "running", "blocked", "completed", "verified"}
+OUTCOMES = {"proposed", "queued", "submitted", "acknowledged", "completed", "independently_verified", "failed", "unresolved"}
+NEXT_OUTCOME = {None: {"proposed", "queued"}, "proposed": {"queued", "submitted", "failed", "unresolved"},
+                "queued": {"submitted", "failed", "unresolved"}, "submitted": {"acknowledged", "failed", "unresolved"},
+                "acknowledged": {"completed", "failed", "unresolved"}, "completed": {"independently_verified", "failed", "unresolved"},
+                "unresolved": {"acknowledged", "completed", "failed"}, "failed": set(), "independently_verified": set()}
 
 
 def _text(value, limit=240):
@@ -49,6 +54,7 @@ def validate_event(event):
         "task": {"task_id", "title", "state", "scope", "run_id", "action_id", "commit", "test", "output", "verification"},
         "request": {"task_id", "state", "request_id", "finish_reason"},
         "result": {"task_id", "state", "output", "verification", "finish_reason"},
+        "outcome": {"task_id", "state", "result_id", "evidence", "verifier", "detail"},
         "contact": {"state"}, "billing": {"rate", "currency", "billing_start", "estimate_start_proxy", "rate_as_of", "ceiling", "reported_charge", "charge_as_of", "exclusions"},
         "shutdown": {"requested", "confirmed"}, "resource": {"name", "state", "billable"},
         "note": {"message", "corrects"},
@@ -81,6 +87,13 @@ def validate_event(event):
         raise ValueError("Request requires a valid state")
     if event["kind"] == "result" and data.get("finish_reason") not in {"stop", "length", "error", "unknown"}:
         raise ValueError("Result requires a finish reason")
+    if event["kind"] == "outcome":
+        if not data.get("task_id") or data.get("state") not in OUTCOMES:
+            raise ValueError("Outcome requires task and valid state")
+        if data["state"] in {"completed", "independently_verified"} and not data.get("result_id"):
+            raise ValueError("Completed outcome requires result ID")
+        if data["state"] == "independently_verified" and (not data.get("verifier") or not data.get("evidence") or event["source"] not in {"operator", "test", "local_collector"}):
+            raise ValueError("Independent verification requires reviewer and evidence")
     if event["kind"] == "inventory" and not isinstance(data.get("checked"), bool):
         raise ValueError("Inventory requires successful-check flag")
     if event["kind"] == "inventory" and data["checked"] and "models" not in data:
@@ -133,6 +146,19 @@ class SessionStore:
                 if existing[0] != encoded:
                     raise ValueError("Conflicting event ID")
                 return False
+            if event["kind"] == "outcome":
+                prior = [json.loads(row[0]) for row in db.execute("SELECT event FROM session_events WHERE session_id=? ORDER BY rowid", (session_id,))]
+                task_id = event["data"]["task_id"]
+                if not any(e["kind"] == "task" and e["data"].get("task_id") == task_id for e in prior):
+                    raise ValueError("Outcome has no assigned task")
+                previous = next((e["data"]["state"] for e in reversed(prior) if e["kind"] == "outcome" and e["data"]["task_id"] == task_id), None)
+                state = event["data"]["state"]
+                if state not in NEXT_OUTCOME[previous]:
+                    raise ValueError("Invalid outcome transition")
+                if state in {"completed", "independently_verified"}:
+                    result = next((e for e in prior if e["kind"] == "result" and e["id"] == event["data"]["result_id"] and e["data"].get("task_id") == task_id), None)
+                    if not result or result["data"].get("state") != "completed" or result["data"].get("finish_reason") != "stop":
+                        raise ValueError("Completed outcome requires matching complete result")
             db.execute("INSERT INTO session_events VALUES (?,?,?,?)", (session_id, event["id"], time.time(), encoded))
         return True
 
@@ -155,6 +181,7 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
     latest = {}
     accumulated = {}
     tasks = {}
+    outcomes = {}
     resources = {}
     for e in record["events"]:
         kind, data = e["kind"], e["data"]
@@ -162,6 +189,8 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
         accumulated.setdefault(kind, {}).update(data)
         if kind == "task":
             tasks[data["task_id"]] = e
+        if kind == "outcome":
+            outcomes[data["task_id"]] = e
         if kind == "resource":
             resources[data["name"]] = e
     def data(kind):
@@ -216,6 +245,11 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
     task_views = []
     for entry in tasks.values():
         item = dict(entry["data"], source=entry["source"])
+        outcome = outcomes.get(item["task_id"])
+        item["outcome"] = outcome["data"]["state"] if outcome else "unresolved"
+        item["outcome_source"] = outcome["source"] if outcome else None
+        item["outcome_evidence"] = outcome["data"].get("evidence") if outcome else None
+        item["outcome_verifier"] = outcome["data"].get("verifier") if outcome else None
         result = next((e for e in reversed(record["events"]) if e["kind"] == "result" and e["data"].get("task_id") == item["task_id"]), None)
         if result and result["data"].get("finish_reason") == "length":
             item["state"] = "incomplete output"

@@ -135,3 +135,26 @@ def test_guest_boot_proxy_is_not_labeled_provider_billing_start():
     assert view["estimate_basis"] == "guest boot proxy"
     assert view["billing"].get("billing_start") is None
     assert view["estimated_charge"] == pytest.approx(11.16, abs=.01)
+
+
+def test_outcome_chain_requires_completed_result_and_separate_review(tmp_path):
+    db = SessionStore(tmp_path / "outcomes.db")
+    db.create(IDENTITY)
+    sid = IDENTITY["id"]
+    db.append(sid, event("task", "task", "operator", {"task_id": "r1", "title": "Review", "scope": "gpu", "state": "ready"}))
+    for index, state in enumerate(("proposed", "queued", "submitted", "acknowledged")):
+        db.append(sid, event(f"o{index}", "outcome", "operator", {"task_id": "r1", "state": state}))
+    with pytest.raises(ValueError, match="matching complete result"):
+        db.append(sid, event("premature", "outcome", "operator", {"task_id": "r1", "state": "completed", "result_id": "result"}))
+    db.append(sid, event("result", "result", "model_server", {"task_id": "r1", "state": "completed", "finish_reason": "length"}))
+    with pytest.raises(ValueError, match="matching complete result"):
+        db.append(sid, event("truncated", "outcome", "operator", {"task_id": "r1", "state": "completed", "result_id": "result"}))
+    db.append(sid, event("result-stop", "result", "model_server", {"task_id": "r1", "state": "completed", "finish_reason": "stop"}))
+    db.append(sid, event("complete", "outcome", "operator", {"task_id": "r1", "state": "completed", "result_id": "result-stop"}))
+    assert derive(db.get(sid))["tasks"][0]["outcome"] == "completed"
+    with pytest.raises(ValueError, match="reviewer and evidence"):
+        db.append(sid, event("model-verified", "outcome", "model_server", {"task_id": "r1", "state": "independently_verified", "result_id": "result-stop", "verifier": "model", "evidence": "none"}))
+    reviewed = event("accepted", "outcome", "test", {"task_id": "r1", "state": "independently_verified", "result_id": "result-stop", "verifier": "independent source check", "evidence": "tests/test_sessions.py"})
+    assert db.append(sid, reviewed)
+    assert not SessionStore(tmp_path / "outcomes.db").append(sid, reviewed)
+    assert derive(db.get(sid))["tasks"][0]["outcome"] == "independently_verified"

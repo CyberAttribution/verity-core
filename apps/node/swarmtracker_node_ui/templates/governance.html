@@ -2,12 +2,7 @@
 {% block title %}Keel Governance{% endblock %}
 {% block content %}
 {% include "_decision_runs.html" %}
-<section class="panel"><div class="panel-head"><h2>Real report action proposals</h2><a href="/report-actions">Open governed reports</a></div>
-{% for action in report_actions %}
-<p><a href="/report-actions/{{ action.id }}">{{ action.manifest.task_id }}</a> · agent {{ action.manifest.agent_id }} · {{ action.state }} · fixed output {{ action.manifest.action.target }}</p>
-{% else %}<p>No imported OpenClaw report proposals.</p>{% endfor %}
-<p class="hint">These records use a fixed Verity file executor. The separate sender-block cases are simulations.</p>
-</section>
+{% include "_report_action_summary.html" %}
 {% if run %}{% include "_decision_control.html" %}{% endif %}
 
 <div class="cards">

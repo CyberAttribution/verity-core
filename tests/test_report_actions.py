@@ -196,3 +196,40 @@ def test_openclaw_request_metadata_and_response_hash_binding(tmp_path, monkeypat
     assert view["manifest"]["response_sha256"] == reply["response_sha256"]
     assert view["manifest"]["activity_run_id"].startswith("dev-20261016-openclaw-")
     assert not (tmp_path / "protected/summary.md").exists()
+
+
+def test_connected_pages_show_governed_action_and_integrity_failure(db, monkeypatch):
+    monkeypatch.setattr(report_routes, "STORE", db)
+    proposal = manifest("# Specific summary\n")
+    proposal["activity_run_id"] = "observed-run-1"
+    view = db.create(proposal)
+    client = TestClient(ui.app, base_url="http://127.0.0.1")
+    for path in ("/agents", "/governance"):
+        page = client.get(path)
+        assert page.status_code == 200
+        assert view["id"] in page.text
+        assert proposal["policy"]["id"] in page.text
+        assert "observed-run-1" in page.text
+        assert "Export linked history" in page.text
+        assert "designated file write is governed" in page.text
+    with sqlite3.connect(db.db_path) as con:
+        con.execute("UPDATE report_actions SET record=? WHERE id=?", ("{}", view["id"]))
+    for path in ("/agents", "/governance"):
+        page = client.get(path)
+        assert page.status_code == 200
+        assert "history is unavailable or failed integrity checks" in page.text
+        assert "No governed report proposals recorded here" not in page.text
+
+
+def test_report_input_directory_symlink_refused_before_runtime(tmp_path):
+    from tools.propose_openclaw_report import run
+    outside = tmp_path / "original-reports"
+    outside.mkdir()
+    (outside / "report.md").write_text("Private original report")
+    workspace = tmp_path / "isolated"
+    workspace.mkdir()
+    (workspace / "input").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="Invalid isolated workspace"):
+        run(workspace, tmp_path / "state/records.db", tmp_path / "protected", "test-model")
+    assert not (workspace / "staging").exists()
+    assert (outside / "report.md").read_text() == "Private original report"

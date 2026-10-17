@@ -1961,8 +1961,10 @@ def agents_page(request: Request):
         ctx["decision_runs"] = [{"integrity_error": True}]
     try:
         ctx["report_actions"] = report_routes.actions().recent()
+        ctx["report_action_error"] = False
     except (ValueError, sqlite3.Error, OSError):
         ctx["report_actions"] = []
+        ctx["report_action_error"] = True
     return render("agents.html", ctx)
 
 
@@ -1979,8 +1981,10 @@ def governance_page(request: Request):
         ctx["run"] = None
     try:
         ctx["report_actions"] = report_routes.actions().recent()
+        ctx["report_action_error"] = False
     except (ValueError, sqlite3.Error, OSError):
         ctx["report_actions"] = []
+        ctx["report_action_error"] = True
     ctx["keel"] = keel_policy.policy_summary()
     ctx["selftest"] = keel_policy.self_test()
     ctx["media_ledger_count"] = keel_events.count_events()

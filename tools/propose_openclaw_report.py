@@ -79,13 +79,16 @@ def render(value):
 
 
 def run(workspace, db, output_dir, model):
-    workspace = Path(workspace).resolve(strict=True)
+    workspace = Path(workspace)
+    if workspace.is_symlink():
+        raise ValueError("Workspace symlink refused")
+    workspace = workspace.resolve(strict=True)
     source = workspace / "input" / "report.md"
     staging = workspace / "staging"
     for protected in (Path(db).resolve(), Path(output_dir).resolve()):
         if protected == workspace or workspace in protected.parents:
             raise ValueError("Governed state and output must be outside agent workspace")
-    if source.is_symlink() or not source.is_file() or staging.is_symlink():
+    if not workspace.is_dir() or (workspace / "input").is_symlink() or staging.is_symlink():
         raise ValueError("Invalid isolated workspace")
     staging.mkdir(exist_ok=True)
     observer = Observer(Path(db).with_name("development-monitor.db"), model)
@@ -93,7 +96,26 @@ def run(workspace, db, output_dir, model):
     started = time.monotonic()
     observer.emit("tool_start", {"activity_id": read_activity, "operation": "read_sanitized_report",
                                  "task": "Summarize copied session report"})
-    data = source.read_bytes()
+    # Bind the read to the designated directory and regular file. Neither
+    # input nor report.md may redirect the wrapper through a symlink.
+    workspace_fd = os.open(workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        input_fd = os.open("input", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=workspace_fd)
+        try:
+            source_fd = os.open("report.md", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=input_fd)
+            try:
+                import stat
+                info = os.fstat(source_fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_SOURCE:
+                    raise ValueError("Sanitized source outside bounds")
+                with os.fdopen(source_fd, "rb", closefd=False) as f:
+                    data = f.read(MAX_SOURCE + 1)
+            finally:
+                os.close(source_fd)
+        finally:
+            os.close(input_fd)
+    finally:
+        os.close(workspace_fd)
     observer.emit("tool_finish", {"activity_id": read_activity, "status": "success",
                                   "duration_ms": (time.monotonic()-started)*1000})
     if not data or len(data) > MAX_SOURCE:

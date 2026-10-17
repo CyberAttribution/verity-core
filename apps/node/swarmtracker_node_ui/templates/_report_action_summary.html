@@ -1,0 +1,19 @@
+<section class="panel">
+  <div class="panel-head"><h2>Governed OpenClaw report actions</h2><a href="/report-actions">All records</a></div>
+  <p class="hint">OpenClaw generation and imported telemetry are observed. The designated file write is governed by Verity. These records do not establish control of other tools or same-user filesystem access.</p>
+  {% if report_action_error %}<p class="alert alert-bad">Report action history is unavailable or failed integrity checks. Its absence here is not evidence that no action was attempted.</p>{% endif %}
+  {% for action in report_actions %}
+  <article>
+    <h3><a href="/report-actions/{{ action.id }}">{{ action.manifest.task_id }}</a> · {{ action.state }}</h3>
+    <div class="kv-grid">
+      <div class="kv"><span>Agent / source</span><code>{{ action.manifest.agent_id }} · OpenClaw v0 generate</code></div>
+      <div class="kv"><span>Proposed write</span><code>{{ action.manifest.action.kind }} → {{ action.manifest.action.target }} · SHA-256 {{ action.manifest.action.sha256 }}</code></div>
+      <div class="kv"><span>Policy</span><code>{{ action.manifest.policy.id }} v{{ action.manifest.policy.version }}</code></div>
+      <div class="kv"><span>Decision / attempts / result</span><code>{{ action.decision }} · {{ action.attempts }} attempt(s) · {{ action.state }}</code></div>
+      <div class="kv"><span>Evidence</span><a href="/report-actions/{{ action.id }}/export.json">Export linked history</a></div>
+      {% if action.manifest.activity_run_id %}<div class="kv"><span>Observed model activity</span><a href="/monitor/runs/{{ action.manifest.activity_run_id }}">{{ action.manifest.activity_run_id }}</a></div>{% endif %}
+    </div>
+  </article>
+  {% else %}{% if not report_action_error %}<p>No governed report proposals recorded here.</p>{% endif %}{% endfor %}
+  <p class="hint">Sender-block decision cases elsewhere on this page are local simulations.</p>
+</section>

@@ -49,6 +49,8 @@ def main():
                     break
                 if control["mode"] == "running" and db.run_one(owner):
                     continue
+                if control["mode"] == "running" and db.schedule_followups():
+                    continue
                 time.sleep(5)
         finally:
             db.unregister_worker(owner)

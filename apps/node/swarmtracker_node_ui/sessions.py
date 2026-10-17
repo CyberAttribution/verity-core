@@ -327,7 +327,10 @@ def install(app, render, base_ctx):
         except KeyError:
             raise HTTPException(404, "Session not found")
         ctx = base_ctx(request, "sessions")
-        ctx.update(record=record, view=configured_view(record), coordinator=coordinator_view(session_id))
+        coordinator=coordinator_view(session_id)
+        from .workflows import attention
+        ctx.update(record=record, view=configured_view(record), coordinator=coordinator,
+                   attention=attention(coordinator) if coordinator else [])
         return render("session.html", ctx)
 
     @app.get("/sessions/{session_id}/coordinator.json")

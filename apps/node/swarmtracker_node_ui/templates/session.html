@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Development Session{% endblock %}
 {% block content %}
-<h1>{{ record.identity.id }}</h1><p>{{ record.identity.purpose }}</p>
+<h1>{{ record.identity.id }}</h1><p>{{ record.identity.purpose }}</p><p><a href="/workflows?session={{ record.identity.id }}">Related workflows and attention</a></p>
+<section class="panel"><h2>Session attention</h2>{% for issue in attention %}<p><a href="{{ issue.link }}">{{ issue.id }}</a> · {{ issue.cause }}{% if issue.acknowledgment %} · {{ issue.acknowledgment.status }} at {{ issue.acknowledgment.at }}{% endif %}</p>{% else %}<p>No coordinator attention item is currently derived.</p>{% endfor %}</section>
 <p><a class="btn btn-ghost" href="/sessions/{{ record.identity.id }}/export.json">Export JSON</a></p>
 <section class="panel"><h2>Recovery summary</h2><p>{{ view.summary }}</p>
 {% for alert in view.alerts %}<p class="alert alert-bad">{{ alert }}</p>{% endfor %}

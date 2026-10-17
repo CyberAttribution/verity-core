@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Workflows{% endblock %}
+{% block content %}
+<section class="panel"><div class="panel-head"><h2>Workflow detail</h2><a class="btn btn-ghost" href="/agents">Active Agents</a></div>
+<p>Saved product-work contracts and linked fixed GLM review requests. A sent request is a new conversation carrying saved context; it does not resume a remote conversation.</p>
+<h3>Session attention</h3>{% for issue in attention %}<p><a href="{{ issue.link }}">{{ issue.id }}</a> · {{ issue.cause }}{% if issue.acknowledgment %} · {{ issue.acknowledgment.status }} at {{ issue.acknowledgment.at }}{% endif %}</p>
+<form method="post" action="/workflows/attention/{{ issue.id }}"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="status" value="acknowledged"><label>Note <input name="detail" required></label><button>Acknowledge</button></form>{% else %}<p>No current attention item.</p>{% endfor %}
+<form method="get"><label>Session <input name="session" value="{{ request.query_params.get('session','') }}"></label>
+<label>Agent <input name="agent" value="{{ request.query_params.get('agent','') }}"></label>
+<label>State <input name="state" value="{{ request.query_params.get('state','') }}"></label>
+<label><input type="checkbox" name="attention" value="1" {% if request.query_params.get('attention') == '1' %}checked{% endif %}> Needs attention</label><button>Filter</button></form>
+{% if request.query_params.get('continuation') %}<p>Follow-up {{ request.query_params.get('continuation') }} persisted in the queue. Dispatch and acknowledgment remain pending.</p>{% endif %}
+{% for item in work_guidance %}<article id="{{ item.id }}"><h3><a href="/workflows/{{ item.id }}">{{ item.id }}</a> · {{ item.state }}</h3>
+<div class="kv-grid"><div class="kv"><span>Session → agent → task</span><code>{{ item.session_id }} → {{ item.agent_id }} → {{ item.id }}</code></div>
+<div class="kv"><span>Assignment</span>{{ item.purpose }}</div><div class="kv"><span>Acceptance</span>{{ item.acceptance_criteria }}</div>
+<div class="kv"><span>Checkpoint</span>{{ item.progress }}</div><div class="kv"><span>Reason</span>{{ item.reason }}</div>
+<div class="kv"><span>Next action</span>{{ item.next_action }}</div><div class="kv"><span>Evidence and time</span>{{ item.evidence }} · {{ item.evidence_at or 'none' }}</div>
+<div class="kv"><span>Approval</span>{{ item.approval }}</div><div class="kv"><span>Reachability / heartbeat</span>{{ item.reachable }} / {{ item.heartbeat or 'unknown' }}</div></div>
+{% if item.agent_id == 'glm-review' %}
+<p>GLM adapter: observe and submit new request. Remote conversation resume, remote status retrieval, pause and cancel are unsupported.</p>
+<form method="post" action="/workflows/{{ item.id }}/continue"><input type="hidden" name="operator_token" value="{{ operator_token }}">
+<label>Assigned completed source review task ID <select name="source_task" required>{% for link in work_snapshot.work_sources if link.workflow_id == item.id %}<option value="{{ link.task_id }}">{{ link.task_id }}</option>{% endfor %}</select></label><label><input type="checkbox" name="approved" value="yes" required> Confirm saved authorized scope and review gate</label>
+<button>Continue approved work</button></form>
+<form method="post" action="/workflows/{{ item.id }}/followup"><input type="hidden" name="operator_token" value="{{ operator_token }}">
+<label>Automatic follow-up <select name="mode"><option value="paused">Paused</option><option value="running">Enabled</option><option value="stopped">Stopped permanently</option></select></label>
+<label>Grace seconds <input type="number" name="grace" value="300" min="30" max="86400"></label>
+<label>Cooldown seconds <input type="number" name="cooldown" value="900" min="60" max="86400"></label>
+<label>Attempt limit <input type="number" name="limit_count" value="2" min="1" max="10"></label><button>Save follow-up setting</button></form>
+{% for setting in work_snapshot.followup_settings if setting.workflow_id == item.id %}<p>Follow-up: {{ setting.mode }} · {{ setting.attempts }}/{{ setting.limit_count }} attempts · last {{ setting.last_at or 'never' }}</p>{% endfor %}
+{% else %}<p>Direct continuation is unsupported. Copy the saved purpose, checkpoint and remaining acceptance criteria for an operator handoff.</p>{% endif %}
+<details><summary>Linked requests and transitions</summary><ul>
+{% for link in work_snapshot.continuations if link.workflow_id == item.id %}<li>{{ link.task_id }} · source {{ link.source_task }} · {{ link.created }}
+{% for task in work_snapshot.tasks if task.id == link.task_id %} · {{ task.state }} · {{ task.finish_reason or 'no finish reason' }}{% endfor %}</li>{% endfor %}
+</ul></details></article>{% else %}<p class="empty">No matching workflows.</p>{% endfor %}
+</section>{% endblock %}

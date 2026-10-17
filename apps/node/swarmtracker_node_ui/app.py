@@ -24,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import adapters, analysis, canonical_case, config, core_bridge
 from . import governance, keel_events, keel_policy, ledger, media_runner
-from . import agents, governed_analysis, providers, decision_routes, monitoring, local_activity, report_routes, sessions
+from . import agents, governed_analysis, providers, decision_routes, monitoring, local_activity, report_routes, sessions, workflows
 from . import openclaw_client as oc
 from . import store as store_mod
 
@@ -1965,7 +1965,90 @@ def agents_page(request: Request):
     except (ValueError, sqlite3.Error, OSError):
         ctx["report_actions"] = []
         ctx["report_action_error"] = True
+    try:
+        ctx["work_guidance"] = workflows.records(workflows.coordinator().snapshot(), ctx["monitor_runs"])
+    except (ValueError, sqlite3.Error, OSError):
+        ctx["work_guidance"] = []
     return render("agents.html", ctx)
+
+
+@app.get("/workflows", response_class=HTMLResponse)
+def workflows_page(request: Request):
+    decision_routes.local_request(request)
+    snapshot=workflows.coordinator().snapshot()
+    records=workflows.records(snapshot)
+    for key in ("session", "agent", "state"):
+        value=request.query_params.get(key)
+        if value: records=[r for r in records if r[{"session":"session_id","agent":"agent_id","state":"state"}[key]]==value]
+    if request.query_params.get("attention")=="1":
+        records=[r for r in records if r["state"] not in {"finished","working"}]
+    ctx=base_ctx(request,"agents")
+    ctx.update(work_guidance=records,work_snapshot=snapshot,capabilities=workflows.CAPABILITIES,
+               operator_token=decision_routes.TOKEN,attention=workflows.attention(snapshot))
+    response=render("workflows.html",ctx)
+    response.headers["Cache-Control"]="no-store"
+    return response
+
+
+@app.get("/workflows/{work_id}", response_class=HTMLResponse)
+def workflow_detail(request: Request, work_id: str):
+    from fastapi import HTTPException
+    decision_routes.local_request(request)
+    snapshot=workflows.coordinator().snapshot()
+    work=next((w for w in snapshot["work_items"] if w["id"]==work_id),None)
+    if not work: raise HTTPException(404,"Workflow not found")
+    links=[x for x in snapshot["workflow_links"] if x["workflow_id"]==work_id]
+    decisions=[]
+    for link in links:
+        if link["kind"]=="decision":
+            try: decisions.append(decision_routes.runs().get(link["target_id"]))
+            except (decision_routes.decision_runs.NotFound,ValueError):
+                decisions.append({"id":link["target_id"],"integrity_error":True})
+    ctx=base_ctx(request,"agents")
+    ctx.update(item=workflows.guidance(work),links=links,decisions=decisions,
+               requests=[t for t in snapshot["tasks"] if any(s["workflow_id"]==work_id and s["task_id"]==t["id"] for s in snapshot["work_sources"]+snapshot["continuations"])],
+               authorizations=snapshot["continuation_authorizations"],operator_token=decision_routes.TOKEN)
+    response=render("workflow_detail.html",ctx)
+    response.headers["Cache-Control"]="no-store"
+    return response
+
+
+@app.post("/workflows/{work_id}/continue")
+async def continue_workflow(request: Request, work_id: str):
+    from fastapi import HTTPException
+    form=await decision_routes.operator_form(request)
+    try:
+        task_id=workflows.coordinator().continue_work(work_id,form.get("source_task",""),approval=form.get("approved")=="yes")
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(409,str(exc)) from None
+    return RedirectResponse("/workflows?continuation="+task_id,status_code=303)
+
+
+@app.post("/workflows/{work_id}/followup")
+async def configure_workflow_followup(request: Request, work_id: str):
+    from fastapi import HTTPException
+    form=await decision_routes.operator_form(request)
+    try:
+        mode=form.get("mode","")
+        workflows.coordinator().configure_followup(work_id,mode=mode,
+            grace=int(form.get("grace","300")),cooldown=int(form.get("cooldown","900")),
+            limit_count=int(form.get("limit_count","2")))
+    except (ValueError,KeyError) as exc:
+        raise HTTPException(409,str(exc)) from None
+    return RedirectResponse("/workflows?agent=glm-review",status_code=303)
+
+
+@app.post("/workflows/attention/{issue_id:path}")
+async def acknowledge_attention(request: Request, issue_id: str):
+    from fastapi import HTTPException
+    form=await decision_routes.operator_form(request)
+    db=workflows.coordinator()
+    try:
+        active={x["id"] for x in workflows.attention(db.snapshot())}
+        db.record_attention(issue_id,form.get("status",""),form.get("detail",""),active)
+    except ValueError as exc:
+        raise HTTPException(409,str(exc)) from None
+    return RedirectResponse("/workflows?attention=1",status_code=303)
 
 
 @app.get("/governance", response_class=HTMLResponse)

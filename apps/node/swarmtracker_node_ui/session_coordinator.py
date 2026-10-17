@@ -50,6 +50,24 @@ class Coordinator:
                   task_id TEXT NOT NULL, at REAL NOT NULL, state TEXT NOT NULL, detail TEXT);
                 CREATE TABLE IF NOT EXISTS worker_process (id INTEGER PRIMARY KEY CHECK(id=1),
                   token TEXT NOT NULL, pid INTEGER NOT NULL, heartbeat REAL NOT NULL, current_task TEXT);
+                CREATE TABLE IF NOT EXISTS work_items (seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                  id TEXT UNIQUE NOT NULL, spec TEXT NOT NULL, state TEXT NOT NULL,
+                  checkpoint TEXT, evidence TEXT, updated REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS continuations (seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                  id TEXT UNIQUE NOT NULL, workflow_id TEXT NOT NULL, source_task TEXT NOT NULL,
+                  task_id TEXT UNIQUE NOT NULL, created REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS followup_settings (workflow_id TEXT PRIMARY KEY,
+                  mode TEXT NOT NULL, grace REAL NOT NULL, cooldown REAL NOT NULL,
+                  limit_count INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_at REAL);
+                CREATE TABLE IF NOT EXISTS work_sources (workflow_id TEXT NOT NULL, task_id TEXT UNIQUE NOT NULL,
+                  PRIMARY KEY(workflow_id,task_id));
+                CREATE TABLE IF NOT EXISTS continuation_authorizations (task_id TEXT PRIMARY KEY,
+                  mode TEXT NOT NULL, at REAL NOT NULL, basis TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS workflow_links (workflow_id TEXT NOT NULL, kind TEXT NOT NULL,
+                  target_id TEXT NOT NULL, provenance TEXT NOT NULL, at REAL NOT NULL,
+                  PRIMARY KEY(workflow_id,kind,target_id));
+                CREATE TABLE IF NOT EXISTS attention_history (seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                  issue_id TEXT NOT NULL, status TEXT NOT NULL, at REAL NOT NULL, detail TEXT NOT NULL);
             """)
 
     @contextmanager
@@ -95,6 +113,149 @@ class Coordinator:
                     raise ValueError("Unknown or cyclic dependency")
             db.execute("INSERT INTO tasks (id,spec,state,updated) VALUES (?,?,'queued',?)", (spec["id"],encoded,self.clock()))
             self._transition(db,spec["id"],"queued","Explicit task contract persisted")
+
+    def enqueue_work(self, spec):
+        """Persist authorized product work; only fixed review tasks can be dispatched."""
+        required={"id","purpose","dependencies","authorization","acceptance_criteria","expected_outputs","validation_gates","agent_id","session_id"}
+        if not isinstance(spec,dict) or set(spec)!=required or not isinstance(spec["id"],str) or not spec["id"].isalnum() or len(spec["id"])>80:
+            raise ValueError("Invalid work contract")
+        if spec["authorization"] != "explicit-product-development" or not isinstance(spec["dependencies"],list):
+            raise ValueError("Unapproved work")
+        for field in required-{"dependencies"}:
+            if not isinstance(spec[field],str) or not spec[field].strip() or len(spec[field])>4000:
+                raise ValueError("Invalid work field")
+        encoded=json.dumps(spec,sort_keys=True,allow_nan=False)
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for dep in spec["dependencies"]:
+                if not isinstance(dep,str) or dep==spec["id"] or not db.execute("SELECT 1 FROM work_items WHERE id=?",(dep,)).fetchone():
+                    raise ValueError("Unknown work dependency")
+            db.execute("INSERT INTO work_items(id,spec,state,updated) VALUES (?,?,'queued',?)",(spec["id"],encoded,self.clock()))
+
+    def update_work(self, work_id, state, *, checkpoint=None, evidence=None):
+        if state not in {"working","awaiting_review","awaiting_approval","blocked","paused","failed","finished","unknown"}:
+            raise ValueError("Invalid work state")
+        if checkpoint and not evidence:
+            raise ValueError("Checkpoint requires independent evidence")
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT state FROM work_items WHERE id=?",(work_id,)).fetchone()
+            if not row: raise KeyError(work_id)
+            if row["state"]=="finished" and state!="finished":
+                raise ValueError("Finished work is terminal; create a successor")
+            if state=="finished" and (not checkpoint or not evidence):
+                raise ValueError("Finished work requires checkpoint and independent evidence")
+            db.execute("UPDATE work_items SET state=?,checkpoint=COALESCE(?,checkpoint),evidence=COALESCE(?,evidence),updated=? WHERE id=?",
+                       (state,checkpoint,evidence,self.clock(),work_id))
+
+    def bind_source(self, work_id, task_id):
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if not db.execute("SELECT 1 FROM work_items WHERE id=?",(work_id,)).fetchone() or not db.execute("SELECT 1 FROM tasks WHERE id=?",(task_id,)).fetchone():
+                raise ValueError("Unknown workflow or task")
+            db.execute("INSERT INTO work_sources VALUES (?,?)",(work_id,task_id))
+
+    def link_evidence(self, work_id, kind, target_id, provenance):
+        if kind not in {"decision","session_task","monitor_run","report_action"} or not target_id or not provenance:
+            raise ValueError("Invalid provenance link")
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if not db.execute("SELECT 1 FROM work_items WHERE id=?",(work_id,)).fetchone(): raise KeyError(work_id)
+            db.execute("INSERT INTO workflow_links VALUES (?,?,?,?,?)",(work_id,kind,target_id,provenance,self.clock()))
+
+    def record_attention(self, issue_id, status, detail, active_ids):
+        if status not in {"acknowledged","resolved"} or not detail or len(detail)>1000:
+            raise ValueError("Invalid attention history")
+        if issue_id not in active_ids and status!="resolved": raise ValueError("Issue is not active")
+        if issue_id in active_ids and status=="resolved": raise ValueError("Issue remains active")
+        with self.db() as db:
+            db.execute("INSERT INTO attention_history(issue_id,status,at,detail) VALUES (?,?,?,?)",(issue_id,status,self.clock(),detail))
+
+    def continue_work(self, work_id, source_task, *, approval=False, automatic=False):
+        """Create a new, linked GLM review request. Never claims remote conversation resume."""
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            work=db.execute("SELECT * FROM work_items WHERE id=?",(work_id,)).fetchone()
+            source=db.execute("SELECT * FROM tasks WHERE id=?",(source_task,)).fetchone()
+            control=db.execute("SELECT * FROM control WHERE id=1").fetchone()
+            if not work or not source or not control: raise ValueError("Unknown workflow, source, or budget")
+            if not db.execute("SELECT 1 FROM work_sources WHERE workflow_id=? AND task_id=?",(work_id,source_task)).fetchone() and not db.execute("SELECT 1 FROM continuations WHERE workflow_id=? AND task_id=?",(work_id,source_task)).fetchone():
+                raise ValueError("Source task is not assigned to this workflow")
+            contract=json.loads(work["spec"])
+            if work["state"] in {"finished","paused","blocked","failed","awaiting_approval"} or not approval:
+                raise ValueError("Work gate prevents continuation")
+            if automatic:
+                setting=db.execute("SELECT * FROM followup_settings WHERE workflow_id=?",(work_id,)).fetchone()
+                if (not setting or setting["mode"]!="running" or setting["attempts"]>=setting["limit_count"]
+                    or self.clock()-work["updated"]<setting["grace"]
+                    or setting["last_at"] is not None and self.clock()-setting["last_at"]<setting["cooldown"]):
+                    raise ValueError("Automatic follow-up stopped, cooling down, or limited")
+            if control["mode"]!="running" or self._budget(control)>=control["ceiling"]-control["margin"]:
+                raise ValueError("Paused or budget gated")
+            if source["state"] in {"submitted","acknowledged","unresolved","queued"}:
+                raise ValueError("Active or uncertain source request")
+            if db.execute("SELECT 1 FROM continuations c JOIN tasks t ON c.task_id=t.id WHERE c.workflow_id=? AND t.state IN ('queued','submitted','acknowledged','unresolved')",(work_id,)).fetchone():
+                raise ValueError("Active or uncertain continuation")
+            if source["state"]!="independently_verified" or not work["checkpoint"] or not work["evidence"]:
+                raise ValueError("Source and checkpoint require independent verification")
+            for dep in contract["dependencies"]:
+                row=db.execute("SELECT state FROM work_items WHERE id=?",(dep,)).fetchone()
+                if not row or row["state"]!="finished": raise ValueError("Work dependency unsatisfied")
+            original=json.loads(source["spec"])
+            if original["authorization"]!="explicit-read-only-glm-review": raise ValueError("Unsupported adapter")
+            task_id="continue"+uuid.uuid4().hex[:20]
+            purpose=("Workflow "+work_id+". Approved scope: "+contract["purpose"]+
+                     ". Verified checkpoint: "+(work["checkpoint"] or source["evidence"] or "none")+
+                     ". Continue only this read-only review; remaining criteria: "+contract["acceptance_criteria"])
+            spec={**original,"id":task_id,"dependencies":[],"purpose":purpose[:3900],
+                  "acceptance_criteria":contract["acceptance_criteria"],"expected_outputs":contract["expected_outputs"],
+                  "validation_gates":contract["validation_gates"]}
+            db.execute("INSERT INTO tasks(id,spec,state,updated) VALUES (?,?,'queued',?)",(task_id,json.dumps(spec,sort_keys=True),self.clock()))
+            self._transition(db,task_id,"queued","Continuation persisted before dispatch; workflow "+work_id)
+            db.execute("INSERT INTO continuations(id,workflow_id,source_task,task_id,created) VALUES (?,?,?,?,?)",
+                       (uuid.uuid4().hex,work_id,source_task,task_id,self.clock()))
+            db.execute("INSERT INTO continuation_authorizations VALUES (?,?,?,?)",
+                       (task_id,"automatic" if automatic else "operator",self.clock(),
+                        "Opt-in bounded setting" if automatic else "Local operator scope confirmation"))
+            if automatic:
+                db.execute("UPDATE followup_settings SET attempts=attempts+1,last_at=? WHERE workflow_id=?",(self.clock(),work_id))
+            return task_id
+
+    def configure_followup(self, work_id, *, mode, grace=300, cooldown=900, limit_count=2):
+        if mode not in {"running","paused","stopped"} or not 30<=grace<=86400 or not 60<=cooldown<=86400 or not 1<=limit_count<=10:
+            raise ValueError("Invalid bounded follow-up settings")
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if not db.execute("SELECT 1 FROM work_items WHERE id=?",(work_id,)).fetchone(): raise KeyError(work_id)
+            prior=db.execute("SELECT mode FROM followup_settings WHERE workflow_id=?",(work_id,)).fetchone()
+            if prior and prior["mode"]=="stopped" and mode!="stopped": raise ValueError("Stopped follow-up cannot restart")
+            db.execute("INSERT INTO followup_settings(workflow_id,mode,grace,cooldown,limit_count) VALUES (?,?,?,?,?) "
+                       "ON CONFLICT(workflow_id) DO UPDATE SET mode=excluded.mode,grace=excluded.grace,cooldown=excluded.cooldown,limit_count=excluded.limit_count",
+                       (work_id,mode,grace,cooldown,limit_count))
+
+    def schedule_followups(self):
+        """Opt-in only; never uses GPU idleness, remote self-assessment, or uncertain requests."""
+        dispatched=[]
+        with self.db() as db:
+            rows=[dict(row) for row in db.execute("SELECT * FROM followup_settings WHERE mode='running' ORDER BY rowid")]
+        for setting in rows:
+            with self.db() as db:
+                work=db.execute("SELECT * FROM work_items WHERE id=?",(setting["workflow_id"],)).fetchone()
+                latest=db.execute("SELECT t.* FROM continuations c JOIN tasks t ON t.id=c.task_id WHERE c.workflow_id=? ORDER BY c.seq DESC LIMIT 1",(setting["workflow_id"],)).fetchone()
+                if not latest:
+                    latest=db.execute("SELECT t.* FROM work_sources s JOIN tasks t ON t.id=s.task_id WHERE s.workflow_id=? ORDER BY t.seq DESC LIMIT 1",(setting["workflow_id"],)).fetchone()
+            if not work or not latest or work["state"] not in {"working","awaiting_review"} or not work["checkpoint"] or not work["evidence"]:
+                continue
+            if self.clock()-work["updated"]<setting["grace"] or setting["attempts"]>=setting["limit_count"]:
+                continue
+            if setting["last_at"] is not None and self.clock()-setting["last_at"]<setting["cooldown"]:
+                continue
+            try:
+                task_id=self.continue_work(work["id"],latest["id"],approval=True,automatic=True)
+            except ValueError:
+                continue
+            dispatched.append(task_id)
+        return dispatched
 
     def _transition(self, db, task_id, state, detail=""):
         db.execute("UPDATE tasks SET state=?,updated=? WHERE id=?", (state,self.clock(),task_id))
@@ -319,7 +480,14 @@ class Coordinator:
             c=db.execute("SELECT * FROM control WHERE id=1").fetchone()
             return {"control":dict(c) if c else None,"worker":self.worker_status(),"estimated_charge":self._budget(c) if c else None,
                     "tasks":[dict(r) for r in db.execute("SELECT * FROM tasks ORDER BY seq")],
-                    "transitions":[dict(r) for r in db.execute("SELECT * FROM transitions ORDER BY seq")]}
+                    "transitions":[dict(r) for r in db.execute("SELECT * FROM transitions ORDER BY seq")],
+                    "work_items":[dict(r) for r in db.execute("SELECT * FROM work_items ORDER BY seq")],
+                    "continuations":[dict(r) for r in db.execute("SELECT * FROM continuations ORDER BY seq")],
+                    "work_sources":[dict(r) for r in db.execute("SELECT * FROM work_sources ORDER BY rowid")],
+                    "followup_settings":[dict(r) for r in db.execute("SELECT * FROM followup_settings ORDER BY rowid")],
+                    "continuation_authorizations":[dict(r) for r in db.execute("SELECT * FROM continuation_authorizations ORDER BY rowid")],
+                    "workflow_links":[dict(r) for r in db.execute("SELECT * FROM workflow_links ORDER BY rowid")],
+                    "attention_history":[dict(r) for r in db.execute("SELECT * FROM attention_history ORDER BY seq")]}
 
 
 def glm_review(spec, request_id, endpoint="http://127.0.0.1:18001/v1/chat/completions"):

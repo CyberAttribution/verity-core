@@ -2,6 +2,13 @@
 {% block title %}Active Agents{% endblock %}
 {% block content %}
 {% include "_monitor_runs.html" %}
+<section class="panel"><div class="panel-head"><h2>Assigned work guidance</h2><a class="btn btn-ghost" href="/workflows">Open workflows</a></div>
+<p>Task progress and independent acceptance come from saved work records. Runtime contact is shown separately.</p>
+{% for item in work_guidance %}<article><h3><a href="/workflows?agent={{ item.agent_id }}">{{ item.id }}</a> · {{ item.state }}</h3>
+<p>{{ item.purpose }}</p><p>Last meaningful progress: {{ item.progress }}</p><p>Why attention is needed: {{ item.reason }}</p>
+<p>Next action: {{ item.next_action }}</p><p>Evidence: {{ item.evidence }}{% if item.evidence_at %} · {{ item.evidence_at }} UTC epoch{% endif %}</p>
+<p>Approval: {{ item.approval }} · Runtime contact: {{ 'reachable' if item.reachable is sameas true else ('disconnected' if item.reachable is sameas false else 'unknown') }} · Heartbeat: {{ item.heartbeat or 'unknown' }}</p></article>
+{% else %}<p class="empty">No authorized task assignment is linked to these agents.</p>{% endfor %}</section>
 {% include "_decision_runs.html" %}
 {% include "_report_action_summary.html" %}
 

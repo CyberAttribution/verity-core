@@ -120,6 +120,19 @@ def test_route_enforces_exact_parameters_and_shows_disk_state(db, tmp_path, monk
     assert client.post(path + "/execute", data={"operator_token": decision_routes.TOKEN,
           "expected_head": approved["head_hash"]}, follow_redirects=False).status_code == 303
     page = client.get(path).text
-    assert "Current file matches this proposal" in page
+    assert "Current file hash matches this proposal" in page
     assert report_actions.verify(client.get(path + "/export.json").json(),
                                  client.get(path + "/checkpoint.json").json())
+
+def test_observer_uses_monitoring_record_schema(tmp_path):
+    from tools.propose_openclaw_report import Observer
+    from verity_core.trust import telemetry
+    observer = Observer(tmp_path / "development-monitor.db", "test-model")
+    observer.emit("heartbeat")
+    with sqlite3.connect(observer.path) as con:
+        record = json.loads(con.execute("SELECT record FROM monitor_runs WHERE id=?",
+                                        (observer.run_id,)).fetchone()[0])
+    view = telemetry.inspect(record, now=record["entries"][-1]["payload"]["received_at"])
+    assert view["agent_id"] == "isolated-openclaw-report-agent"
+    assert view["provider"] == "ollama_local"
+    assert view["status"] == "Active"

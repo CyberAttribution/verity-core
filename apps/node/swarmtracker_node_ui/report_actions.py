@@ -42,13 +42,15 @@ def _label(value, name, limit=240):
 def validate(manifest):
     keys = {"schema", "agent_id", "task_id", "model", "provider", "source_name",
             "source_sha256", "runtime_event_id", "proposal", "action", "policy"}
-    if not isinstance(manifest, dict) or set(manifest) != keys or manifest["schema"] != SCHEMA:
+    if not isinstance(manifest, dict) or not keys <= set(manifest) or set(manifest) - keys - {"activity_run_id"} or manifest["schema"] != SCHEMA:
         raise ValueError("Invalid report proposal")
     for k in ("agent_id", "task_id", "model", "provider", "source_name", "runtime_event_id"):
         _label(manifest[k], k)
     if not isinstance(manifest["source_sha256"], str) or len(manifest["source_sha256"]) != 64:
         raise ValueError("Invalid source digest")
     int(manifest["source_sha256"], 16)
+    if "activity_run_id" in manifest:
+        _label(manifest["activity_run_id"], "activity run ID", 120)
     proposal = manifest["proposal"]
     if not isinstance(proposal, str) or not proposal.strip() or len(proposal.encode()) > MAX_OUTPUT:
         raise ValueError("Invalid proposed output")
@@ -113,7 +115,9 @@ def inspect(record):
             if entry["entry_type"] != "action_result" or reserved is None or p.get("attempt_hash") != reserved:
                 raise ValueError("Result without reservation")
             if p.get("outcome") == "written":
-                if decision != "approved" or p.get("sha256") != m["action"]["sha256"] or p.get("external_action_executed") is not True:
+                if decision != "approved" or p != {"event": "result", "attempt_hash": reserved,
+                    "outcome": "written", "sha256": m["action"]["sha256"],
+                    "external_action_executed": True}:
                     raise ValueError("Invalid written result")
                 state = "written"
             elif p == {"event": "result", "attempt_hash": reserved,

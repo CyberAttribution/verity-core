@@ -6,6 +6,34 @@ import hashlib
 import json
 import urllib.parse
 import urllib.request
+import sqlite3
+import time
+import uuid
+from pathlib import Path
+
+
+class DecisionLedger:
+    """Local evidence for the isolated experiment, not an authenticated audit log."""
+    def __init__(self, path):
+        self.path=Path(path)
+        self.path.parent.mkdir(parents=True,exist_ok=True)
+        with sqlite3.connect(self.path) as db:
+            db.execute("CREATE TABLE IF NOT EXISTS decisions (id TEXT PRIMARY KEY, at REAL NOT NULL, policy_version TEXT NOT NULL, policy_sha256 TEXT NOT NULL, allow INTEGER NOT NULL, reason TEXT NOT NULL, keel_approved INTEGER NOT NULL)")
+
+    def record(self, decision, policy_version, keel_approved):
+        if not isinstance(policy_version,str) or not policy_version or len(policy_version)>120:
+            raise ValueError("Policy version required")
+        identifier=uuid.uuid4().hex
+        with sqlite3.connect(self.path,timeout=10) as db:
+            db.execute("INSERT INTO decisions VALUES (?,?,?,?,?,?,?)",(
+                identifier,time.time(),policy_version,decision["policy_sha256"],
+                int(decision["allow"]),decision["reason"],int(bool(keel_approved))))
+        return identifier
+
+    def records(self):
+        with sqlite3.connect(self.path) as db:
+            return [dict(zip(("id","at","policy_version","policy_sha256","allow","reason","keel_approved"),row))
+                    for row in db.execute("SELECT * FROM decisions ORDER BY rowid")]
 
 
 def decide(input_document, policy_bytes, evaluator=None):
@@ -30,8 +58,12 @@ def local_opa(input_document, endpoint="http://127.0.0.1:8181/v1/data/verity/all
         return json.load(response)
 
 
-def execute_if_allowed(document, policy_bytes, action, evaluator=None, keel_approved=False):
+def execute_if_allowed(document, policy_bytes, action, evaluator=None, keel_approved=False,
+                       ledger=None, policy_version=None):
     decision=decide(document,policy_bytes,evaluator)
+    if ledger is not None:
+        # Fail closed if evidence cannot be stored, including on an allow.
+        decision["record_id"]=ledger.record(decision,policy_version,keel_approved)
     if not keel_approved or not decision["allow"]:
         raise PermissionError(decision["reason"] if keel_approved else "Keel approval required")
     return action(),decision

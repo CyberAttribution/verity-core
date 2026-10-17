@@ -11,11 +11,13 @@ import urllib.parse
 import uuid
 import threading
 import os
+import re
+import hashlib
 from contextlib import contextmanager
 from pathlib import Path
 
 MODEL = "glm-5.3-flash"  # Served alias; pinned weights: wtdcode/GLM-5.3-Flash-AWQ-W4A16
-STATES = {"queued", "submitted", "acknowledged", "completed", "independently_verified", "failed", "unresolved"}
+STATES = {"queued", "submitted", "acknowledged", "completed", "independently_verified", "failed", "unresolved", "cancelled"}
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -77,6 +79,24 @@ class Coordinator:
                   current_agent TEXT NOT NULL, evidence TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS work_successors (predecessor TEXT NOT NULL, successor TEXT UNIQUE NOT NULL,
                   at REAL NOT NULL, reason TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS task_supersessions (predecessor TEXT PRIMARY KEY,
+                  successor TEXT NOT NULL, at REAL NOT NULL, evidence TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS agent_registrations (id TEXT PRIMARY KEY, kind TEXT NOT NULL,
+                  endpoint TEXT NOT NULL, model TEXT NOT NULL, provider TEXT NOT NULL,
+                  provenance TEXT NOT NULL, permissions TEXT NOT NULL, created REAL NOT NULL,
+                  connection_state TEXT NOT NULL, checked REAL, diagnostic TEXT);
+                CREATE TABLE IF NOT EXISTS task_controls (task_id TEXT PRIMARY KEY, priority INTEGER NOT NULL,
+                  paused INTEGER NOT NULL, cancelled INTEGER NOT NULL, authorization_hash TEXT,
+                  cancellation_requested INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS task_audit (seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                  task_id TEXT NOT NULL, at REAL NOT NULL, action TEXT NOT NULL, before_hash TEXT,
+                  after_hash TEXT, detail TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS review_policy_versions (hash TEXT PRIMARY KEY, version INTEGER UNIQUE NOT NULL,
+                  spec TEXT NOT NULL, created REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS review_policy_active (id INTEGER PRIMARY KEY CHECK(id=1), hash TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS review_policy_decisions (seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                  task_id TEXT NOT NULL, at REAL NOT NULL, policy_hash TEXT NOT NULL,
+                  allowed INTEGER NOT NULL, reason TEXT NOT NULL);
             """)
             ddl=db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='work_sources'").fetchone()[0]
             if "task_id TEXT UNIQUE" in ddl:
@@ -107,7 +127,7 @@ class Coordinator:
                 raise ValueError("Budget already configured; no automatic ceiling expansion")
             db.execute("INSERT INTO control VALUES (1,'paused',NULL,NULL,?,?,?,?)", (rate,start,ceiling,margin))
 
-    def enqueue(self, spec):
+    def enqueue(self, spec, *, _operator_priority=None):
         required = {"id", "purpose", "dependencies", "authorization", "acceptance_criteria", "model_settings", "expected_outputs", "validation_gates"}
         if set(spec) != required or not isinstance(spec["id"], str) or not spec["id"].isalnum() or len(spec["id"]) > 80:
             raise ValueError("Invalid task specification")
@@ -129,6 +149,109 @@ class Coordinator:
                     raise ValueError("Unknown or cyclic dependency")
             db.execute("INSERT INTO tasks (id,spec,state,updated) VALUES (?,?,'queued',?)", (spec["id"],encoded,self.clock()))
             self._transition(db,spec["id"],"queued","Explicit task contract persisted")
+            if _operator_priority is not None:
+                db.execute("INSERT INTO task_controls VALUES (?,?,?,?,?,0)",(spec["id"],_operator_priority,0,0,None))
+                db.execute("INSERT INTO task_audit(task_id,at,action,after_hash,detail) VALUES (?,?,?,?,?)",
+                           (spec["id"],self.clock(),"created",self._spec_hash(spec),"Authorization pending for saved specification"))
+
+    @staticmethod
+    def _spec_hash(spec):
+        return hashlib.sha256(json.dumps(spec,sort_keys=True,separators=(",",":"),allow_nan=False).encode()).hexdigest()
+
+    def create_operator_task(self, spec, *, priority=0):
+        if not isinstance(priority,int) or abs(priority)>1000:
+            raise ValueError("Priority outside bounded range")
+        self.enqueue(spec,_operator_priority=priority)
+
+    def authorize_operator_task(self, task_id, evidence):
+        if not evidence or len(evidence)<20 or len(evidence)>1000: raise ValueError("Scoped authorization evidence required")
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            task=db.execute("SELECT state,spec FROM tasks WHERE id=?",(task_id,)).fetchone()
+            ctl=db.execute("SELECT * FROM task_controls WHERE task_id=?",(task_id,)).fetchone()
+            if not task or task["state"]!="queued" or not ctl or ctl["cancelled"]:
+                raise ValueError("Only a live queued operator task can be authorized")
+            digest=self._spec_hash(json.loads(task["spec"]))
+            db.execute("UPDATE task_controls SET authorization_hash=? WHERE task_id=?",(digest,task_id))
+            db.execute("INSERT INTO task_audit(task_id,at,action,after_hash,detail) VALUES (?,?,?,?,?)",
+                       (task_id,self.clock(),"authorized",digest,evidence))
+
+    def edit_operator_task(self, task_id, spec, *, priority=None, pause=None):
+        if spec["id"]!=task_id: raise ValueError("Task identity cannot change")
+        if priority is not None and (not isinstance(priority,int) or abs(priority)>1000): raise ValueError("Invalid priority")
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            task=db.execute("SELECT state,spec FROM tasks WHERE id=?",(task_id,)).fetchone()
+            ctl=db.execute("SELECT * FROM task_controls WHERE task_id=?",(task_id,)).fetchone()
+            if not task or task["state"]!="queued" or not ctl or ctl["cancelled"]: raise ValueError("Only queued operator tasks can be edited")
+            # Reuse the exact fixed adapter contract, while checking all dependencies and cycles.
+            if set(spec)!=set(json.loads(task["spec"])) or spec["authorization"]!="explicit-read-only-glm-review" or spec["model_settings"]!={"model":MODEL,"reasoning_effort":"low","chat_template_kwargs":{"reasoning_effort":"low"},"max_tokens":2048}:
+                raise ValueError("Unsupported adapter contract")
+            if any(not isinstance(spec[k],str) or not spec[k].strip() for k in ("purpose","acceptance_criteria","expected_outputs","validation_gates")):
+                raise ValueError("Incomplete task contract")
+            if len(json.dumps(spec))>16000 or not isinstance(spec["dependencies"],list): raise ValueError("Invalid task size or dependencies")
+            graph={r["id"]:json.loads(r["spec"])["dependencies"] for r in db.execute("SELECT id,spec FROM tasks")}
+            graph[task_id]=spec["dependencies"]
+            def visit(node,seen):
+                if node in seen: raise ValueError("Dependency cycle")
+                if node not in graph: raise ValueError("Unknown dependency")
+                for dep in graph[node]: visit(dep,seen|{node})
+            visit(task_id,set())
+            before=self._spec_hash(json.loads(task["spec"])); after=self._spec_hash(spec)
+            db.execute("UPDATE tasks SET spec=?,updated=? WHERE id=?",(json.dumps(spec,sort_keys=True),self.clock(),task_id))
+            db.execute("UPDATE task_controls SET priority=COALESCE(?,priority),paused=COALESCE(?,paused),authorization_hash=CASE WHEN ? THEN NULL ELSE authorization_hash END WHERE task_id=?",
+                       (priority,int(pause) if pause is not None else None,before!=after,task_id))
+            db.execute("INSERT INTO task_audit(task_id,at,action,before_hash,after_hash,detail) VALUES (?,?,?,?,?,?)",
+                       (task_id,self.clock(),"edited",before,after,"Authorization invalidated" if before!=after else "Priority or pause changed"))
+
+    def cancel_operator_task(self, task_id):
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT state FROM tasks WHERE id=?",(task_id,)).fetchone()
+            ctl=db.execute("SELECT * FROM task_controls WHERE task_id=?",(task_id,)).fetchone()
+            if not row or not ctl or ctl["cancelled"]: raise ValueError("Unknown or already cancelled operator task")
+            if row["state"]=="queued":
+                db.execute("UPDATE task_controls SET cancelled=1 WHERE task_id=?",(task_id,))
+                self._transition(db,task_id,"cancelled","Queued task cancelled before dispatch")
+                detail="No remote request was dispatched"
+            elif row["state"] in {"submitted","acknowledged","unresolved"}:
+                db.execute("UPDATE task_controls SET cancellation_requested=1 WHERE task_id=?",(task_id,))
+                detail="Cancellation requested; adapter cannot cancel remote execution; reconcile outcome"
+            else: raise ValueError("Task already reached a terminal outcome")
+            db.execute("INSERT INTO task_audit(task_id,at,action,detail) VALUES (?,?,?,?)",(task_id,self.clock(),"cancel",detail))
+
+    def activate_review_policy(self, spec):
+        """A deliberately narrow policy for the coordinator's actual review executor."""
+        if not isinstance(spec,dict) or set(spec)!={"permitted_actions","protected_targets","require_approval","spending_limit"}:
+            raise ValueError("Unknown or missing policy controls")
+        if not isinstance(spec["permitted_actions"],list) or any(x!="glm-review" for x in spec["permitted_actions"]) or len(set(spec["permitted_actions"]))!=len(spec["permitted_actions"]):
+            raise ValueError("Only the fixed GLM review action is configurable")
+        if spec["protected_targets"]!=["filesystem","shell"] or type(spec["require_approval"]) is not bool:
+            raise ValueError("Filesystem and shell protection and approval type are fixed")
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            control=db.execute("SELECT ceiling FROM control WHERE id=1").fetchone()
+            if not control or type(spec["spending_limit"]) not in (int,float) or not 0<spec["spending_limit"]<=control["ceiling"]:
+                raise ValueError("Policy spending limit cannot exceed existing session ceiling")
+            encoded=json.dumps(spec,sort_keys=True,separators=(",",":"),allow_nan=False)
+            digest=hashlib.sha256(encoded.encode()).hexdigest()
+            if not db.execute("SELECT 1 FROM review_policy_versions WHERE hash=?",(digest,)).fetchone():
+                version=db.execute("SELECT COALESCE(MAX(version),0)+1 FROM review_policy_versions").fetchone()[0]
+                db.execute("INSERT INTO review_policy_versions VALUES (?,?,?,?)",(digest,version,encoded,self.clock()))
+            db.execute("INSERT INTO review_policy_active VALUES (1,?) ON CONFLICT(id) DO UPDATE SET hash=excluded.hash",(digest,))
+            return digest
+
+    def _active_review_policy(self,db):
+        row=db.execute("SELECT v.hash,v.spec FROM review_policy_active a JOIN review_policy_versions v ON v.hash=a.hash WHERE a.id=1").fetchone()
+        return (row["hash"],json.loads(row["spec"])) if row else ("builtin-fixed-review",None)
+
+    def policy_decision(self, task_id):
+        with self.db() as db:
+            row=db.execute("SELECT spec FROM tasks WHERE id=?",(task_id,)).fetchone()
+            if not row: raise KeyError(task_id)
+            digest,policy=self._active_review_policy(db)
+            allowed=policy is None or "glm-review" in policy["permitted_actions"]
+            return {"policy_hash":digest,"allowed":allowed,"reason":"Fixed read-only GLM action permitted" if allowed else "Review action denied by active policy"}
 
     def enqueue_work(self, spec):
         """Persist authorized product work; only fixed review tasks can be dispatched."""
@@ -147,6 +270,64 @@ class Coordinator:
                 if not isinstance(dep,str) or dep==spec["id"] or not db.execute("SELECT 1 FROM work_items WHERE id=?",(dep,)).fetchone():
                     raise ValueError("Unknown work dependency")
             db.execute("INSERT INTO work_items(id,spec,state,updated) VALUES (?,?,'queued',?)",(spec["id"],encoded,self.clock()))
+
+    def register_review_runtime(self, agent_id, *, endpoint, model, provider, provenance):
+        """Only the installed read-only GLM tunnel is a dispatch-capable registration."""
+        if agent_id != "glm-review" or endpoint != "http://127.0.0.1:18001" or model != MODEL or provider != "local-rental" or not provenance or len(provenance)>500 or re.search(r"(?i)(bearer\s+|api[_-]?key|password|secret|token\s*[:=])",provenance):
+            raise ValueError("Unsupported runtime configuration; fixed GLM review tunnel, model and provider required")
+        with self.db() as db:
+            db.execute("INSERT INTO agent_registrations VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                       (agent_id,"model-endpoint-review",endpoint,model,provider,provenance,
+                        "read-only-review",self.clock(),"unknown",None,None))
+
+    def check_review_runtime(self, agent_id):
+        with self.db() as db:
+            row=db.execute("SELECT * FROM agent_registrations WHERE id=?",(agent_id,)).fetchone()
+        if not row or row["kind"]!="model-endpoint-review" or row["endpoint"]!="http://127.0.0.1:18001":
+            raise ValueError("No supported registered runtime")
+        try:
+            req=urllib.request.Request(row["endpoint"]+"/v1/models")
+            with LOCAL_OPENER.open(req,timeout=3) as response:
+                payload=response.read(65537)
+                if len(payload)>65536: raise ValueError("Model list too large")
+                models=json.loads(payload)
+            available=any(item.get("id")==row["model"] for item in models.get("data",[]))
+            state="connected" if available else "unavailable"
+            diagnostic="Expected model listed" if available else "Endpoint responded without the configured model"
+        except (OSError,ValueError,KeyError) as exc:
+            state="unavailable"; diagnostic="Connection failed ("+type(exc).__name__+")"
+        with self.db() as db:
+            db.execute("UPDATE agent_registrations SET connection_state=?,checked=?,diagnostic=? WHERE id=?",
+                       (state,self.clock(),diagnostic,agent_id))
+        return {"state":state,"diagnostic":diagnostic}
+
+    def assign_first_review(self, agent_id, *, workflow_id, task_id, purpose, acceptance, expected):
+        with self.db() as db:
+            row=db.execute("SELECT connection_state FROM agent_registrations WHERE id=?",(agent_id,)).fetchone()
+        if not row or row["connection_state"]!="connected":
+            raise ValueError("Connect and test the supported runtime before assignment")
+        if not all(isinstance(v,str) and 0<len(v)<=3000 for v in (purpose,acceptance,expected)):
+            raise ValueError("Bounded task purpose, acceptance and output required")
+        if not all(isinstance(v,str) and v.isalnum() and len(v)<=80 for v in (workflow_id,task_id)) or workflow_id==task_id:
+            raise ValueError("Distinct alphanumeric workflow and request IDs required")
+        work=dict(id=workflow_id,purpose=purpose,dependencies=[],authorization="explicit-product-development",
+                  acceptance_criteria=acceptance,expected_outputs=expected,
+                  validation_gates="Independent human review of response against source or output",
+                  agent_id=agent_id,session_id=self.session_id or "local-onboarding")
+        task=dict(id=task_id,purpose=purpose,dependencies=[],authorization="explicit-read-only-glm-review",
+                  acceptance_criteria=acceptance,expected_outputs=expected,
+                  validation_gates="Independent human review",model_settings={"model":MODEL,"reasoning_effort":"low",
+                  "chat_template_kwargs":{"reasoning_effort":"low"},"max_tokens":2048})
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("INSERT INTO work_items(id,spec,state,updated) VALUES (?,?,'working',?)",
+                       (workflow_id,json.dumps(work,sort_keys=True),self.clock()))
+            db.execute("INSERT INTO tasks(id,spec,state,updated) VALUES (?,?,'queued',?)",
+                       (task_id,json.dumps(task,sort_keys=True),self.clock()))
+            db.execute("INSERT INTO work_sources VALUES (?,?)",(workflow_id,task_id))
+            db.execute("INSERT INTO transitions(task_id,at,state,detail) VALUES (?,?,?,?)",
+                       (task_id,self.clock(),"queued","Operator assigned fixed read-only review from registered runtime"))
+        return task_id
 
     def update_work(self, work_id, state, *, checkpoint=None, evidence=None):
         if state not in {"working","awaiting_review","awaiting_approval","blocked","paused","failed","finished","unknown"}:
@@ -392,6 +573,9 @@ class Coordinator:
             c=db.execute("SELECT * FROM control WHERE id=1").fetchone()
             if not c or c["mode"] != "running" or self._budget(c) >= c["ceiling"]-c["margin"]:
                 return None
+            policy_hash,policy=self._active_review_policy(db)
+            if policy and self._budget(c) >= min(c["ceiling"]-c["margin"],policy["spending_limit"]):
+                return None
             if c["owner"] and c["owner"] != owner and self.clock()-(c["heartbeat"] or 0) < 30:
                 return None
             if c["owner"] != owner or (c["owner"] and self.clock()-(c["heartbeat"] or 0) >= 30):
@@ -399,12 +583,27 @@ class Coordinator:
                 for row in db.execute("SELECT id FROM tasks WHERE state IN ('submitted','acknowledged')"):
                     self._transition(db,row["id"],"unresolved","Worker ownership changed; reconcile externally")
             db.execute("UPDATE control SET owner=?,heartbeat=? WHERE id=1",(owner,self.clock()))
-            for row in db.execute("SELECT * FROM tasks WHERE state='queued' ORDER BY seq"):
+            for row in db.execute("SELECT t.* FROM tasks t LEFT JOIN task_controls p ON p.task_id=t.id WHERE t.state='queued' "
+                                  "ORDER BY COALESCE(p.priority,0) DESC,t.seq"):
+                if db.execute("SELECT 1 FROM task_supersessions WHERE predecessor=?",(row["id"],)).fetchone():
+                    continue
                 spec=json.loads(row["spec"])
+                ctl=db.execute("SELECT * FROM task_controls WHERE task_id=?",(row["id"],)).fetchone()
+                if ctl and (ctl["paused"] or ctl["cancelled"] or ctl["authorization_hash"]!=self._spec_hash(spec)):
+                    continue
+                if policy and "glm-review" not in policy["permitted_actions"]:
+                    if not db.execute("SELECT 1 FROM review_policy_decisions WHERE task_id=? AND policy_hash=? AND allowed=0",(row["id"],policy_hash)).fetchone():
+                        db.execute("INSERT INTO review_policy_decisions(task_id,at,policy_hash,allowed,reason) VALUES (?,?,?,?,?)",
+                                   (row["id"],self.clock(),policy_hash,0,"Active policy denies GLM review at executor boundary"))
+                    continue
+                if policy and policy["require_approval"] and ctl and not ctl["authorization_hash"]:
+                    continue
                 if all(db.execute("SELECT state FROM tasks WHERE id=?",(dep,)).fetchone()[0] == "independently_verified" for dep in spec["dependencies"]):
                     request_id=uuid.uuid4().hex
                     db.execute("UPDATE tasks SET request_id=?,attempts=attempts+1 WHERE id=?",(request_id,row["id"]))
                     self._transition(db,row["id"],"submitted","Request persisted before dispatch: "+request_id)
+                    db.execute("INSERT INTO review_policy_decisions(task_id,at,policy_hash,allowed,reason) VALUES (?,?,?,?,?)",
+                               (row["id"],self.clock(),policy_hash,1,"Allowed at dispatch; subsequent policy changes cannot recall request"))
                     db.execute("UPDATE worker_process SET current_task=? WHERE token=?",(row["id"],owner.split(":")[0]))
                     return dict(spec=spec,request_id=request_id)
             db.execute("UPDATE control SET owner=NULL,heartbeat=NULL WHERE owner=? AND NOT EXISTS (SELECT 1 FROM tasks WHERE state IN ('submitted','acknowledged'))",(owner,))
@@ -528,6 +727,18 @@ class Coordinator:
             db.execute("UPDATE tasks SET verifier=?,evidence=? WHERE id=?",(verifier,evidence,task_id))
             self._transition(db,task_id,"independently_verified",evidence)
 
+    def supersede_task(self, predecessor, successor, evidence):
+        """Retain the original state and dependencies while retiring obsolete queued work."""
+        if predecessor == successor or not evidence or len(evidence) < 20:
+            raise ValueError("Distinct accepted successor and concrete evidence required")
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            old=db.execute("SELECT state FROM tasks WHERE id=?",(predecessor,)).fetchone()
+            new=db.execute("SELECT state,evidence FROM tasks WHERE id=?",(successor,)).fetchone()
+            if not old or old["state"] != "queued" or not new or new["state"] != "independently_verified" or not new["evidence"]:
+                raise ValueError("Only a queued request with an independently verified successor can be superseded")
+            db.execute("INSERT INTO task_supersessions VALUES (?,?,?,?)",(predecessor,successor,self.clock(),evidence))
+
     def reject_review(self, task_id, verifier, evidence):
         if not verifier or not evidence:
             raise ValueError("Review evidence required")
@@ -556,7 +767,14 @@ class Coordinator:
                     "work_approvals":[dict(r) for r in db.execute("SELECT * FROM work_approvals ORDER BY seq")],
                     "work_approval_gates":[dict(r) for r in db.execute("SELECT * FROM work_approval_gates ORDER BY rowid")],
                     "work_corrections":[dict(r) for r in db.execute("SELECT * FROM work_corrections ORDER BY seq")],
-                    "work_successors":[dict(r) for r in db.execute("SELECT * FROM work_successors ORDER BY rowid")]}
+                    "work_successors":[dict(r) for r in db.execute("SELECT * FROM work_successors ORDER BY rowid")],
+                    "task_supersessions":[dict(r) for r in db.execute("SELECT * FROM task_supersessions ORDER BY rowid")],
+                    "agent_registrations":[dict(r) for r in db.execute("SELECT * FROM agent_registrations ORDER BY created")],
+                    "task_controls":[dict(r) for r in db.execute("SELECT * FROM task_controls ORDER BY rowid")],
+                    "task_audit":[dict(r) for r in db.execute("SELECT * FROM task_audit ORDER BY seq")],
+                    "review_policy_versions":[dict(r) for r in db.execute("SELECT * FROM review_policy_versions ORDER BY version")],
+                    "review_policy_active":[dict(r) for r in db.execute("SELECT * FROM review_policy_active")],
+                    "review_policy_decisions":[dict(r) for r in db.execute("SELECT * FROM review_policy_decisions ORDER BY seq")]}
 
 
 def glm_review(spec, request_id, endpoint="http://127.0.0.1:18001/v1/chat/completions"):
@@ -570,5 +788,7 @@ def glm_review(spec, request_id, endpoint="http://127.0.0.1:18001/v1/chat/comple
     with LOCAL_OPENER.open(req,timeout=240) as result:
         data=json.load(result)
     choice=data["choices"][0]
+    if data.get("model") != MODEL:
+        raise ValueError("Response model does not match pinned review model")
     return {"request_id":request_id,"remote_id":data.get("id"),"content":choice["message"].get("content"),
             "finish_reason":choice.get("finish_reason"),"usage":data.get("usage"),"model":data.get("model")}

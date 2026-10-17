@@ -17,14 +17,14 @@ import uuid
 from collections import OrderedDict
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
+from fastapi.responses import (HTMLResponse, JSONResponse, PlainTextResponse, FileResponse,
                                RedirectResponse)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import adapters, analysis, canonical_case, config, core_bridge
 from . import governance, keel_events, keel_policy, ledger, media_runner
-from . import agents, governed_analysis, providers, decision_routes, monitoring, local_activity, report_routes, sessions, workflows
+from . import agents, governed_analysis, providers, decision_routes, monitoring, local_activity, report_routes, sessions, workflows, product_demo
 from . import openclaw_client as oc
 from . import store as store_mod
 
@@ -1969,7 +1969,43 @@ def agents_page(request: Request):
         ctx["work_guidance"] = workflows.records(workflows.coordinator().snapshot(), ctx["monitor_runs"])
     except (ValueError, sqlite3.Error, OSError):
         ctx["work_guidance"] = []
+    ctx["review_runtimes"] = workflows.coordinator().snapshot()["agent_registrations"]
+    ctx["review_capabilities"] = workflows.CAPABILITIES["glm-review"]
+    ctx["operator_token"] = decision_routes.TOKEN
     return render("agents.html", ctx)
+
+
+@app.post("/agents/register-review")
+async def register_review_runtime(request: Request):
+    from fastapi import HTTPException
+    form=await decision_routes.operator_form(request)
+    try:
+        workflows.coordinator().register_review_runtime(form.get("agent_id",""), endpoint=form.get("endpoint",""),
+            model=form.get("model",""),provider=form.get("provider",""),provenance=form.get("provenance",""))
+    except (ValueError,sqlite3.IntegrityError) as exc:
+        raise HTTPException(409,str(exc)) from None
+    return RedirectResponse("/agents",status_code=303)
+
+
+@app.post("/agents/{agent_id}/check")
+async def check_review_runtime(request: Request, agent_id: str):
+    from fastapi import HTTPException
+    await decision_routes.operator_form(request)
+    try: workflows.coordinator().check_review_runtime(agent_id)
+    except ValueError as exc: raise HTTPException(409,str(exc)) from None
+    return RedirectResponse("/agents",status_code=303)
+
+
+@app.post("/agents/{agent_id}/assign-review")
+async def assign_review_runtime(request: Request, agent_id: str):
+    from fastapi import HTTPException
+    form=await decision_routes.operator_form(request)
+    try:
+        workflows.coordinator().assign_first_review(agent_id,workflow_id=form.get("workflow_id",""),
+            task_id=form.get("task_id",""),purpose=form.get("purpose",""),
+            acceptance=form.get("acceptance",""),expected=form.get("expected",""))
+    except (ValueError,sqlite3.IntegrityError) as exc: raise HTTPException(409,str(exc)) from None
+    return RedirectResponse("/workflows",status_code=303)
 
 
 @app.get("/workflows", response_class=HTMLResponse)
@@ -1993,6 +2029,164 @@ def workflows_page(request: Request):
     response=render("workflows.html",ctx)
     response.headers["Cache-Control"]="no-store"
     return response
+
+
+@app.get("/tasks", response_class=HTMLResponse)
+def task_queue_page(request: Request):
+    decision_routes.local_request(request)
+    snapshot=workflows.coordinator().snapshot()
+    controls={x["task_id"]:x for x in snapshot["task_controls"]}
+    states={x["id"]:x["state"] for x in snapshot["tasks"]}
+    entries=[]
+    for task in snapshot["tasks"]:
+        ctl=controls.get(task["id"])
+        if not ctl: continue
+        spec=json.loads(task["spec"])
+        blockers=[d for d in spec["dependencies"] if states.get(d)!="independently_verified"]
+        reason=("Cancelled before dispatch" if task["state"]=="cancelled" else
+                "Remote cancellation unsupported; reconcile submission" if ctl["cancellation_requested"] else
+                "Paused" if ctl["paused"] else
+                "Authorization renewal required" if ctl["authorization_hash"]!=workflows.coordinator()._spec_hash(spec) else
+                "Dependencies awaiting independent verification: "+", ".join(blockers) if blockers else
+                "Ready within session, worker and budget gates" if task["state"]=="queued" else task["state"])
+        entries.append(dict(task=task,spec=spec,control=ctl,reason=reason))
+    ctx=base_ctx(request,"agents")
+    ctx.update(entries=entries,operator_token=decision_routes.TOKEN,model=workflows.MODEL if hasattr(workflows,"MODEL") else "glm-5.3-flash")
+    response=render("task_queue.html",ctx);response.headers["Cache-Control"]="no-store";return response
+
+
+@app.post("/tasks")
+async def create_operator_task(request: Request):
+    from fastapi import HTTPException
+    form=await decision_routes.operator_form(request)
+    if form.get("permissions")!="read-only-review": raise HTTPException(409,"Only fixed read-only review permission is supported")
+    from .session_coordinator import MODEL
+    spec=dict(id=form.get("id",""),purpose=form.get("purpose",""),
+              dependencies=[x.strip() for x in form.get("dependencies","").split(",") if x.strip()],
+              authorization="explicit-read-only-glm-review",acceptance_criteria=form.get("acceptance",""),
+              expected_outputs=form.get("expected",""),validation_gates=form.get("validation",""),
+              model_settings={"model":MODEL,"reasoning_effort":"low","chat_template_kwargs":{"reasoning_effort":"low"},"max_tokens":2048})
+    try: workflows.coordinator().create_operator_task(spec,priority=int(form.get("priority","0")))
+    except (ValueError,sqlite3.IntegrityError) as exc: raise HTTPException(409,str(exc)) from None
+    return RedirectResponse("/tasks",status_code=303)
+
+
+@app.post("/tasks/{task_id}/control")
+async def control_operator_task(request: Request,task_id: str):
+    from fastapi import HTTPException
+    form=await decision_routes.operator_form(request)
+    db=workflows.coordinator()
+    try:
+        action=form.get("action")
+        if action=="authorize": db.authorize_operator_task(task_id,form.get("evidence",""))
+        elif action=="cancel": db.cancel_operator_task(task_id)
+        elif action in {"pause","resume","priority"}:
+            task=next((x for x in db.snapshot()["tasks"] if x["id"]==task_id),None)
+            if not task: raise ValueError("Unknown task")
+            db.edit_operator_task(task_id,json.loads(task["spec"]),pause=True if action=="pause" else False if action=="resume" else None,
+                                  priority=int(form.get("priority","0")) if action=="priority" else None)
+        elif action=="edit":
+            task=next((x for x in db.snapshot()["tasks"] if x["id"]==task_id),None)
+            if not task: raise ValueError("Unknown task")
+            spec=json.loads(task["spec"])
+            for key,field in (("purpose","purpose"),("acceptance_criteria","acceptance"),("expected_outputs","expected"),("validation_gates","validation")):
+                if field in form: spec[key]=form[field]
+            if "dependencies" in form: spec["dependencies"]=[x.strip() for x in form["dependencies"].split(",") if x.strip()]
+            db.edit_operator_task(task_id,spec)
+        else: raise ValueError("Unknown queue control")
+    except (ValueError,sqlite3.IntegrityError) as exc: raise HTTPException(409,str(exc)) from None
+    return RedirectResponse("/tasks",status_code=303)
+
+
+@app.get("/review-policy",response_class=HTMLResponse)
+def review_policy_page(request: Request):
+    decision_routes.local_request(request)
+    snap=workflows.coordinator().snapshot()
+    ctx=base_ctx(request,"governance")
+    ctx.update(versions=snap["review_policy_versions"],active=snap["review_policy_active"],
+               decisions=snap["review_policy_decisions"],operator_token=decision_routes.TOKEN,
+               ceiling=snap["control"]["ceiling"] if snap["control"] else None)
+    response=render("review_policy.html",ctx);response.headers["Cache-Control"]="no-store";return response
+
+
+@app.post("/review-policy")
+async def activate_review_policy(request: Request):
+    from fastapi import HTTPException
+    form=await decision_routes.operator_form(request)
+    try:
+        workflows.coordinator().activate_review_policy({"permitted_actions":["glm-review"] if form.get("allow_review")=="yes" else [],
+            "protected_targets":["filesystem","shell"],"require_approval":form.get("require_approval")=="yes",
+            "spending_limit":float(form.get("spending_limit","nan"))})
+    except ValueError as exc: raise HTTPException(409,str(exc)) from None
+    return RedirectResponse("/review-policy",status_code=303)
+
+
+@app.get("/notifications",response_class=HTMLResponse)
+def notifications_page(request: Request):
+    decision_routes.local_request(request)
+    snap=workflows.coordinator().snapshot()
+    ctx=base_ctx(request,"agents")
+    ctx.update(issues=workflows.attention(snap),operator_token=decision_routes.TOKEN,
+               history=snap["attention_history"])
+    response=render("notifications.html",ctx);response.headers["Cache-Control"]="no-store";return response
+
+
+def _demo_stores():
+    root=product_demo.profile_root()
+    from . import decision_runs,report_actions
+    decision_routes.RUNS=decision_runs.RunStore(root/"decisions.db")
+    report_routes.STORE=report_actions.Store(root/"reports.db",root/"output")
+    return decision_routes.RUNS,report_routes.STORE
+
+
+@app.get("/demo",response_class=HTMLResponse)
+def demo_page(request: Request):
+    decision_routes.local_request(request)
+    try:
+        decision_store,report_store=_demo_stores()
+        snap=workflows.coordinator().snapshot()
+        items=[x for x in snap["work_items"] if x["id"].startswith("demo") and json.loads(x["spec"])["session_id"]=="disposable-demo"]
+        error=None
+    except ValueError as exc:
+        items=[];error=str(exc)
+    ctx=base_ctx(request,"agents");ctx.update(demo_items=items,demo_error=error,operator_token=decision_routes.TOKEN)
+    response=render("product_demo.html",ctx);response.headers["Cache-Control"]="no-store";return response
+
+
+@app.post("/demo/new")
+async def new_demo(request: Request):
+    from fastapi import HTTPException
+    await decision_routes.operator_form(request)
+    try:
+        decisions,reports=_demo_stores()
+        item=product_demo.setup(workflows.coordinator(),decisions,reports)
+    except (ValueError,sqlite3.Error,OSError) as exc: raise HTTPException(409,str(exc)) from None
+    return RedirectResponse("/workflows/"+item["workflow"],status_code=303)
+
+
+@app.post("/demo/{work_id}/finish")
+async def finish_demo(request: Request,work_id: str):
+    from fastapi import HTTPException
+    await decision_routes.operator_form(request)
+    try:
+        decisions,reports=_demo_stores()
+        product_demo.finish(workflows.coordinator(),work_id,decisions,reports)
+    except (ValueError,sqlite3.Error,OSError) as exc: raise HTTPException(409,str(exc)) from None
+    return RedirectResponse("/demo",status_code=303)
+
+
+@app.get("/demo/{work_id}/export/{part}")
+def export_demo(request: Request,work_id: str,part: str):
+    from fastapi import HTTPException
+    decision_routes.local_request(request)
+    if not work_id.startswith("demo") or not work_id.isalnum() or part not in {"history","checkpoint"}:
+        raise HTTPException(404,"Unknown demo export")
+    try:
+        root=product_demo.profile_root()
+        path=root/(work_id+(".json" if part=="history" else ".sha256"))
+        if not path.is_file(): raise HTTPException(404,"Demo export not ready")
+        return FileResponse(path,filename=path.name,headers={"Cache-Control":"no-store"})
+    except ValueError as exc: raise HTTPException(409,str(exc)) from None
 
 
 @app.get("/workflows/{work_id}", response_class=HTMLResponse)

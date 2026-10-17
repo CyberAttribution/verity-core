@@ -96,10 +96,20 @@ def attention(snapshot, *, endpoint_reachable=None, participants=(), now=None):
             add("worker:absent","Running control has no active worker; inspect PID and heartbeat","/sessions")
         budget=snapshot["estimated_charge"]>=control["ceiling"]-control["margin"]
         if budget: add("budget:limited","Rental estimate reached dispatch margin; no new request eligible","/sessions")
-        queued=[x for x in snapshot["tasks"] if x["state"]=="queued"]
-        eligible=[x for x in queued if all(tasks.get(dep,{}).get("state")=="independently_verified" for dep in json.loads(x["spec"])["dependencies"])]
+        elif snapshot["estimated_charge"]>=0.8*(control["ceiling"]-control["margin"]):
+            add("budget:threshold","Rental estimate passed 80% of the dispatch allowance; review closeout and remaining authorized work","/sessions")
+        superseded={x["predecessor"] for x in snapshot.get("task_supersessions",[])}
+        controls={x["task_id"]:x for x in snapshot.get("task_controls",[])}
+        queued=[x for x in snapshot["tasks"] if x["state"]=="queued" and x["id"] not in superseded]
+        eligible=[x for x in queued if all(tasks.get(dep,{}).get("state")=="independently_verified" for dep in json.loads(x["spec"])["dependencies"])
+                  and (x["id"] not in controls or not controls[x["id"]]["paused"] and controls[x["id"]]["authorization_hash"]==Coordinator._spec_hash(json.loads(x["spec"]))) ]
+        active=snapshot.get("review_policy_active",[])
+        if active:
+            policies={x["hash"]:json.loads(x["spec"]) for x in snapshot.get("review_policy_versions",[])}
+            policy=policies.get(active[0]["hash"])
+            if policy and "glm-review" not in policy["permitted_actions"]: eligible=[]
         if control["mode"]=="running" and not budget and not eligible and not any(x["state"] in {"submitted","acknowledged"} for x in snapshot["tasks"]):
-            cause=("Queued requests are blocked by unverified or failed dependencies" if queued else
+            cause=("Queued requests are blocked by dependency, authorization, pause or active policy gates" if queued else
                    "Queue exhausted: no eligible approved request")
             if snapshot["worker"]["state"]=="active" and endpoint_reachable is True:
                 cause+="; worker and endpoint are reachable, but no task may be dispatched"

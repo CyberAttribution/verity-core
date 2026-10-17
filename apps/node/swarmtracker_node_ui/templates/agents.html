@@ -1,6 +1,18 @@
 {% extends "base.html" %}
 {% block title %}Active Agents{% endblock %}
 {% block content %}
+<section class="panel"><div class="panel-head"><h2>Connect a review runtime</h2><a href="/tasks">Manage review tasks</a> · <a href="/notifications">Session notifications</a> · <a href="/demo">Disposable demo</a></div>
+<p>This fixed integration reaches a model endpoint for read-only GLM requests. It is not a tool-executing agent or a resumable conversation. Credentials are not accepted here.</p>
+{% for runtime in review_runtimes %}<article><h3>{{ runtime.id }} · {{ runtime.connection_state }}</h3>
+<p>{{ runtime.kind }} · {{ runtime.provider }} / {{ runtime.model }} · {{ runtime.endpoint }}</p>
+<p>Provenance: {{ runtime.provenance }} · Permissions: {{ runtime.permissions }}</p>
+<p>Connection: {{ runtime.diagnostic or 'Not checked' }}{% if runtime.checked %} · checked {{ runtime.checked }} UTC epoch{% endif %}</p>
+<p>Operations: observe {{ review_capabilities.observe }}, submit new request {{ review_capabilities.submit_new_request }}, resume conversation {{ review_capabilities.resume_conversation }}, retrieve remote status {{ review_capabilities.retrieve_remote_status }}, pause {{ review_capabilities.pause_remote }}, cancel {{ review_capabilities.cancel_remote }}.</p>
+<form method="post" action="/agents/{{ runtime.id }}/check"><input type="hidden" name="operator_token" value="{{ operator_token }}"><button type="submit">Test connection</button></form>
+{% if runtime.connection_state == 'connected' %}<form method="post" action="/agents/{{ runtime.id }}/assign-review">
+<input type="hidden" name="operator_token" value="{{ operator_token }}"><label>Workflow ID <input name="workflow_id" required pattern="[A-Za-z0-9]+"></label><label>Request ID <input name="task_id" required pattern="[A-Za-z0-9]+"></label>
+<label>Purpose <textarea name="purpose" required maxlength="3000"></textarea></label><label>Acceptance criteria <textarea name="acceptance" required maxlength="3000"></textarea></label><label>Expected output <textarea name="expected" required maxlength="3000"></textarea></label><button type="submit">Assign read-only review</button></form>{% endif %}</article>
+{% else %}<form method="post" action="/agents/register-review"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="agent_id" value="glm-review"><input type="hidden" name="endpoint" value="http://127.0.0.1:18001"><input type="hidden" name="model" value="glm-5.3-flash"><input type="hidden" name="provider" value="local-rental"><label>Provenance <input name="provenance" required maxlength="500" placeholder="Operator-configured local rental tunnel"></label><button type="submit">Register fixed runtime</button></form>{% endfor %}</section>
 {% include "_monitor_runs.html" %}
 <section class="panel"><div class="panel-head"><h2>Assigned work guidance</h2><a class="btn btn-ghost" href="/workflows">Open workflows</a></div>
 <p>Task progress and independent acceptance come from saved work records. Runtime contact is shown separately.</p>

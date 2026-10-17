@@ -1,5 +1,6 @@
 import json
 import time
+import io
 
 import pytest
 
@@ -282,7 +283,7 @@ def test_attention_distinguishes_healthy_idle_queue_from_failure_and_keeps_histo
     with c.db() as db: c._transition(db,"blockedSource","failed","synthetic failure")
     snap=c.snapshot(); snap["worker"]={"state":"active"}
     issues=attention(snap)
-    assert any("blocked by unverified or failed dependencies" in i["cause"] for i in issues)
+    assert any("blocked by dependency" in i["cause"] for i in issues)
     assert any(i["id"]=="request:blockedSource" for i in issues)
     with pytest.raises(ValueError,match="remains active"):
         c.record_attention("request:blockedSource","resolved","Not fixed",{i["id"] for i in issues})
@@ -298,6 +299,244 @@ def test_attention_reports_disconnected_agent_and_stalled_work(tmp_path):
     assert result["state"]=="disconnected" and result["heartbeat"]=="sample"
     issues=attention(c.snapshot(),participants=[participant],now=now[0])
     assert {x["id"] for x in issues}>={"stalled:guidance","agent:glm-review"}
+
+
+def test_superseded_blocked_reviews_retain_history_and_never_dispatch(tmp_path):
+    c=Coordinator(tmp_path/"work.db",clock=lambda:1000)
+    c.configure(rate=1,start=900,ceiling=110)
+    c.enqueue(review("failedSource"))
+    for name in ("oldReview", "oldReviewV2"):
+        spec=review(name); spec["dependencies"]=["failedSource"]; c.enqueue(spec)
+    c.enqueue(review("acceptedReview"))
+    with c.db() as db:
+        c._transition(db,"failedSource","failed","HTTP infrastructure error")
+        db.execute("UPDATE tasks SET evidence='Checked against code and tests' WHERE id='acceptedReview'")
+        c._transition(db,"acceptedReview","independently_verified","Checked against code and tests")
+    for name in ("oldReview", "oldReviewV2"):
+        c.supersede_task(name,"acceptedReview","Same contract covered by independently verified review")
+    snap=c.snapshot()
+    assert [x["state"] for x in snap["tasks"] if x["id"].startswith("oldReview")]==["queued","queued"]
+    assert len(snap["task_supersessions"])==2
+    c.control("running")
+    assert c.claim("worker") is None
+    assert any("Queue exhausted" in x["cause"] for x in attention(c.snapshot()))
+    with pytest.raises(ValueError,match="independently verified"):
+        c.supersede_task("failedSource","oldReview","Cannot accept a queued successor as evidence")
+
+
+def test_fixed_runtime_onboarding_connection_failure_and_verified_assignment(tmp_path,monkeypatch):
+    c=Coordinator(tmp_path/"pilot.db",adapter=lambda spec,rid:{"request_id":rid,"content":"bounded finding","finish_reason":"stop"},clock=lambda:1000)
+    c.configure(rate=1,start=900,ceiling=110)
+    with pytest.raises(ValueError,match="Unsupported runtime"):
+        c.register_review_runtime("shell-agent",endpoint="http://127.0.0.1:18001",model=MODEL,provider="local-rental",provenance="test")
+    c.register_review_runtime("glm-review",endpoint="http://127.0.0.1:18001",model=MODEL,provider="local-rental",provenance="operator registered")
+    class Response(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self,*args): self.close()
+    monkeypatch.setattr("swarmtracker_node_ui.session_coordinator.LOCAL_OPENER.open",lambda *a,**kw: (_ for _ in ()).throw(OSError("offline")))
+    assert c.check_review_runtime("glm-review")["state"]=="unavailable"
+    with pytest.raises(ValueError,match="Connect and test"):
+        c.assign_first_review("glm-review",workflow_id="pilot",task_id="pilotReview",purpose="Harmless critique",acceptance="One bounded finding",expected="Text")
+    monkeypatch.setattr("swarmtracker_node_ui.session_coordinator.LOCAL_OPENER.open",lambda *a,**kw: Response(json.dumps({"data":[{"id":MODEL}]}).encode()))
+    assert c.check_review_runtime("glm-review")["state"]=="connected"
+    c.assign_first_review("glm-review",workflow_id="pilot",task_id="pilotReview",purpose="Harmless critique",acceptance="One bounded finding",expected="Text")
+    assert c.snapshot()["work_sources"]==[{"workflow_id":"pilot","task_id":"pilotReview"}]
+    c.control("running"); assert c.run_one("worker")=="pilotReview"
+    assert c.snapshot()["tasks"][0]["state"]=="completed"
+    c.verify("pilotReview","independent tester","Checked bounded response against original task")
+    c.update_work("pilot","finished",checkpoint="bounded finding",evidence="Independent tester checked response")
+    assert c.snapshot()["tasks"][0]["state"]=="independently_verified"
+    assert c.snapshot()["agent_registrations"][0]["kind"]=="model-endpoint-review"
+
+
+def test_operator_queue_dependencies_priority_pause_cancel_and_restart(tmp_path):
+    path=tmp_path/"queue.db"
+    c=Coordinator(path,adapter=lambda spec,rid:{"request_id":rid,"content":spec["purpose"],"finish_reason":"stop"},clock=lambda:1000)
+    c.configure(rate=1,start=900,ceiling=110)
+    first=review("first"); second=review("second"); second["dependencies"]=["first"]
+    c.create_operator_task(first,priority=0);c.create_operator_task(second,priority=100)
+    c.control("running")
+    assert c.claim("owner") is None  # Neither draft is authorized.
+    c.authorize_operator_task("first","Operator approved first fixed review scope")
+    c.authorize_operator_task("second","Operator approved dependent review scope")
+    assert c.run_one("owner")=="first"  # Priority never bypasses a dependency.
+    c.verify("first","trusted runner","Checked first bounded finding")
+    c.edit_operator_task("second",second,pause=True)
+    assert c.run_one("owner") is None
+    reopened=Coordinator(path,adapter=c.adapter,clock=lambda:1000)
+    assert reopened.snapshot()["task_controls"][1]["paused"]==1
+    reopened.edit_operator_task("second",second,pause=False,priority=200)
+    assert reopened.run_one("owner")=="second"
+    assert reopened.snapshot()["tasks"][1]["state"]=="completed"
+    third=review("third"); reopened.create_operator_task(third)
+    reopened.authorize_operator_task("third","Operator approved third fixed review scope")
+    changed={**third,"purpose":"Different consequential scope"}
+    reopened.edit_operator_task("third",changed)
+    assert reopened.run_one("owner") is None
+    reopened.cancel_operator_task("third")
+    assert reopened.snapshot()["tasks"][2]["state"]=="cancelled"
+    assert [x["action"] for x in reopened.snapshot()["task_audit"] if x["task_id"]=="third"]==["created","authorized","edited","cancel"]
+
+
+def test_operator_queue_cycle_and_submitted_cancel_preserve_uncertainty(tmp_path):
+    c=Coordinator(tmp_path/"queue.db",clock=lambda:1000)
+    c.configure(rate=1,start=900,ceiling=110)
+    a=review("cycleA"); b=review("cycleB"); b["dependencies"]=["cycleA"]
+    c.create_operator_task(a);c.create_operator_task(b)
+    with pytest.raises(ValueError,match="cycle"):
+        c.edit_operator_task("cycleA",{**a,"dependencies":["cycleB"]})
+    c.authorize_operator_task("cycleA","Operator approved original task contract")
+    c.control("running"); assert c.claim("owner")["spec"]["id"]=="cycleA"
+    c.cancel_operator_task("cycleA")
+    snap=c.snapshot()
+    assert snap["tasks"][0]["state"]=="submitted" and snap["task_controls"][0]["cancellation_requested"]==1
+    assert "cannot cancel remote" in snap["task_audit"][-1]["detail"]
+
+
+def test_versioned_review_policy_enforced_on_queued_request(tmp_path):
+    c=Coordinator(tmp_path/"policy.db",adapter=lambda spec,rid:{"request_id":rid,"content":"ok","finish_reason":"stop"},clock=lambda:1000)
+    c.configure(rate=1,start=900,ceiling=110)
+    task=review("allowed"); c.create_operator_task(task)
+    c.authorize_operator_task("allowed","Operator approved bounded review contract")
+    allow={"permitted_actions":["glm-review"],"protected_targets":["filesystem","shell"],"require_approval":True,"spending_limit":100}
+    allow_hash=c.activate_review_policy(allow)
+    c.control("running");assert c.run_one("owner")=="allowed"
+    assert c.snapshot()["review_policy_decisions"][0]["policy_hash"]==allow_hash
+    denied=review("denied");c.create_operator_task(denied)
+    c.authorize_operator_task("denied","Operator approved second fixed review contract")
+    deny_hash=c.activate_review_policy({**allow,"permitted_actions":[]})
+    assert c.run_one("owner") is None
+    snap=c.snapshot()
+    assert snap["tasks"][1]["state"]=="queued" and snap["review_policy_decisions"][-1]["allowed"]==0
+    assert snap["review_policy_decisions"][0]["policy_hash"]==allow_hash and snap["review_policy_decisions"][-1]["policy_hash"]==deny_hash
+    with pytest.raises(ValueError,match="cannot exceed"):
+        c.activate_review_policy({**allow,"spending_limit":111})
+    c.activate_review_policy(allow)
+    assert c.run_one("owner")=="denied"
+    assert c.snapshot()["review_policy_decisions"][-1]["allowed"]==1
+
+
+def test_recovery_carries_policy_and_queue_audit_without_authorization_body(tmp_path):
+    from swarmtracker_node_ui.recovery_package import build,load
+    c=Coordinator(tmp_path/"queue.db",clock=lambda:1000)
+    c.configure(rate=1,start=900,ceiling=110)
+    c.create_operator_task(review("exportable"),priority=9)
+    c.authorize_operator_task("exportable","Operator approved bounded scope with no secrets")
+    c.activate_review_policy({"permitted_actions":["glm-review"],"protected_targets":["filesystem","shell"],
+                              "require_approval":True,"spending_limit":90})
+    package=tmp_path/"handoff.zip";anchor=tmp_path/"separate.sha256"
+    build(c.snapshot(),package,anchor,source_commit="a"*40)
+    loaded=load(package,anchor)
+    assert loaded["task_controls"][0]["priority"]==9
+    assert loaded["review_policy_versions"][0]["version"]==1
+    assert loaded["task_audit"][-1]["detail"]=="withheld"
+    assert b"Operator approved bounded scope" not in package.read_bytes()
+
+
+def test_in_app_notifications_cover_gates_and_keep_acknowledgment(tmp_path):
+    c=Coordinator(tmp_path/"notifications.db",clock=lambda:1000)
+    c.configure(rate=1,start=900,ceiling=110);c.control("running")
+    c.enqueue_work(json.loads(work("approvalWait")["spec"]));c.update_work("approvalWait","awaiting_approval")
+    c.enqueue_work(json.loads(work("stalledWork")["spec"]));c.update_work("stalledWork","working")
+    c.enqueue(review("reviewFailure"))
+    with c.db() as db:
+        db.execute("UPDATE tasks SET evidence='Rejected: independently checked mismatch' WHERE id='reviewFailure'")
+        c._transition(db,"reviewFailure","completed","synthetic complete but rejected")
+    snap=c.snapshot();snap["worker"]={"state":"absent"}
+    ids={x["id"] for x in attention(snap,now=1401)}
+    assert {"work:approvalWait","stalled:stalledWork","review:reviewFailure","worker:absent"}<=ids
+    c.record_attention("review:reviewFailure","acknowledged","Review mismatch inspected",ids)
+    fresh=Coordinator(c.path,clock=lambda:1000)
+    issue=next(x for x in attention(fresh.snapshot(),now=1401) if x["id"]=="review:reviewFailure")
+    assert issue["acknowledgment"]["status"]=="acknowledged"
+    with pytest.raises(ValueError,match="remains active"):
+        fresh.record_attention(issue["id"],"resolved","Cannot resolve mismatch",{x["id"] for x in attention(fresh.snapshot(),now=1401)})
+    with fresh.db() as db:
+        db.execute("UPDATE tasks SET evidence=NULL WHERE id='reviewFailure'")  # Controlled resolution of synthetic fixture.
+    ids={x["id"] for x in attention(fresh.snapshot(),now=1401)}
+    fresh.record_attention("review:reviewFailure","resolved","Corrected review recorded elsewhere",ids)
+    assert not any(x["id"]=="review:reviewFailure" for x in attention(fresh.snapshot(),now=1401))
+
+
+def test_operator_ui_creates_two_dependent_tasks_and_registration(tmp_path,monkeypatch):
+    from fastapi.testclient import TestClient
+    from swarmtracker_node_ui import app as ui, decision_routes
+    monkeypatch.setenv("NODE_UI_PRODUCT_DB",str(tmp_path/"ui.db"))
+    c=Coordinator(tmp_path/"ui.db",adapter=lambda spec,rid:{"request_id":rid,"content":"safe result","finish_reason":"stop"})
+    c.configure(rate=1,start=time.time()-1,ceiling=110)
+    client=TestClient(ui.app);base="http://127.0.0.1"
+    register={"operator_token":decision_routes.TOKEN,"agent_id":"glm-review","endpoint":"http://127.0.0.1:18001",
+              "model":MODEL,"provider":"local-rental","provenance":"Operator configured fixed local rental"}
+    assert client.post(base+"/agents/register-review",data=register,follow_redirects=False).status_code==303
+    assert "resume conversation False" in client.get(base+"/agents").text
+    for task_id,deps in (("firstUI",""),("secondUI","firstUI")):
+        form={"operator_token":decision_routes.TOKEN,"permissions":"read-only-review","id":task_id,
+              "purpose":"Review harmless synthetic data","acceptance":"One bounded finding","expected":"Text finding",
+              "validation":"Independent tester review","dependencies":deps,"priority":"10"}
+        assert client.post(base+"/tasks",data=form,follow_redirects=False).status_code==303
+        assert client.post(base+"/tasks/"+task_id+"/control",data={"operator_token":decision_routes.TOKEN,"action":"authorize",
+                           "evidence":"Operator approved the saved harmless review contract"},follow_redirects=False).status_code==303
+    assert "Dependencies awaiting independent verification" in client.get(base+"/tasks").text
+    c.control("running");assert c.run_one("worker")=="firstUI"
+    c.verify("firstUI","trusted runner","Compared actual response to saved criteria")
+    assert c.run_one("worker")=="secondUI"
+    c.verify("secondUI","trusted runner","Compared dependent response to accepted predecessor")
+    assert {x["id"] for x in c.snapshot()["tasks"]}=={"firstUI","secondUI"}
+
+
+def test_disposable_demo_rejection_approval_execution_export_and_reset(tmp_path,monkeypatch):
+    from swarmtracker_node_ui import product_demo,decision_runs,report_actions
+    monkeypatch.setenv("NODE_UI_DEMO_PROFILE","1")
+    monkeypatch.setenv("NODE_UI_DEMO_ROOT",str(tmp_path))
+    monkeypatch.setenv("NODE_UI_PRODUCT_DB",str(tmp_path/"product.db"))
+    c=Coordinator(tmp_path/"product.db")
+    decisions=decision_runs.RunStore(tmp_path/"decisions.db")
+    reports=report_actions.Store(tmp_path/"reports.db",tmp_path/"output")
+    one=product_demo.setup(c,decisions,reports)
+    assert decisions.get(one["rejected"])["decision"]=="rejected"
+    with pytest.raises(ValueError,match="approval required"):
+        product_demo.finish(c,one["workflow"],decisions,reports)
+    pending=decisions.get(one["pending"])
+    decisions.authorize(pending["id"],"approved","Synthetic scoped approval","synthetic-operator",pending["head_hash"])
+    proposed=reports.get(one["proposal"])
+    approved=reports.decide(proposed["id"],"approved","Reviewed exact synthetic output","synthetic-operator",proposed["head_hash"])
+    written=reports.execute(approved["id"],"synthetic-operator",approved["head_hash"])
+    assert written["state"]=="written"
+    export,anchor=product_demo.finish(c,one["workflow"],decisions,reports)
+    assert product_demo.verify_export(export,anchor)
+    assert c.snapshot()["work_items"][0]["state"]=="finished"
+    two=product_demo.setup(c,decisions,reports)
+    assert two["workflow"]!=one["workflow"] and export.exists() and anchor.exists()
+    anchor.write_text("0"*64)
+    assert not product_demo.verify_export(export,anchor)
+
+
+def test_disposable_demo_ui_requires_approval_before_export(tmp_path,monkeypatch):
+    from fastapi.testclient import TestClient
+    from swarmtracker_node_ui import app as ui, decision_routes, report_routes, product_demo
+    monkeypatch.setenv("NODE_UI_DEMO_PROFILE","1")
+    monkeypatch.setenv("NODE_UI_DEMO_ROOT",str(tmp_path))
+    monkeypatch.setenv("NODE_UI_PRODUCT_DB",str(tmp_path/"product.db"))
+    client=TestClient(ui.app);base="http://127.0.0.1"
+    assert client.get(base+"/demo").status_code==200
+    start=client.post(base+"/demo/new",data={"operator_token":decision_routes.TOKEN},follow_redirects=False)
+    assert start.status_code==303
+    work_id=start.headers["location"].split("/")[-1]
+    assert "SYNTHETIC EXAMPLE" in client.get(base+start.headers["location"]).text
+    blocked=client.post(base+"/demo/"+work_id+"/finish",data={"operator_token":decision_routes.TOKEN})
+    assert blocked.status_code==409
+    snap=Coordinator(tmp_path/"product.db").snapshot()
+    links=[x for x in snap["workflow_links"] if x["workflow_id"]==work_id]
+    pending=next(decision_routes.RUNS.get(x["target_id"]) for x in links if x["kind"]=="decision" and decision_routes.RUNS.get(x["target_id"])["decision"]=="pending")
+    decision_routes.RUNS.authorize(pending["id"],"approved","Synthetic review accepted","operator",pending["head_hash"])
+    proposed=report_routes.STORE.get(next(x["target_id"] for x in links if x["kind"]=="report_action"))
+    approved=report_routes.STORE.decide(proposed["id"],"approved","Synthetic exact text approved","operator",proposed["head_hash"])
+    report_routes.STORE.execute(approved["id"],"operator",approved["head_hash"])
+    assert client.post(base+"/demo/"+work_id+"/finish",data={"operator_token":decision_routes.TOKEN},follow_redirects=False).status_code==303
+    history=client.get(base+"/demo/"+work_id+"/export/history")
+    checkpoint=client.get(base+"/demo/"+work_id+"/export/checkpoint")
+    assert history.status_code==200 and checkpoint.status_code==200
+    assert product_demo.verify_export(tmp_path/(work_id+".json"),tmp_path/(work_id+".sha256"))
 
 
 def test_portable_handoff_separate_process_and_integrity(tmp_path):
@@ -321,6 +560,8 @@ def test_portable_handoff_separate_process_and_integrity(tmp_path):
     assert reconstructed["request_states"]["independently_verified"]==["source"]
     assert reconstructed["work_items"][0]["spec"]["authorization"]=="explicit-product-development"
     assert reconstructed["next_eligible_work"]==["guidance"]
+    assert reconstructed["available_outputs"]["safe-result.txt"]["sha256"]
+    assert reconstructed["control"]["ceiling"]==110
     assert load(package,checkpoint)["raw_request_bodies_available"] is False
     package.write_bytes(package.read_bytes()+b"tamper")
     with pytest.raises(ValueError,match="differs"): load(package,checkpoint)

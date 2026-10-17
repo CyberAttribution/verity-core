@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Review executor policy{% endblock %}
+{% block content %}
+<section class="panel"><h2>Fixed review executor policy</h2>
+<p>This policy governs dispatch of the GLM read-only review adapter. Filesystem and shell remain protected. It does not reconfigure Keel, the fixed report action, or an external model runtime. A submitted remote action cannot be recalled by a later policy version.</p>
+<form method="post" action="/review-policy"><input type="hidden" name="operator_token" value="{{ operator_token }}">
+<label>GLM review <select name="allow_review"><option value="yes">Allow</option><option value="no">Deny</option></select></label>
+<label>Approval required <select name="require_approval"><option value="yes">Yes, bind saved operator task</option><option value="no">No additional operator task approval</option></select></label>
+<label>Spending limit (cannot exceed session ceiling {{ ceiling }}) <input type="number" step="0.01" min="0.01" max="{{ ceiling }}" name="spending_limit" value="{{ ceiling }}" required></label>
+<button type="submit">Activate immutable version</button></form></section>
+<section class="panel"><h2>Versions and dispatch decisions</h2>
+{% for version in versions %}<p>v{{ version.version }} · SHA-256 {{ version.hash }} · {{ 'active' if active and active[0].hash == version.hash else 'historical' }} · {{ version.spec }} · {{ version.created }} UTC epoch</p>{% else %}<p>Built-in fixed review gate; no operator version activated.</p>{% endfor %}
+{% for item in decisions %}<p>{{ item.task_id }} · {{ 'allowed' if item.allowed else 'denied' }} · {{ item.reason }} · policy {{ item.policy_hash }} · {{ item.at }} UTC epoch</p>{% endfor %}</section>
+{% endblock %}

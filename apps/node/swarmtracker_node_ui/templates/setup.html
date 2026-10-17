@@ -26,4 +26,9 @@
 <p>Activation permits product use. Sending evidence to a cloud provider still requires the separate authorization controls for each job.</p>
 {% if active %}<h2>3. Run your first analysis</h2><p>Use a small, non-sensitive specimen first. Review the result, inspect Active Agents, preserve it for decision review, then export the Trust Record and retain its checkpoint separately.</p><a class="btn" href="/analyze">Open Analyze</a>{% endif %}
 </section>
+<section class="panel"><h2>Connection and recovery</h2>
+<p>If the runtime is unavailable, use <strong>Test saved connection</strong> above. Check the selected endpoint and model inventory, start or reconnect the independently operated runtime, then test again. A reachable model list only proves endpoint reachability; run a small analysis and inspect its actual response before relying on it.</p>
+<p>Application restart preserves the local profile and records. A submitted request whose outcome was not observed must be reconciled from its request ID and output before another dispatch. In Sessions, inspect worker PID, heartbeat, current task, approval and spending gates. Keep any exported history and its SHA-256 checkpoint separately; the package does not itself give a different chat access to this profile.</p>
+<p>Quitting the native shell stops only the backend process it launched. It does not stop an independently operated model, rental instance, or supervised session worker.</p>
+</section>
 {% endblock %}

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Session notifications{% endblock %}
+{% block content %}
+<section class="panel"><h2>Issues needing attention</h2><p>In-app observations from saved task, approval, worker and budget records. Acknowledgment does not resolve the underlying condition. No external messages or OS notifications are sent.</p>
+{% for issue in issues %}<article><h3>{{ issue.id }}</h3><p>{{ issue.cause }}</p><p><a href="{{ issue.link }}">Inspect evidence and next action</a></p>
+{% if issue.acknowledgment %}<p>{{ issue.acknowledgment.status }} · {{ issue.acknowledgment.detail }} · {{ issue.acknowledgment.at }} UTC epoch</p>{% else %}
+<form method="post" action="/workflows/attention/{{ issue.id }}"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="status" value="acknowledged"><label>Review note <input name="detail" required></label><button type="submit">Acknowledge</button></form>{% endif %}</article>
+{% else %}<p>No current issue. Historical acknowledgments remain below.</p>{% endfor %}</section>
+<section class="panel"><h2>History</h2>{% for item in history %}<p>{{ item.issue_id }} · {{ item.status }} · {{ item.detail }} · {{ item.at }} UTC epoch</p>{% else %}<p>No recorded acknowledgments or resolutions.</p>{% endfor %}</section>
+{% endblock %}

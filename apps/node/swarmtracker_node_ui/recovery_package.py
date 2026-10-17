@@ -58,6 +58,14 @@ def build(snapshot, destination, checkpoint_path, *, source_commit, reviewed_out
           "work_approval_gates":snapshot["work_approval_gates"],
           "work_corrections":[{**x,"evidence_hash":_digest(x["evidence"].encode()),"evidence":"withheld"} for x in snapshot["work_corrections"]],
           "work_successors":[{**x,"reason_hash":_digest(x["reason"].encode()),"reason":"withheld"} for x in snapshot["work_successors"]],
+          "task_supersessions":[{**x,"evidence_hash":_digest(x["evidence"].encode()),"evidence":"withheld"} for x in snapshot.get("task_supersessions",[])],
+          "agent_registrations":[{k:v for k,v in x.items() if k in ("id","kind","endpoint","model","provider","permissions","created","connection_state","checked","diagnostic")}
+                                 for x in snapshot.get("agent_registrations",[])],
+          "task_controls":snapshot.get("task_controls",[]),
+          "task_audit":[{**x,"detail_hash":_digest(x["detail"].encode()),"detail":"withheld"} for x in snapshot.get("task_audit",[])],
+          "review_policy_versions":snapshot.get("review_policy_versions",[]),
+          "review_policy_active":snapshot.get("review_policy_active",[]),
+          "review_policy_decisions":snapshot.get("review_policy_decisions",[]),
           "outputs":{name:{"sha256":_digest(value.encode()),"path":"outputs/"+name} for name,value in outputs.items()}}
     encoded=json.dumps(data,sort_keys=True,ensure_ascii=False,allow_nan=False,indent=2).encode()
     readme=("# Verity recovery handoff\n\nThis is an observation package, not an executable worker database. "
@@ -87,7 +95,7 @@ def load(package, checkpoint_path):
         for name,output in data["outputs"].items():
             if _digest(archive.read(output["path"]))!=output["sha256"]: raise ValueError("Output integrity failed")
     states={state:[x["id"] for x in data["requests"] if x["state"]==state] for state in
-            ("queued","submitted","acknowledged","completed","independently_verified","failed","unresolved")}
+            ("queued","submitted","acknowledged","completed","independently_verified","failed","unresolved","cancelled")}
     by_id={w["id"]:w for w in data["work_items"]}
     eligible=[w["id"] for w in data["work_items"] if w["state"]=="queued" and
               all(by_id.get(dep,{}).get("state")=="finished" for dep in w["spec"]["dependencies"])]
@@ -95,7 +103,15 @@ def load(package, checkpoint_path):
                                       if by_id.get(dep,{}).get("state")!="finished"]} for w in data["work_items"]
              if w["state"]=="queued" and w["id"] not in eligible]
     return {"source_commit":data["source_commit"],"work_items":data["work_items"],"request_states":states,
-            "worker":data["worker_observation"],"estimated_charge":data["estimated_charge"],
+            "task_supersessions":data.get("task_supersessions",[]),
+            "agent_registrations":data.get("agent_registrations",[]),
+            "task_controls":data.get("task_controls",[]),"task_audit":data.get("task_audit",[]),
+            "review_policy_versions":data.get("review_policy_versions",[]),
+            "review_policy_active":data.get("review_policy_active",[]),
+            "review_policy_decisions":data.get("review_policy_decisions",[]),
+            "continuations":data["continuations"],"continuation_authorizations":data["continuation_authorizations"],
+            "attention_history":data["attention_history"],"available_outputs":data["outputs"],
+            "worker":data["worker_observation"],"control":data["control"],"estimated_charge":data["estimated_charge"],
             "budget_remaining_for_dispatch":max(0,data["control"]["ceiling"]-data["control"]["margin"]-data["estimated_charge"]),
             "next_eligible_work":eligible,"blocked_work":blocked,"running_work":[w["id"] for w in data["work_items"] if w["state"]=="working"],
             "next_eligible_requires_live_gate_check":True,"raw_request_bodies_available":False}

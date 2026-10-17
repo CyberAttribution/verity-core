@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Keel Governance{% endblock %}
 {% block content %}
+<section class="panel"><a href="/review-policy">Configure fixed review executor policy</a></section>
 {% include "_decision_runs.html" %}
 {% include "_report_action_summary.html" %}
 {% if run %}{% include "_decision_control.html" %}{% endif %}

@@ -270,13 +270,17 @@ class VerityAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             if let data = try? JSONSerialization.data(withJSONObject: record, options: [.prettyPrinted]) {
                 try? data.write(to: support.appendingPathComponent("desktop-smoke.json"))
             }
-            self.webView?.takeSnapshot(with: nil) { image, _ in
-                if let tiff = image?.tiffRepresentation,
-                   let bitmap = NSBitmapImageRep(data: tiff),
-                   let data = bitmap.representation(using: .png, properties: [:]) {
-                    try? data.write(to: support.appendingPathComponent("desktop-smoke.png"))
+            // didFinish can precede WebKit's first painted stylesheet frame.
+            // This delay is confined to smoke capture, not normal navigation.
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(250)) { [weak self] in
+                self?.webView?.takeSnapshot(with: nil) { image, _ in
+                    if let tiff = image?.tiffRepresentation,
+                       let bitmap = NSBitmapImageRep(data: tiff),
+                       let data = bitmap.representation(using: .png, properties: [:]) {
+                        try? data.write(to: support.appendingPathComponent("desktop-smoke.png"))
+                    }
+                    if !CommandLine.arguments.contains("--smoke-hold") { NSApp.terminate(nil) }
                 }
-                if !CommandLine.arguments.contains("--smoke-hold") { NSApp.terminate(nil) }
             }
             if CommandLine.arguments.contains("--smoke-hold"), self.acceptanceTimer == nil {
                 self.acceptanceTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in

@@ -16,7 +16,8 @@
 <div class="kv"><span>Latest request</span><code>{{ view.request.request_id or 'None observed' }} · {{ view.request.state or 'unknown' }} · {{ view.request.finish_reason or 'unknown finish' }}</code></div>
 <div class="kv"><span>Macs</span><code>{{ record.identity.macs | join(', ') }}</code></div>
 <div class="kv"><span>Branch / commits</span><code>{{ record.identity.branch }} · {{ record.identity.commits | join(', ') }}</code></div>
-<div class="kv"><span>Rate / start</span><code>{{ view.billing.rate if view.billing.rate is defined else 'Unknown' }} {{ view.billing.currency or '' }}/hour · {{ view.billing.billing_start if view.billing.billing_start is defined else 'Unknown' }}</code></div>
+<div class="kv"><span>Rate / provider billing start</span><code>{{ view.billing.rate if view.billing.rate is defined else 'Unknown' }} {{ view.billing.currency or '' }}/hour · {{ view.billing.billing_start if view.billing.billing_start is defined else 'Unknown' }}</code></div>
+<div class="kv"><span>Estimate basis / guest boot proxy</span><code>{{ view.estimate_basis }} · {{ view.billing.estimate_start_proxy if view.billing.estimate_start_proxy is defined else 'Unknown' }}</code></div>
 <div class="kv"><span>Rate source / observed at</span><code>{{ view.rate_source or 'Unknown' }} · {{ view.rate_observed_at or 'Unknown' }}</code></div>
 <div class="kv"><span>Elapsed / estimate</span><code>{{ view.elapsed_seconds if view.elapsed_seconds is not none else 'Unknown' }} seconds · {{ view.estimated_charge if view.estimated_charge is not none else 'Unknown' }}</code></div>
 <div class="kv"><span>Provider charge</span><code>{{ view.reported_charge if view.reported_charge is not none else 'Not reported' }}</code></div>

@@ -49,7 +49,7 @@ def validate_event(event):
         "task": {"task_id", "title", "state", "scope", "run_id", "action_id", "commit", "test", "output", "verification"},
         "request": {"task_id", "state", "request_id", "finish_reason"},
         "result": {"task_id", "state", "output", "verification", "finish_reason"},
-        "contact": {"state"}, "billing": {"rate", "currency", "billing_start", "rate_as_of", "ceiling", "reported_charge", "charge_as_of", "exclusions"},
+        "contact": {"state"}, "billing": {"rate", "currency", "billing_start", "estimate_start_proxy", "rate_as_of", "ceiling", "reported_charge", "charge_as_of", "exclusions"},
         "shutdown": {"requested", "confirmed"}, "resource": {"name", "state", "billable"},
         "note": {"message", "corrects"},
     }[event["kind"]]
@@ -87,8 +87,9 @@ def validate_event(event):
         raise ValueError("Successful inventory requires model list")
     if event["kind"] == "billing" and "rate" in data and (not isinstance(data["rate"], (int, float)) or isinstance(data["rate"], bool) or not 0 <= data["rate"] <= 100000):
         raise ValueError("Invalid rate")
-    if event["kind"] == "billing" and "billing_start" in data and (not isinstance(data["billing_start"], (int, float)) or isinstance(data["billing_start"], bool) or not 0 < data["billing_start"] < 4102444800):
-        raise ValueError("Invalid billing start")
+    for field in ("billing_start", "estimate_start_proxy"):
+        if event["kind"] == "billing" and field in data and (not isinstance(data[field], (int, float)) or isinstance(data[field], bool) or not 0 < data[field] < 4102444800):
+            raise ValueError("Invalid billing time")
     if event["kind"] == "shutdown" and data.get("confirmed") and event["source"] not in {"provider_api", "provider_console"}:
         raise ValueError("Termination requires provider confirmation")
     return event
@@ -190,7 +191,7 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
     bill = data("billing")
     rate_event = next((e for e in reversed(record["events"]) if e["kind"] == "billing" and "rate" in e["data"]), None)
     charge_event = next((e for e in reversed(record["events"]) if e["kind"] == "billing" and "reported_charge" in e["data"]), None)
-    start, rate = bill.get("billing_start"), bill.get("rate")
+    start, rate = bill.get("billing_start", bill.get("estimate_start_proxy")), bill.get("rate")
     stop_at = latest.get("shutdown", {}).get("at") if confirmed and data("shutdown").get("confirmed") else latest.get("provider", {}).get("at") if confirmed else None
     elapsed = max(0, (min(now, stop_at) if stop_at else now) - start) if isinstance(start, (int, float)) else None
     estimate = round(elapsed / 3600 * rate, 2) if elapsed is not None and isinstance(rate, (int, float)) else None
@@ -224,7 +225,7 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
             "activity": "active" if activity else "unknown" if stale else "no recent request", "stale": stale,
             "last_contact": datetime.fromtimestamp(contact_at, timezone.utc).isoformat() if contact_at else None,
             "tasks": task_views, "alerts": alerts, "billing": bill, "elapsed_seconds": elapsed,
-            "estimated_charge": estimate, "reported_charge": bill.get("reported_charge"),
+            "estimated_charge": estimate, "estimate_basis": "provider billing start" if "billing_start" in bill else "guest boot proxy" if "estimate_start_proxy" in bill else "unknown", "reported_charge": bill.get("reported_charge"),
             "rate_source": rate_event["source"] if rate_event else None, "rate_observed_at": rate_event["at"] if rate_event else None,
             "charge_source": charge_event["source"] if charge_event else None, "charge_observed_at": charge_event["at"] if charge_event else None,
             "model_details": data("model"), "inventory": inventory, "request": data("request"), "retained_resources": retained,

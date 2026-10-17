@@ -42,6 +42,7 @@ def test_empty_billing_blocked_ssh_download_local_work_and_stale():
     view = derive(record, now=t)
     assert view["model"] == "unknown" and view["activity"] != "active"
     assert view["estimated_charge"] == pytest.approx(22.32, abs=.01)
+    assert view["estimate_basis"] == "provider billing start"
     assert view["reported_charge"] is None
     assert any("no recent GPU" in a for a in view["alerts"])
     assert any("Prolonged paid idle" in a for a in view["alerts"])
@@ -125,3 +126,12 @@ def test_collector_crash_restart_dedupes_and_alerts(tmp_path):
 def test_invalid_observations_fail_before_storage(kind, data):
     with pytest.raises(ValueError):
         validate_event(event("bad", kind, "operator", data))
+
+
+def test_guest_boot_proxy_is_not_labeled_provider_billing_start():
+    now = time.time()
+    record = {"identity": IDENTITY, "events": [dict(event("estimate", "billing", "ssh", {"rate": 22.32, "currency": "USD", "estimate_start_proxy": now - 1800}), received=now)]}
+    view = derive(record, now=now)
+    assert view["estimate_basis"] == "guest boot proxy"
+    assert view["billing"].get("billing_start") is None
+    assert view["estimated_charge"] == pytest.approx(11.16, abs=.01)

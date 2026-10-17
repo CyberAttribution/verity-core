@@ -88,3 +88,22 @@ def test_read_only_sessions_navigation():
     assert "Read-only records" in response.text
     assert 'href="/sessions"' in response.text
     assert client.post("/sessions").status_code == 405
+
+
+def test_collector_crash_restart_dedupes_and_alerts(tmp_path):
+    from tools.session_collector import collect_once
+    db = SessionStore(tmp_path / "session.db")
+    db.create(IDENTITY)
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    import json
+    payload = {"session_id": IDENTITY["id"], "event": event("p", "provider", "provider_console", {"state": "running"})}
+    pending = inbox / "provider.json"
+    pending.write_text(json.dumps(payload))
+    notices = collect_once(inbox, db)
+    assert (inbox / "provider.seen").exists()
+    assert any("no recent GPU" in n for n in notices)
+    # Simulate commit followed by a crash before inbox rename.
+    pending.write_text(json.dumps(payload))
+    collect_once(inbox, SessionStore(tmp_path / "session.db"))
+    assert len(db.get(IDENTITY["id"])["events"]) == 1

@@ -149,21 +149,28 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
             resources[data["name"]] = e
     def data(kind):
         return accumulated.get(kind, {})
-    provider = data("provider").get("state", "unknown")
-    confirmed = data("shutdown").get("confirmed") or provider == "terminated" and latest.get("provider", {}).get("source") in {"provider_api", "provider_console"}
+    observed_provider = data("provider").get("state", "unknown")
+    confirmed = data("shutdown").get("confirmed") or observed_provider == "terminated" and latest.get("provider", {}).get("source") in {"provider_api", "provider_console"}
+    provider = observed_provider
     if confirmed:
         provider = "terminated"
     contact_at = max((e["received"] for e in record["events"] if e["kind"] in {"contact", "provider", "connection", "inventory", "model", "request"}), default=None)
     stale = contact_at is None or now - contact_at > stale_after
+    if stale and not confirmed:
+        provider = "unknown"
     inventory = data("inventory")
     model = data("model").get("state", "unknown")
     if inventory.get("checked") and not inventory.get("models") and ("model" not in latest or latest["inventory"]["received"] > latest["model"]["received"]):
         model = "absent"
     if stale and not confirmed:
         model = "unknown"
+    if data("connection").get("state") == "blocked" and ("inventory" not in latest or latest["connection"]["received"] > latest["inventory"]["received"]):
+        model = "unknown"
     running_gpu = [e for e in tasks.values() if e["data"].get("scope") == "gpu" and e["data"]["state"] == "running"]
     last_request = latest.get("request")
-    activity = bool(running_gpu and last_request and now - last_request["received"] <= idle_after and last_request["data"].get("state") == "running")
+    latest_result = latest.get("result")
+    activity = bool(running_gpu and last_request and now - last_request["received"] <= idle_after and last_request["data"].get("state") == "running" and
+                    not (latest_result and latest_result["received"] > last_request["received"] and latest_result["data"].get("task_id") == last_request["data"].get("task_id")))
     bill = data("billing")
     start, rate = bill.get("billing_start"), bill.get("rate")
     stop_at = latest.get("shutdown", {}).get("at") if confirmed and data("shutdown").get("confirmed") else latest.get("provider", {}).get("at") if confirmed else None
@@ -176,8 +183,8 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
         alerts.append("Paid instance: no recent GPU request activity")
     if stale and not confirmed:
         alerts.append("Contact stale or unknown")
-    if model == "failed":
-        alerts.append("Model failure reported")
+    if data("model").get("state") == "failed":
+        alerts.append("Model failure reported in last model observation")
     if elapsed and elapsed > idle_after and model in {"unknown", "absent", "downloading", "loading"}:
         alerts.append("Prolonged setup")
     if estimate is not None and isinstance(bill.get("ceiling"), (int, float)) and estimate >= bill["ceiling"] - budget_margin:
@@ -191,7 +198,7 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
             item["state"] = "incomplete output"
             item["verification"] = "Model output reached length limit; review incomplete"
         task_views.append(item)
-    return {"provider": provider, "connection": "unknown" if stale else data("connection").get("state", "unknown"), "model": model,
+    return {"provider": provider, "last_provider_state": observed_provider, "connection": "unknown" if stale else data("connection").get("state", "unknown"), "model": model,
             "activity": "active" if activity else "unknown" if stale else "no recent request", "stale": stale,
             "last_contact": datetime.fromtimestamp(contact_at, timezone.utc).isoformat() if contact_at else None,
             "tasks": task_views, "alerts": alerts, "billing": bill, "elapsed_seconds": elapsed,

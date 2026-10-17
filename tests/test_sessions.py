@@ -52,6 +52,9 @@ def test_empty_billing_blocked_ssh_download_local_work_and_stale():
     assert derive(record, now=t + .3)["model"] == "loading"
     assert derive(record, now=t + 600)["model"] == "unknown"
     assert derive(record, now=t + 600)["stale"]
+    assert derive(record, now=t + 600)["provider"] == "unknown"
+    record["events"].append(dict(event("sshblocked", "connection", "ssh", {"state": "blocked"}, t), received=t + 1))
+    assert derive(record, now=t + 2)["model"] == "unknown"
 
 
 def test_request_verification_and_termination_with_retained_resource():
@@ -64,6 +67,7 @@ def test_request_verification_and_termination_with_retained_resource():
     assert derive(record, now=t)["activity"] == "active"
     record["events"].append(dict(event("truncated", "result", "model_server", {"task_id": "review", "state": "completed", "finish_reason": "length"}, t), received=t))
     assert derive(record, now=t)["tasks"][0]["state"] == "incomplete output"
+    assert derive(record, now=t)["activity"] != "active"
     record["events"].extend([dict(event("done", "task", "operator", {"task_id": "review", "title": "Review", "scope": "gpu", "state": "verified", "output": "review.json", "verification": "tests passed"}, t), received=t),
                              dict(event("complete", "result", "model_server", {"task_id": "review", "state": "completed", "finish_reason": "stop"}, t), received=t),
                              dict(event("stop", "shutdown", "operator", {"requested": True}, t), received=t)])

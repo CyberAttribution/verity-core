@@ -102,7 +102,7 @@ def test_metadata_only_telemetry_outage_and_truncation(tmp_path):
         seen.append(item)
         emitted.set()
         raise ConnectionError("OTLP unavailable")
-    def model(s,r): return {"request_id":r,"content":"secret response","finish_reason":"length","usage":{"prompt_tokens":7,"completion_tokens":2}}
+    def model(s,r): return {"request_id":r,"content":"secret response","finish_reason":"length","usage":{"prompt_tokens":7,"completion_tokens":2,"credential":"SECRET_TOKEN"}}
     c=Coordinator(tmp_path/"q.db",adapter=model,telemetry=observer,session_id="synthetic")
     c.configure(rate=1,start=time.time()-5,ceiling=100)
     c.enqueue(spec("one"));c.control("running");c.run_one("w")
@@ -111,6 +111,7 @@ def test_metadata_only_telemetry_outage_and_truncation(tmp_path):
     assert seen[0]["session_id"] == "synthetic" and seen[0]["task_id"] == "one"
     assert seen[0]["finish_reason"] == "length" and seen[0]["usage"]["completion_tokens"] == 2
     assert "secret response" not in str(seen) and "Review this bounded" not in str(seen)
+    assert "SECRET_TOKEN" not in str(seen)
 
 
 def test_gpu_samples_stale_without_outcome(tmp_path):

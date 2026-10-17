@@ -174,9 +174,10 @@ class Coordinator:
 
     def _observe(self, task_id, request_id, finish, usage, latency, error):
         if self.telemetry and self._telemetry_slots.acquire(blocking=False):
+            safe_usage={k:v for k,v in (usage or {}).items() if k in {"prompt_tokens","completion_tokens","total_tokens"} and type(v) is int and 0 <= v <= 100000000} if isinstance(usage,dict) else {}
             item={"session_id":self.session_id or "unknown", "task_id":task_id,
                   "request_id":request_id,"model":MODEL,"latency_ms":round(latency*1000,2),
-                  "finish_reason":finish,"usage":usage if isinstance(usage,dict) else {},"error_class":error}
+                  "finish_reason":finish,"usage":safe_usage,"error_class":error}
             def emit():
                 try:
                     self.telemetry(item)

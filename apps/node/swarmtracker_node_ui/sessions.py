@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from . import store
 
 DB_PATH = Path(os.environ.get("NODE_UI_SESSIONS_DB", str(store.DB_PATH.with_name("development-sessions.db"))))
-KINDS = {"provider", "connection", "inventory", "model", "task", "request", "result", "outcome", "contact", "billing", "shutdown", "resource", "note"}
+KINDS = {"provider", "connection", "inventory", "model", "task", "request", "result", "outcome", "contact", "billing", "shutdown", "resource", "gpu", "note"}
 SOURCES = {"provider_api", "provider_console", "public_pricing", "ssh", "model_server", "local_collector", "operator", "test"}
 STATES = {"provisioning", "running", "stopping", "terminated", "unknown"}
 MODEL_STATES = {"unknown", "absent", "downloading", "downloaded", "loading", "ready", "inference", "failed"}
@@ -58,6 +58,7 @@ def validate_event(event):
         "outcome": {"task_id", "state", "result_id", "evidence", "verifier", "detail"},
         "contact": {"state"}, "billing": {"rate", "currency", "billing_start", "estimate_start_proxy", "rate_as_of", "ceiling", "reported_charge", "charge_as_of", "exclusions"},
         "shutdown": {"requested", "confirmed"}, "resource": {"name", "state", "billable"},
+        "gpu": {"index", "uuid", "utilization_pct", "memory_used_mib", "memory_total_mib"},
         "note": {"message", "corrects"},
     }[event["kind"]]
     if not data or not set(data) <= allowed:
@@ -86,6 +87,12 @@ def validate_event(event):
         raise ValueError("Request or result requires a task ID")
     if event["kind"] == "resource" and not data.get("name"):
         raise ValueError("Resource requires a name")
+    if event["kind"] == "gpu":
+        if event["source"] not in {"ssh", "local_collector", "test"} or type(data.get("index")) is not int or not 0 <= data["index"] < 32 or not isinstance(data.get("uuid"),str) or not data["uuid"].startswith("GPU-"):
+            raise ValueError("GPU sample requires identity and collector source")
+        for name,limit in (("utilization_pct",100),("memory_used_mib",1e7),("memory_total_mib",1e7)):
+            if type(data.get(name)) not in (int,float) or not 0 <= data[name] <= limit:
+                raise ValueError("Invalid GPU measurement")
     if event["kind"] == "model" and data.get("state") not in MODEL_STATES:
         raise ValueError("Model requires a valid state")
     if event["kind"] == "request" and data.get("state") not in {"running", "completed", "failed"}:
@@ -203,6 +210,7 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
     tasks = {}
     outcomes = {}
     resources = {}
+    gpu = {}
     for e in record["events"]:
         kind, data = e["kind"], e["data"]
         latest[kind] = e
@@ -213,6 +221,8 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
             outcomes[data["task_id"]] = e
         if kind == "resource":
             resources[data["name"]] = e
+        if kind == "gpu":
+            gpu[data["index"]] = e
     def data(kind):
         return accumulated.get(kind, {})
     state_report = next((e for e in reversed(record["events"]) if e["kind"] == "provider" and "state" in e["data"]), None)
@@ -287,6 +297,8 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
             item["state"] = "incomplete output"
             item["verification"] = "Model output reached length limit; review incomplete"
         task_views.append(item)
+    gpu_samples = [dict(e["data"], observed_at=e["at"], received=e["received"],
+                        state="stale" if now-e["received"] > stale_after else "observed") for e in sorted(gpu.values(),key=lambda x:x["data"]["index"])]
     return {"provider": provider, "last_provider_state": observed_provider, "connection": "unknown" if stale else data("connection").get("state", "unknown"), "model": model,
             "activity": "active" if activity else "unknown" if stale else "no recent request", "stale": stale,
             "last_contact": datetime.fromtimestamp(contact_at, timezone.utc).isoformat() if contact_at else None,
@@ -294,7 +306,7 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
             "estimated_charge": estimate, "estimate_basis": "provider billing start" if "billing_start" in bill else "guest boot proxy" if "estimate_start_proxy" in bill else "unknown", "reported_charge": bill.get("reported_charge"),
             "rate_source": rate_event["source"] if rate_event else None, "rate_observed_at": rate_event["at"] if rate_event else None,
             "charge_source": charge_event["source"] if charge_event else None, "charge_observed_at": charge_event["at"] if charge_event else None,
-            "model_details": data("model"), "inventory": inventory, "request": data("request"), "retained_resources": retained,
+            "model_details": data("model"), "inventory": inventory, "request": data("request"), "retained_resources": retained, "gpu_samples":gpu_samples,
             "shutdown_requested": bool(data("shutdown").get("requested")), "termination_confirmed": bool(confirmed),
             "provider_details": data("provider"), "summary": f"Provider {provider}; connection {'unknown' if stale else data('connection').get('state', 'unknown')}; model {model}; GPU activity {'active' if activity else 'unverified'}; {len(alerts)} alert(s)."}
 
@@ -315,8 +327,17 @@ def install(app, render, base_ctx):
         except KeyError:
             raise HTTPException(404, "Session not found")
         ctx = base_ctx(request, "sessions")
-        ctx.update(record=record, view=configured_view(record))
+        ctx.update(record=record, view=configured_view(record), coordinator=coordinator_view(session_id))
         return render("session.html", ctx)
+
+    @app.get("/sessions/{session_id}/coordinator.json")
+    def coordinator_export(session_id: str):
+        if session_id not in database.list():
+            raise HTTPException(404, "Session not found")
+        snapshot=coordinator_view(session_id)
+        if snapshot is None:
+            raise HTTPException(404, "Coordinator record not configured")
+        return JSONResponse(snapshot)
 
     @app.get("/sessions/{session_id}/export.json")
     def session_export(session_id: str):
@@ -337,3 +358,11 @@ def configured_view(record):
     return derive(record, stale_after=threshold("NODE_UI_SESSION_STALE_SECONDS", 300),
                   idle_after=threshold("NODE_UI_SESSION_IDLE_SECONDS", 600),
                   budget_margin=threshold("NODE_UI_SESSION_BUDGET_MARGIN", 20))
+
+
+def coordinator_view(session_id):
+    path=os.environ.get("NODE_UI_COORDINATOR_DB")
+    if not path or os.environ.get("NODE_UI_COORDINATOR_SESSION_ID") != session_id or not Path(path).is_file():
+        return None
+    from .session_coordinator import Coordinator
+    return Coordinator(path).snapshot()

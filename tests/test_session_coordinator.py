@@ -48,8 +48,10 @@ def test_same_owner_stale_restart_and_redirect_refusal(tmp_path):
     c.configure(rate=1,start=time.time()-5,ceiling=100)
     c.enqueue(spec("one"));c.control("running")
     c.claim("reused")
+    another=Coordinator(tmp_path/"q.db",adapter=lambda s,r: (_ for _ in ()).throw(AssertionError("concurrent")))
+    assert another.claim("reused") is None  # identical caller label is a different process lease
     with c.db() as db: db.execute("UPDATE control SET heartbeat=0")
-    assert c.run_one("reused") is None
+    assert another.run_one("reused") is None
     assert c.snapshot()["tasks"][0]["state"] == "unresolved"
     assert _NoRedirect().redirect_request(None,None,302,"redirect",{},"https://example.com") is None
     with pytest.raises(ValueError): glm_review(spec("safe"),"request",endpoint="http://127.0.0.1:18001/v1/chat/completions?forward=https://example.com")

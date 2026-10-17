@@ -34,6 +34,8 @@ class Coordinator:
         self.telemetry = telemetry
         self.session_id = session_id
         self._telemetry_slots = threading.BoundedSemaphore(4)
+        self._instance_id = uuid.uuid4().hex
+        self._run_lock = threading.Lock()
         with self.db() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS control (id INTEGER PRIMARY KEY CHECK(id=1), mode TEXT NOT NULL,
@@ -109,6 +111,7 @@ class Coordinator:
         return max(0,self.clock()-control["start"])*control["rate"]/3600
 
     def claim(self, owner):
+        owner = owner + ":" + self._instance_id
         with self.db() as db:
             db.execute("BEGIN IMMEDIATE")
             c=db.execute("SELECT * FROM control WHERE id=1").fetchone()
@@ -131,6 +134,7 @@ class Coordinator:
             return None
 
     def heartbeat(self, owner):
+        owner = owner + ":" + self._instance_id
         with self.db() as db:
             db.execute("BEGIN IMMEDIATE")
             c=db.execute("SELECT * FROM control WHERE id=1").fetchone()
@@ -140,6 +144,20 @@ class Coordinator:
             return True
 
     def run_one(self, owner):
+        if not self._run_lock.acquire(blocking=False):
+            return None
+        try:
+            return self._run_one_locked(owner)
+        finally:
+            try:
+                with self.db() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    db.execute("UPDATE control SET owner=NULL,heartbeat=NULL WHERE owner=? AND NOT EXISTS (SELECT 1 FROM tasks WHERE state IN ('submitted','acknowledged'))",
+                               (owner+":"+self._instance_id,))
+            finally:
+                self._run_lock.release()
+
+    def _run_one_locked(self, owner):
         item=self.claim(owner)
         if not item:
             return None

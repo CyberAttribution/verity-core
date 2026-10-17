@@ -7,6 +7,7 @@ import os
 import re
 import sqlite3
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -104,6 +105,11 @@ def validate_event(event):
         raise ValueError("Successful inventory requires model list")
     if event["kind"] == "billing" and "rate" in data and (not isinstance(data["rate"], (int, float)) or isinstance(data["rate"], bool) or not 0 <= data["rate"] <= 100000):
         raise ValueError("Invalid rate")
+    for field in ("ceiling", "reported_charge"):
+        if event["kind"] == "billing" and field in data and (not isinstance(data[field], (int, float)) or isinstance(data[field], bool) or not 0 <= data[field] <= 1e12):
+            raise ValueError("Invalid billing amount")
+    if event["kind"] in {"inventory", "model"} and "download_bytes" in data and (not isinstance(data["download_bytes"], int) or isinstance(data["download_bytes"], bool) or not 0 <= data["download_bytes"] <= 1e15):
+        raise ValueError("Invalid download byte count")
     for field in ("billing_start", "estimate_start_proxy"):
         if event["kind"] == "billing" and field in data and (not isinstance(data[field], (int, float)) or isinstance(data[field], bool) or not 0 < data[field] < 4102444800):
             raise ValueError("Invalid billing time")
@@ -116,14 +122,22 @@ class SessionStore:
     def __init__(self, path=DB_PATH):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.connect() as db:
+        with self.connection() as db:
             db.execute("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, identity TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS session_events (session_id TEXT NOT NULL, id TEXT NOT NULL, received REAL NOT NULL, event TEXT NOT NULL, PRIMARY KEY(session_id,id), FOREIGN KEY(session_id) REFERENCES sessions(id))")
 
-    def connect(self):
+    @contextmanager
+    def connection(self):
         db = sqlite3.connect(self.path, timeout=10)
-        db.execute("PRAGMA foreign_keys=ON")
-        return db
+        try:
+            db.execute("PRAGMA foreign_keys=ON")
+            yield db
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     def create(self, identity):
         if not isinstance(identity, dict) or set(identity) != {"id", "purpose", "provider", "macs", "branch", "commits"}:
@@ -135,12 +149,12 @@ class SessionStore:
         for key in ("macs", "commits"):
             if not isinstance(identity[key], list) or len(identity[key]) > 20 or not all(isinstance(s, str) and 0 < len(s) <= 240 for s in identity[key]):
                 raise ValueError("Invalid identity list")
-        with self.connect() as db:
+        with self.connection() as db:
             db.execute("INSERT INTO sessions VALUES (?,?)", (identity["id"], json.dumps(identity, sort_keys=True)))
 
     def append(self, session_id, event):
         validate_event(event)
-        with self.connect() as db:
+        with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             if not db.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone():
                 raise KeyError(session_id)
@@ -167,7 +181,7 @@ class SessionStore:
         return True
 
     def get(self, session_id):
-        with self.connect() as db:
+        with self.connection() as db:
             row = db.execute("SELECT identity FROM sessions WHERE id=?", (session_id,)).fetchone()
             if not row:
                 raise KeyError(session_id)
@@ -175,7 +189,7 @@ class SessionStore:
         return {"identity": json.loads(row[0]), "events": events}
 
     def list(self):
-        with self.connect() as db:
+        with self.connection() as db:
             ids = [r[0] for r in db.execute("SELECT id FROM sessions ORDER BY rowid DESC LIMIT 100")]
         return ids
 
@@ -199,9 +213,16 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
             resources[data["name"]] = e
     def data(kind):
         return accumulated.get(kind, {})
+    state_report = next((e for e in reversed(record["events"]) if e["kind"] == "provider" and "state" in e["data"]), None)
+    termination_report = next((e for e in reversed(record["events"]) if e["kind"] == "shutdown" and e["data"].get("confirmed")), None)
     observed_provider = data("provider").get("state", "unknown")
-    confirmed = data("shutdown").get("confirmed") or observed_provider == "terminated" and latest.get("provider", {}).get("source") in {"provider_api", "provider_console"}
-    provider = observed_provider
+    confirmed = bool(data("shutdown").get("confirmed") or (state_report and state_report["data"]["state"] == "terminated" and state_report["source"] in {"provider_api", "provider_console"}))
+    contradictory_provider = bool(termination_report and state_report and state_report["received"] > termination_report["received"] and state_report["source"] in {"provider_api", "provider_console"} and state_report["data"]["state"] == "running")
+    if contradictory_provider:
+        confirmed = False
+    provider = "unknown" if observed_provider == "terminated" and not confirmed else observed_provider
+    if contradictory_provider:
+        provider = "unknown"
     if confirmed:
         provider = "terminated"
     contact_at = max((e["received"] for e in record["events"] if e["kind"] in {"contact", "provider", "connection", "inventory", "model", "request"}), default=None)
@@ -226,10 +247,12 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
     rate_event = next((e for e in reversed(record["events"]) if e["kind"] == "billing" and "rate" in e["data"]), None)
     charge_event = next((e for e in reversed(record["events"]) if e["kind"] == "billing" and "reported_charge" in e["data"]), None)
     start, rate = bill.get("billing_start", bill.get("estimate_start_proxy")), bill.get("rate")
-    stop_at = latest.get("shutdown", {}).get("at") if confirmed and data("shutdown").get("confirmed") else latest.get("provider", {}).get("at") if confirmed else None
+    stop_at = termination_report["at"] if confirmed and termination_report else state_report["at"] if confirmed and state_report else None
     elapsed = max(0, (min(now, stop_at) if stop_at else now) - start) if isinstance(start, (int, float)) else None
     estimate = round(elapsed / 3600 * rate, 2) if elapsed is not None and isinstance(rate, (int, float)) else None
     alerts = []
+    if contradictory_provider:
+        alerts.append("Contradictory provider state after termination; reconcile with provider")
     if provider == "running" and model == "absent":
         alerts.append("Paid instance: successful inventory found no model")
     if provider == "running" and not activity:

@@ -88,6 +88,28 @@ def test_request_verification_and_termination_with_retained_resource():
         validate_event(event("bad", "shutdown", "operator", {"confirmed": True}))
 
 
+def test_operator_termination_not_confirmed_by_unrelated_provider_metadata():
+    t = time.time()
+    record = {"identity": IDENTITY, "events": [
+        dict(event("claim", "provider", "operator", {"state": "terminated"}, t), received=t),
+        dict(event("detail", "provider", "provider_api", {"instance_type": "gpu"}, t + 1), received=t + 1)]}
+    view = derive(record, now=t + 2)
+    assert view["last_provider_state"] == "terminated"
+    assert view["provider"] == "unknown" and not view["termination_confirmed"]
+    record["events"].append(dict(event("confirm", "provider", "provider_api", {"state": "terminated"}, t + 3), received=t + 3))
+    assert derive(record, now=t + 4)["termination_confirmed"]
+
+
+def test_provider_running_after_confirmed_termination_is_unknown():
+    t = time.time()
+    record = {"identity": IDENTITY, "events": [
+        dict(event("confirm", "shutdown", "provider_console", {"confirmed": True}, t), received=t),
+        dict(event("later", "provider", "provider_api", {"state": "running"}, t + 1), received=t + 1)]}
+    view = derive(record, now=t + 2)
+    assert view["provider"] == "unknown" and not view["termination_confirmed"]
+    assert any("Contradictory" in a for a in view["alerts"])
+
+
 def test_read_only_sessions_navigation():
     import sys
     sys.path.insert(0, "apps/node")

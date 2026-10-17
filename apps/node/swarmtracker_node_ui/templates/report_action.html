@@ -35,6 +35,12 @@
 <input type="hidden" name="expected_head" value="{{ action.head_hash }}">
 <button>Write designated output</button>
 </form>
+<form method="post" action="/report-actions/{{ action.id }}/revoke">
+<input type="hidden" name="operator_token" value="{{ operator_token }}">
+<input type="hidden" name="expected_head" value="{{ action.head_hash }}">
+<label>Revocation reason <input name="reason" required maxlength="1000"></label>
+<button>Revoke approval before execution</button>
+</form>
 {% endif %}
 {% if action.state == 'in_doubt' %}<p class="alert alert-bad">Execution was reserved but no outcome was durably recorded. Check the file and record; retries are blocked.</p>{% endif %}
 <p><a href="/report-actions/{{ action.id }}/export.json">Export linked history</a> · <a href="/report-actions/{{ action.id }}/checkpoint.json">Save checkpoint separately</a></p>

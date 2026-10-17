@@ -79,6 +79,23 @@ def install(app, render, base_ctx):
             raise HTTPException(503, "Decision could not be recorded") from None
         return RedirectResponse("/report-actions/" + view["id"], status_code=303)
 
+    @router.post("/report-actions/{rid}/revoke")
+    async def revoke(request: Request, rid: str):
+        local_peer(request)
+        form = await decision_routes.operator_form(request)
+        if set(form) != {"operator_token", "expected_head", "reason"}:
+            raise HTTPException(422, "Unexpected revocation parameters")
+        read(rid)
+        try:
+            view = actions().revoke(rid, form["reason"], "local-operator", form["expected_head"])
+        except report_actions.Conflict:
+            raise HTTPException(409, "Approval changed or execution began; reload") from None
+        except ValueError:
+            raise HTTPException(422, "Revocation rejected") from None
+        except (sqlite3.Error, OSError):
+            raise HTTPException(503, "Revocation could not be recorded") from None
+        return RedirectResponse("/report-actions/" + view["id"], status_code=303)
+
     @router.post("/report-actions/{rid}/execute")
     async def execute(request: Request, rid: str):
         local_peer(request)

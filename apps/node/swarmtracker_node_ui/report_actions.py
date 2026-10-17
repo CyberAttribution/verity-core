@@ -106,6 +106,16 @@ def inspect(record):
                 raise ValueError("Decision entry mismatch")
             decision = choice
             state = choice
+        elif event == "revocation":
+            if decision != "approved" or reserved is not None or attempts or entry["entry_type"] != "note":
+                raise ValueError("Invalid approval revocation order")
+            if p.get("binding") != binding(m, record["record_id"]) or p.get("identity_provenance") != "local operator intent; unauthenticated":
+                raise ValueError("Revocation binding mismatch")
+            _label(p.get("reason"), "reason", 1000)
+            if set(p) != {"event", "binding", "reason", "identity_provenance"}:
+                raise ValueError("Unexpected revocation fields")
+            decision = "revoked"
+            state = "revoked"
         elif event == "attempt":
             if entry["entry_type"] != "action_attempted" or reserved is not None or attempts:
                 raise ValueError("Invalid attempt")
@@ -233,6 +243,21 @@ class Store:
                                actor=actor, payload={"event": "decision", "choice": choice,
                                "reason": reason, "binding": binding(view["manifest"], rid),
                                "identity_provenance": "local operator intent; unauthenticated"})
+            self._save(con, record)
+        return inspect(record)
+
+    def revoke(self, rid, reason, actor, head):
+        _label(reason, "reason", 1000)
+        _label(actor, "actor")
+        with self.connection() as con:
+            con.execute("BEGIN IMMEDIATE")
+            record, view = self._get(con, rid)
+            if view["head_hash"] != head or view["decision"] != "approved" or view["attempts"]:
+                raise Conflict("Approval changed or execution began; reload")
+            trust.append_entry(record, "note", actor=actor,
+                               payload={"event": "revocation", "reason": reason,
+                                        "binding": binding(view["manifest"], rid),
+                                        "identity_provenance": "local operator intent; unauthenticated"})
             self._save(con, record)
         return inspect(record)
 

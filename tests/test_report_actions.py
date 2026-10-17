@@ -104,6 +104,60 @@ def test_restart_after_reserved_attempt_fails_closed(db, monkeypatch):
     assert not db.observed_file()["present"]
 
 
+def test_revoked_approval_denies_stale_and_fresh_execution(db, monkeypatch):
+    approved = approve(db, db.create(manifest("# Synthetic revoked proposal\n")))
+    revoked = db.revoke(approved["id"], "Synthetic expiry/revocation", "operator", approved["head_hash"])
+    assert revoked["state"] == "revoked" and not revoked["can_execute"]
+    with pytest.raises(report_actions.Conflict):
+        db.execute(approved["id"], "operator", approved["head_hash"])
+    denied = db.execute(approved["id"], "operator", revoked["head_hash"])
+    assert denied["state"] == "denied" and denied["attempts"] == 1
+    assert not (db.output_dir / "summary.md").exists()
+    assert report_actions.verify(report_actions.export(denied["record"]),
+                                 report_actions.checkpoint(denied["record"]))
+
+
+def test_interrupted_observation_after_real_file_effect_is_in_doubt(db, monkeypatch):
+    approved = approve(db, db.create(manifest("# Synthetic interrupted observation\n")))
+    actual_write = db._write
+    def interrupted_after_effect(content):
+        actual_write(content)
+        raise OSError("synthetic interruption after file write before observation")
+    monkeypatch.setattr(db, "_write", interrupted_after_effect)
+    with pytest.raises(OSError):
+        db.execute(approved["id"], "operator", approved["head_hash"])
+    recovered = report_actions.Store(db.db_path, db.output_dir)
+    state = recovered.get(approved["id"])
+    assert state["state"] == "in_doubt" and state["attempts"] == 1
+    assert (db.output_dir / "summary.md").read_bytes() == approved["manifest"]["proposal"].encode()
+    assert recovered.observed_file()["sha256"] == approved["manifest"]["action"]["sha256"]
+    with pytest.raises(report_actions.Conflict):
+        recovered.execute(approved["id"], "operator", state["head_hash"])
+    exported = report_actions.export(state["record"])
+    assert report_actions.verify(exported, report_actions.checkpoint(state["record"]))
+    assert [entry["payload"]["event"] for entry in exported["record"]["entries"]] == [
+        "proposed", "decision", "attempt"]
+
+
+def test_revocation_route_exports_denied_history(db, monkeypatch):
+    monkeypatch.setattr(report_routes, "STORE", db)
+    client = TestClient(ui.app, base_url="http://127.0.0.1")
+    approved = approve(db, db.create(manifest("# Synthetic UI revocation\n")))
+    path = "/report-actions/" + approved["id"]
+    assert "Revoke approval before execution" in client.get(path).text
+    form = {"operator_token": decision_routes.TOKEN, "expected_head": approved["head_hash"],
+            "reason": "Synthetic revocation"}
+    assert client.post(path + "/revoke", data=dict(form, target="other.md")).status_code == 422
+    assert client.post(path + "/revoke", data=form, follow_redirects=False).status_code == 303
+    assert client.post(path + "/execute", data={"operator_token": decision_routes.TOKEN,
+           "expected_head": approved["head_hash"]}).status_code == 409
+    revoked = db.get(approved["id"])
+    assert revoked["state"] == "revoked"
+    assert report_actions.verify(client.get(path + "/export.json").json(),
+                                 client.get(path + "/checkpoint.json").json())
+    assert not (db.output_dir / "summary.md").exists()
+
+
 def test_route_enforces_exact_parameters_and_shows_disk_state(db, tmp_path, monkeypatch):
     monkeypatch.setattr(report_routes, "STORE", db)
     client = TestClient(ui.app, base_url="http://127.0.0.1")

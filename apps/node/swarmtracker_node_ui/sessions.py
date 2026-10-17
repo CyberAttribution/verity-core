@@ -83,6 +83,8 @@ def validate_event(event):
         raise ValueError("Result requires a finish reason")
     if event["kind"] == "inventory" and not isinstance(data.get("checked"), bool):
         raise ValueError("Inventory requires successful-check flag")
+    if event["kind"] == "inventory" and data["checked"] and "models" not in data:
+        raise ValueError("Successful inventory requires model list")
     if event["kind"] == "billing" and "rate" in data and (not isinstance(data["rate"], (int, float)) or isinstance(data["rate"], bool) or not 0 <= data["rate"] <= 100000):
         raise ValueError("Invalid rate")
     if event["kind"] == "billing" and "billing_start" in data and (not isinstance(data["billing_start"], (int, float)) or isinstance(data["billing_start"], bool) or not 0 < data["billing_start"] < 4102444800):
@@ -186,6 +188,8 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
     activity = bool(running_gpu and last_request and now - last_request["received"] <= idle_after and last_request["data"].get("state") == "running" and
                     not (latest_result and latest_result["received"] > last_request["received"] and latest_result["data"].get("task_id") == last_request["data"].get("task_id")))
     bill = data("billing")
+    rate_event = next((e for e in reversed(record["events"]) if e["kind"] == "billing" and "rate" in e["data"]), None)
+    charge_event = next((e for e in reversed(record["events"]) if e["kind"] == "billing" and "reported_charge" in e["data"]), None)
     start, rate = bill.get("billing_start"), bill.get("rate")
     stop_at = latest.get("shutdown", {}).get("at") if confirmed and data("shutdown").get("confirmed") else latest.get("provider", {}).get("at") if confirmed else None
     elapsed = max(0, (min(now, stop_at) if stop_at else now) - start) if isinstance(start, (int, float)) else None
@@ -216,7 +220,10 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
             "activity": "active" if activity else "unknown" if stale else "no recent request", "stale": stale,
             "last_contact": datetime.fromtimestamp(contact_at, timezone.utc).isoformat() if contact_at else None,
             "tasks": task_views, "alerts": alerts, "billing": bill, "elapsed_seconds": elapsed,
-            "estimated_charge": estimate, "reported_charge": bill.get("reported_charge"), "retained_resources": retained,
+            "estimated_charge": estimate, "reported_charge": bill.get("reported_charge"),
+            "rate_source": rate_event["source"] if rate_event else None, "rate_observed_at": rate_event["at"] if rate_event else None,
+            "charge_source": charge_event["source"] if charge_event else None, "charge_observed_at": charge_event["at"] if charge_event else None,
+            "model_details": data("model"), "inventory": inventory, "request": data("request"), "retained_resources": retained,
             "shutdown_requested": bool(data("shutdown").get("requested")), "termination_confirmed": bool(confirmed),
             "provider_details": data("provider"), "summary": f"Provider {provider}; connection {'unknown' if stale else data('connection').get('state', 'unknown')}; model {model}; GPU activity {'active' if activity else 'unverified'}; {len(alerts)} alert(s)."}
 

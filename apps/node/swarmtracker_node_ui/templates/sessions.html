@@ -10,7 +10,8 @@
 <div class="kv"><span>Provider</span><code>{{ view.provider }}</code></div>
 <div class="kv"><span>Model</span><code>{{ view.model }}</code></div>
 <div class="kv"><span>GPU request activity</span><code>{{ view.activity }}</code></div>
-<div class="kv"><span>Estimated accrued charge</span><code>{{ view.estimated_charge if view.estimated_charge is not none else 'Unknown' }} {{ view.billing.currency or '' }}</code></div>
+<div class="kv"><span>Estimated accrued charge</span><code>{{ view.estimated_charge if view.estimated_charge is not none else 'Unknown' }} {{ view.billing.currency or 'currency unknown' }} · {{ view.estimate_basis }}</code></div>
+<div class="kv"><span>Provider-reported charge</span><code>{{ view.reported_charge if view.reported_charge is not none else 'Not reported' }} {{ view.billing.currency if view.reported_charge is not none else '' }}</code></div>
 </div>{% for alert in view.alerts %}<p class="alert alert-bad">{{ alert }}</p>{% endfor %}
 </section>
 {% else %}<p class="empty">No session records have been imported.</p>{% endfor %}

@@ -119,7 +119,7 @@ class Coordinator:
         except ProcessLookupError:
             return False
         except PermissionError:
-            return True  # An inaccessible PID may still own the worker; fail closed.
+            pass  # Inaccessible may mean live; use the heartbeat, not an absence claim.
         return 0 <= self.clock()-row["heartbeat"] < 30
 
     def worker_status(self):

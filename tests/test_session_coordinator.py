@@ -188,8 +188,12 @@ def test_stale_submission_reconciled_while_paused_and_budget_gated(tmp_path):
 
 
 def test_inaccessible_live_pid_is_not_replaced(tmp_path,monkeypatch):
-    c=Coordinator(tmp_path/"q.db")
+    now=[time.time()]
+    c=Coordinator(tmp_path/"q.db",clock=lambda:now[0])
     c.register_worker("first",os.getpid())
     monkeypatch.setattr(os,"kill",lambda pid,sig: (_ for _ in ()).throw(PermissionError()))
     assert c.worker_status()["state"] == "active"
     with pytest.raises(RuntimeError): c.register_worker("second",os.getpid())
+    now[0]+=31
+    assert c.worker_status()["state"] == "stale"
+    c.register_worker("second",os.getpid())

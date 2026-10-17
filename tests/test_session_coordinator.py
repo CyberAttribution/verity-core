@@ -197,3 +197,36 @@ def test_inaccessible_live_pid_is_not_replaced(tmp_path,monkeypatch):
     now[0]+=31
     assert c.worker_status()["state"] == "stale"
     c.register_worker("second",os.getpid())
+
+
+def test_read_only_coordinator_export_survives_restart_without_mutation(tmp_path,monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from apps.node.swarmtracker_node_ui import sessions
+
+    session_store=SessionStore(tmp_path/"sessions.db")
+    session_store.create(dict(id="synthetic",purpose="Review",provider="test",macs=[],branch="local",commits=[]))
+    path=tmp_path/"coordinator.db"
+    c=Coordinator(path,adapter=lambda s,r:{"request_id":r,"content":"checked","finish_reason":"stop"})
+    c.configure(rate=1,start=time.time()-5,ceiling=100)
+    c.enqueue(spec("first"));c.control("running");c.run_one("w")
+    c.verify("first","human","Checked source and test")
+    c.register_worker("live",os.getpid())
+    monkeypatch.setenv("NODE_UI_COORDINATOR_DB",str(path))
+    monkeypatch.setenv("NODE_UI_COORDINATOR_SESSION_ID","synthetic")
+    monkeypatch.setattr(sessions,"SessionStore",lambda:session_store)
+    app=FastAPI()
+    sessions.install(app,lambda *args: None,lambda *args: {})
+    client=TestClient(app)
+    before=len(c.snapshot()["transitions"])
+    first=client.get("/sessions/synthetic/coordinator.json")
+    assert first.status_code == 200
+    exported=first.json()
+    assert exported["worker"]["state"] == "active" and exported["worker"]["pid"] == os.getpid()
+    assert exported["tasks"][0]["state"] == "independently_verified"
+    assert exported["tasks"][0]["response"] and exported["tasks"][0]["request_id"]
+    assert exported["transitions"][-1]["state"] == "independently_verified"
+    assert client.post("/sessions/synthetic/coordinator.json").status_code == 405
+    assert len(Coordinator(path).snapshot()["transitions"]) == before
+    assert client.get("/sessions/synthetic/coordinator.json").json()["tasks"] == exported["tasks"]
+    c.unregister_worker("live")

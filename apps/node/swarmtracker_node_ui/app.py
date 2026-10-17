@@ -2198,6 +2198,12 @@ def workflow_detail(request: Request, work_id: str):
     work=next((w for w in snapshot["work_items"] if w["id"]==work_id),None)
     if not work: raise HTTPException(404,"Workflow not found")
     links=[x for x in snapshot["workflow_links"] if x["workflow_id"]==work_id]
+    demo_review=None
+    if work_id.startswith("demo") and os.environ.get("NODE_UI_DEMO_PROFILE")=="1":
+        try:
+            review_path=product_demo.profile_root()/(work_id+".review.json")
+            if review_path.is_file():demo_review=json.loads(review_path.read_text())
+        except (ValueError,OSError):pass
     decisions=[]
     report_cases=[]
     for link in links:
@@ -2219,7 +2225,7 @@ def workflow_detail(request: Request, work_id: str):
             except (KeyError,ValueError,OSError,sqlite3.Error):
                 report_cases.append({"id":link["target_id"],"integrity_error":True})
     ctx=base_ctx(request,"agents")
-    ctx.update(item=workflows.guidance(work),links=links,decisions=decisions,report_cases=report_cases,
+    ctx.update(item=workflows.guidance(work),links=links,decisions=decisions,report_cases=report_cases,demo_review=demo_review,
                requests=[t for t in snapshot["tasks"] if any(s["workflow_id"]==work_id and s["task_id"]==t["id"] for s in snapshot["work_sources"]+snapshot["continuations"])],
                authorizations=snapshot["continuation_authorizations"],operator_token=decision_routes.TOKEN)
     response=render("workflow_detail.html",ctx)

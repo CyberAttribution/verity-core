@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Disposable product demonstration{% endblock %}
 {% block content %}<section class="panel"><h2>SYNTHETIC developer → reviewer → verifier case</h2>
-<p>Each reset creates a new case inside an explicitly configured disposable profile; prior demo history is retained. The developer and reviewer are deterministic fixtures labeled with the same GLM model name. They are roles, not separate model instances or a live inference claim. The verifier checks the actual fixed output and event chains.</p>
+<p>Each reset creates a new case inside an explicitly configured disposable profile; prior demo history is retained. The developer proposal and rejected reviewer variant are deterministic fixtures. A separately verified live GLM read-only review may be attached to the same synthetic evidence; it does not execute or authorize work. These roles do not imply model diversity. The verifier checks the actual fixed output and event chains.</p>
 {% if demo_error %}<p>{{ demo_error }}</p>{% else %}<form method="post" action="/demo/new"><input type="hidden" name="operator_token" value="{{ operator_token }}"><button type="submit">Start fresh disposable case</button></form>{% endif %}</section>
 <section class="panel"><h2>Cases</h2>{% for item in demo_items %}<article><h3><a href="/workflows/{{ item.id }}">{{ item.id }}</a> · {{ item.state }}</h3><p>Open linked decisions and report action in the workflow, inspect the rejected variant, approve the pending variants, then execute the fixed report action.</p>
 {% if item.state != 'finished' %}<form method="post" action="/demo/{{ item.id }}/finish"><input type="hidden" name="operator_token" value="{{ operator_token }}"><button type="submit">Verify actual output and finish</button></form>

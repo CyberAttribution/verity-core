@@ -522,6 +522,15 @@ def test_disposable_demo_rejection_approval_execution_export_and_reset(tmp_path,
     reports=report_actions.Store(tmp_path/"reports.db",tmp_path/"output")
     one=product_demo.setup(c,decisions,reports)
     assert decisions.get(one["rejected"])["decision"]=="rejected"
+    settings={"model":"glm-5.3-flash","reasoning_effort":"low","chat_template_kwargs":{"reasoning_effort":"low"},"max_tokens":2048}
+    review=dict(schema="verity_demo_review/v1",task_id="demoConflictReview",request_id="a"*32,
+                model="glm-5.3-flash",finish_reason="stop",content="The directory conflicts; confirm out of band.",
+                settings=settings,verifier="trusted-runner",evidence="Compared model finding to fixed synthetic evidence",usage={"total_tokens":100})
+    with pytest.raises(ValueError,match="Unsupported demo review"):
+        product_demo.attach_review(c,one["workflow"],dict(review,finish_reason="length"))
+    product_demo.attach_review(c,one["workflow"],review)
+    product_demo.attach_review(c,one["workflow"],review)
+    assert len([x for x in c.snapshot()["workflow_links"] if x["workflow_id"]==one["workflow"] and x["kind"]=="session_task"])==1
     with pytest.raises(ValueError,match="approval required"):
         product_demo.finish(c,one["workflow"],decisions,reports)
     pending=decisions.get(one["pending"])
@@ -532,6 +541,16 @@ def test_disposable_demo_rejection_approval_execution_export_and_reset(tmp_path,
     assert written["state"]=="written"
     export,anchor=product_demo.finish(c,one["workflow"],decisions,reports)
     assert product_demo.verify_export(export,anchor)
+    bundle=json.loads(export.read_text())
+    assert bundle["model_review"]["request_id"]=="a"*32
+    assert bundle["roles"]["reviewer"].startswith("live GLM review")
+    from fastapi.testclient import TestClient
+    from swarmtracker_node_ui import app as ui,decision_routes,report_routes
+    monkeypatch.setattr(decision_routes,"RUNS",decisions)
+    monkeypatch.setattr(report_routes,"STORE",reports)
+    page=TestClient(ui.app,base_url="http://127.0.0.1").get("/workflows/"+one["workflow"])
+    assert page.status_code==200 and "Live model review of SYNTHETIC evidence" in page.text
+    assert "a"*32 in page.text and "confirm out of band" in page.text
     assert c.snapshot()["work_items"][0]["state"]=="finished"
     two=product_demo.setup(c,decisions,reports)
     assert two["workflow"]!=one["workflow"] and export.exists() and anchor.exists()

@@ -318,3 +318,15 @@ def test_hardlinked_original_report_refused_before_runtime(tmp_path):
         run(workspace, tmp_path / "state/record.db", tmp_path / "protected", "test-model")
     assert original.read_text() == "Original report contents"
     assert not (tmp_path / "protected/summary.md").exists()
+
+
+def test_reserved_write_without_approved_disk_bytes_stays_in_doubt(db, monkeypatch):
+    view = approve(db, db.create(manifest()))
+    monkeypatch.setattr(db, "_write", lambda _: None)
+    with pytest.raises(ValueError, match="approved file digest"):
+        db.execute(view["id"], "operator", view["head_hash"])
+    recovered = report_actions.Store(db.db_path, db.output_dir).get(view["id"])
+    assert recovered["state"] == "in_doubt" and recovered["attempts"] == 1
+    assert not recovered["can_execute"] and not db.observed_file()["present"]
+    with pytest.raises(report_actions.Conflict):
+        db.execute(view["id"], "operator", recovered["head_hash"])

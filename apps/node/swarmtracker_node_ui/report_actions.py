@@ -277,6 +277,9 @@ class Store:
         # The reservation is committed before this effect. Any crash or storage
         # failure leaves an in-doubt record and never silently repeats the write.
         self._write(view["manifest"]["proposal"].encode())
+        observed = self.observed_file()
+        if observed["sha256"] != view["manifest"]["action"]["sha256"]:
+            raise ValueError("Reserved write did not produce the approved file digest")
         with self.connection() as con:
             con.execute("BEGIN IMMEDIATE")
             record, current = self._get(con, rid)

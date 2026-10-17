@@ -137,6 +137,7 @@ def test_operator_ui_registry_and_signed_preview(tmp_path,monkeypatch):
     monkeypatch.setattr(release_update.platform,"mac_ver",lambda:("15.1",("","",""),""))
     reg,key,public,artifact,_,signed=setup(tmp_path)
     reg.authorize_release("alpha","pilot","release-2",True,"synthetic release")
+    reg.observe("beta",version="0.9.0",channel="pilot",update_state="unknown")
     registry_path=tmp_path/"registry.db";key_path=tmp_path/"publisher.pem";key_path.write_bytes(public)
     manifest=tmp_path/"manifest.signed";manifest.write_text(signed)
     monkeypatch.setenv("VERITY_PILOT_REGISTRY",str(registry_path))
@@ -150,6 +151,7 @@ def test_operator_ui_registry_and_signed_preview(tmp_path,monkeypatch):
     response=client.get("/setup/registry")
     assert response.status_code==200 and "alpha" in response.text and "beta" in response.text
     assert "not authenticated hardware identities" in response.text and signed not in response.text
+    assert "Imported revocation revision (reported): unknown" in response.text
     preview=client.post("/setup",data=dict(action="inspect_release",operator_token=decision_routes.TOKEN,manifest_path=str(manifest),artifact_path=str(artifact)))
     assert preview.status_code==200 and "Authorized release 2.0.0" in preview.text
     assert "awaiting explicit operator approval" in preview.text

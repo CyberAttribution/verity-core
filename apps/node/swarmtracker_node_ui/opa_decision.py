@@ -19,20 +19,30 @@ class DecisionLedger:
         self.path.parent.mkdir(parents=True,exist_ok=True)
         with sqlite3.connect(self.path) as db:
             db.execute("CREATE TABLE IF NOT EXISTS decisions (id TEXT PRIMARY KEY, at REAL NOT NULL, policy_version TEXT NOT NULL, policy_sha256 TEXT NOT NULL, allow INTEGER NOT NULL, reason TEXT NOT NULL, keel_approved INTEGER NOT NULL)")
+            columns={row[1] for row in db.execute("PRAGMA table_info(decisions)")}
+            for name in ("session_id", "task_id", "request_id"):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE decisions ADD COLUMN {name} TEXT")
 
-    def record(self, decision, policy_version, keel_approved):
+    def record(self, decision, policy_version, keel_approved, linkage=None):
         if not isinstance(policy_version,str) or not policy_version or len(policy_version)>120:
             raise ValueError("Policy version required")
+        linkage=linkage or {}
+        if not isinstance(linkage,dict) or any(k not in {"session_id","task_id","request_id"} for k in linkage):
+            raise ValueError("Unexpected decision linkage")
+        if any(not isinstance(v,str) or not v or len(v)>160 for v in linkage.values()):
+            raise ValueError("Invalid decision linkage")
         identifier=uuid.uuid4().hex
         with sqlite3.connect(self.path,timeout=10) as db:
-            db.execute("INSERT INTO decisions VALUES (?,?,?,?,?,?,?)",(
+            db.execute("INSERT INTO decisions (id,at,policy_version,policy_sha256,allow,reason,keel_approved,session_id,task_id,request_id) VALUES (?,?,?,?,?,?,?,?,?,?)",(
                 identifier,time.time(),policy_version,decision["policy_sha256"],
-                int(decision["allow"]),decision["reason"],int(bool(keel_approved))))
+                int(decision["allow"]),decision["reason"],int(bool(keel_approved)),
+                linkage.get("session_id"),linkage.get("task_id"),linkage.get("request_id")))
         return identifier
 
     def records(self):
         with sqlite3.connect(self.path) as db:
-            return [dict(zip(("id","at","policy_version","policy_sha256","allow","reason","keel_approved"),row))
+            return [dict(zip(("id","at","policy_version","policy_sha256","allow","reason","keel_approved","session_id","task_id","request_id"),row))
                     for row in db.execute("SELECT * FROM decisions ORDER BY rowid")]
 
 
@@ -64,7 +74,8 @@ def execute_if_allowed(document, policy_bytes, action, evaluator=None, keel_appr
         raise PermissionError("Decision ledger required")
     decision=decide(document,policy_bytes,evaluator)
     # Fail closed if evidence cannot be stored, including on an allow.
-    decision["record_id"]=ledger.record(decision,policy_version,keel_approved)
+    linkage={k:document[k] for k in ("session_id","task_id","request_id") if isinstance(document,dict) and k in document}
+    decision["record_id"]=ledger.record(decision,policy_version,keel_approved,linkage)
     if not keel_approved or not decision["allow"]:
         raise PermissionError(decision["reason"] if keel_approved else "Keel approval required")
     return action(),decision

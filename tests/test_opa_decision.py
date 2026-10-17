@@ -1,4 +1,5 @@
 import pytest
+import sqlite3
 from apps.node.swarmtracker_node_ui.opa_decision import DecisionLedger,decide,execute_if_allowed
 
 
@@ -44,3 +45,32 @@ def test_policy_decisions_are_persisted_before_executor_boundary(tmp_path):
         execute_if_allowed(doc,policy,lambda:actions.append("unrecorded"),evaluators[0],
                            keel_approved=True,ledger=BrokenLedger(),policy_version="synthetic-v1")
     assert actions==["allowed"]
+
+
+def test_policy_decision_linkage_does_not_replace_enforcement(tmp_path):
+    ledger=DecisionLedger(tmp_path/"decisions.db")
+    doc={"subject":"operator","action":"read_only_review","session_id":"s1",
+         "task_id":"t1","request_id":"r1"}
+    actions=[]
+    _,allowed=execute_if_allowed(doc,b"policy",lambda:actions.append("allowed"),
+                                 lambda _: {"result":True},keel_approved=True,ledger=ledger,policy_version="v2")
+    with pytest.raises(PermissionError):
+        execute_if_allowed(doc,b"policy",lambda:actions.append("denied"),
+                           lambda _: {"result":False},keel_approved=True,ledger=ledger,policy_version="v2")
+    assert actions==["allowed"]
+    rows=ledger.records()
+    assert len(rows)==2 and allowed["record_id"]==rows[0]["id"]
+    assert all((r["session_id"],r["task_id"],r["request_id"])==("s1","t1","r1") for r in rows)
+    assert [r["allow"] for r in rows]==[1,0]
+
+
+def test_existing_decision_ledger_migrates_without_rewriting_history(tmp_path):
+    path=tmp_path/"old.db"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE decisions (id TEXT PRIMARY KEY, at REAL NOT NULL, policy_version TEXT NOT NULL, policy_sha256 TEXT NOT NULL, allow INTEGER NOT NULL, reason TEXT NOT NULL, keel_approved INTEGER NOT NULL)")
+        db.execute("INSERT INTO decisions VALUES ('old',1,'v1','hash',0,'denied',1)")
+    ledger=DecisionLedger(path)
+    assert ledger.records()[0]["id"]=="old"
+    assert ledger.records()[0]["request_id"] is None
+    with pytest.raises(ValueError,match="Invalid decision linkage"):
+        ledger.record({"policy_sha256":"hash","allow":True,"reason":"allowed"},"v2",True,{"request_id":""})

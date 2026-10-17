@@ -58,6 +58,22 @@ def test_truncation_pause_budget_and_failure(tmp_path):
     with pytest.raises(ValueError): c.verify("one","human","Cannot accept truncation")
 
 
+def test_restart_preserves_rental_budget_gate(tmp_path):
+    now=[1000.]
+    path=tmp_path/"q.db"
+    c=Coordinator(path,adapter=lambda s,r:dict(request_id=r,content="ok",finish_reason="stop"),clock=lambda:now[0])
+    c.configure(rate=36,start=900,ceiling=10,margin=1)
+    c.enqueue(spec("one"));c.control("running")
+    assert c.run_one("w") == "one"
+    c.verify("one","human","Checked result against task contract")
+    c.enqueue(spec("two",["one"]))
+    now[0]=1800
+    fresh=Coordinator(path,adapter=lambda s,r: (_ for _ in ()).throw(AssertionError("dispatched")),clock=lambda:now[0])
+    assert fresh.run_one("new") is None
+    assert fresh.snapshot()["tasks"][1]["state"] == "queued"
+    with pytest.raises(ValueError): fresh.configure(rate=36,start=900,ceiling=100)
+
+
 def test_error_ambiguous_and_authorization(tmp_path):
     def interrupted(s,r): raise TimeoutError("after send")
     c=Coordinator(tmp_path/"q.db",adapter=interrupted)

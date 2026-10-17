@@ -221,7 +221,7 @@ def test_native_routes_show_guidance_and_persist_operator_followup(tmp_path,monk
 
 def test_unified_detail_preserves_synthetic_disagreement_approval_and_execution(tmp_path,monkeypatch):
     from fastapi.testclient import TestClient
-    from swarmtracker_node_ui import app as ui, decision_routes
+    from swarmtracker_node_ui import app as ui, decision_routes, report_routes, report_actions
     from swarmtracker_node_ui.decision_runs import RunStore, synthetic_manifest
     from verity_core.trust import decision
     monkeypatch.setenv("NODE_UI_PRODUCT_DB",str(tmp_path/"work.db"))
@@ -237,9 +237,23 @@ def test_unified_detail_preserves_synthetic_disagreement_approval_and_execution(
     executed,allowed=runs.execute(approved["id"],"synthetic-operator",approved["head_hash"])
     assert allowed and executed["state"]=="simulated"
     assert decision.inspect(executed["record"])["head_hash"]==executed["head_hash"]
+    content="# Synthetic checked summary\n"
+    import hashlib
+    report=report_actions.Store(tmp_path/"reports.db",tmp_path/"output")
+    monkeypatch.setattr(report_routes,"STORE",report)
+    manifest=dict(schema=report_actions.SCHEMA,agent_id="synthetic-openclaw",task_id="synthetic-report",
+                  model="fixture",provider="test",source_name="synthetic source",source_sha256=hashlib.sha256(b"source").hexdigest(),
+                  runtime_event_id="synthetic-event",proposal=content,
+                  action={"kind":"write_sanitized_summary","target":"summary.md","sha256":hashlib.sha256(content.encode()).hexdigest()},
+                  policy=report_actions.POLICY)
+    proposed=report.create(manifest)
+    report_approved=report.decide(proposed["id"],"approved","Reviewed synthetic exact text","operator",proposed["head_hash"])
+    written=report.execute(proposed["id"],"operator",report_approved["head_hash"])
+    assert written["state"]=="written" and report.observed_file()["sha256"]==manifest["action"]["sha256"]
+    c.link_evidence("syntheticCase","report_action",written["id"],"Synthetic real fixed-file write; digest checked")
     page=TestClient(ui.app).get("http://127.0.0.1/workflows/syntheticCase")
     assert page.status_code==200
-    for marker in ("SYNTHETIC EXAMPLE","disagreement","rejected","approval_granted","action_attempted","action_result","policy SHA-256","independent verification of external output"):
+    for marker in ("SYNTHETIC EXAMPLE","disagreement","rejected","approval_granted","action_attempted","action_result","policy SHA-256","independent file digest matches","written","independent verification of external output"):
         assert marker.lower() in page.text.lower()
 
 

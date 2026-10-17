@@ -7,8 +7,8 @@
 <section class="panel"><h2>Requests and outcomes</h2>{% for task in requests %}<article><p>{{ task.id }} · {{ task.state }} · request {{ task.request_id or 'not sent' }} · finish {{ task.finish_reason or 'unknown' }}</p>
 <p>Verifier {{ task.verifier or 'none' }} · acceptance evidence {{ task.evidence or 'none' }}</p>
 {% for auth in authorizations if auth.task_id == task.id %}<p>Continuation authorization {{ auth.mode }} · {{ auth.basis }} · {{ auth.at }}</p>{% endfor %}</article>{% else %}<p>No linked request.</p>{% endfor %}</section>
-<section class="panel"><h2>Provenance links</h2>{% for link in links %}<p>{{ link.kind }} · {{ link.target_id }} · {{ link.provenance }} · {{ link.at }}</p>{% else %}<p>No linked decision or external execution evidence.</p>{% endfor %}</section>
-{% for run in decisions %}<section class="panel"><h2>Governed decision · <a href="/decisions/{{ run.id }}">{{ run.id }}</a></h2>
+<section class="panel"><h2>Provenance links</h2>{% for link in links %}<p><a href="#{{ 'report-action-' if link.kind == 'report_action' else 'decision-' if link.kind == 'decision' else 'link-' }}{{ link.target_id }}">{{ link.kind }} · {{ link.target_id }}</a> · {{ link.provenance }} · {{ link.at }}</p>{% else %}<p>No linked decision or external execution evidence.</p>{% endfor %}</section>
+{% for run in decisions %}<section class="panel" id="decision-{{ run.id }}"><h2>Governed decision · <a href="/decisions/{{ run.id }}">{{ run.id }}</a></h2>
 {% if run.integrity_error %}<p>Stored decision failed integrity verification; outcome unknown.</p>{% else %}
 <p>Source {{ run.manifest.source_kind }}{% if run.manifest.source_kind == 'synthetic' %} · SYNTHETIC EXAMPLE{% endif %} · policy {{ run.manifest.policy.id }} version {{ run.manifest.policy.version }} · policy SHA-256 {{ run.policy_sha256 }} · record head {{ run.head_hash }}</p>
 <p>Decision {{ run.decision }} · execution state {{ run.state }} · entries {{ run.entry_count }}. A simulated outcome does not imply an external action.</p>
@@ -17,5 +17,14 @@
 {% for f in run.manifest.findings %}<p>{{ f.participant_id }} · {{ f.statement }}{% if f.conflicting %} · disagreement{% endif %}</p>{% endfor %}
 <h3>Approval, attempt and observed outcome</h3>{% for entry in run.record.entries %}<p>{{ entry.seq }} · {{ entry.at_utc }} · {{ entry.entry_type }} · {{ entry.payload.event or 'event' }} · hash {{ entry.entry_hash }}</p>{% endfor %}
 <p>Integrity: record is checked when loaded; independent verification of external output requires separate evidence.</p>
+{% endif %}</section>{% endfor %}
+{% for action in report_cases %}<section class="panel" id="report-action-{{ action.id }}"><h2>Governed file action · <a href="/report-actions/{{ action.id }}">{{ action.id }}</a></h2>
+{% if action.integrity_error %}<p>Record unavailable or integrity check failed; outcome unknown.</p>{% else %}
+<p>Agent {{ action.manifest.agent_id }} → task {{ action.manifest.task_id }} → source SHA-256 {{ action.manifest.source_sha256 }}</p>
+<p>Policy {{ action.manifest.policy.id }} v{{ action.manifest.policy.version }} · policy SHA-256 {{ action.policy_sha256 }} · record head {{ action.head_hash }}</p>
+<p>Approval {{ action.decision }} · execution {{ action.state }} · attempts {{ action.attempts }} · target {{ action.manifest.action.target }}</p>
+<p>Expected output SHA-256 {{ action.manifest.action.sha256 }} · observed file {{ action.output_observation.present }} · observed SHA-256 {{ action.output_observation.sha256 or 'unknown' }} · independent file digest {{ 'matches' if action.output_matches else 'does not match / unavailable' }}</p>
+<p>The current file observation is separate from the action ledger. A later overwrite may change the observed digest; same-user filesystem access remains outside this gate.</p>
+{% for entry in action.record.entries %}<p>{{ entry.seq }} · {{ entry.at_utc }} · {{ entry.entry_type }} · {{ entry.payload.event or 'event' }} · hash {{ entry.entry_hash }}</p>{% endfor %}
 {% endif %}</section>{% endfor %}
 {% endblock %}

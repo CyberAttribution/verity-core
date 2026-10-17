@@ -2001,6 +2001,7 @@ def workflow_detail(request: Request, work_id: str):
     if not work: raise HTTPException(404,"Workflow not found")
     links=[x for x in snapshot["workflow_links"] if x["workflow_id"]==work_id]
     decisions=[]
+    report_cases=[]
     for link in links:
         if link["kind"]=="decision":
             try:
@@ -2009,8 +2010,18 @@ def workflow_detail(request: Request, work_id: str):
                 decisions.append(run)
             except (decision_routes.decision_runs.NotFound,ValueError):
                 decisions.append({"id":link["target_id"],"integrity_error":True})
+        elif link["kind"]=="report_action":
+            try:
+                action=report_routes.actions().get(link["target_id"])
+                observed=report_routes.actions().observed_file()
+                action["output_observation"]=observed
+                action["output_matches"]=bool(observed["present"] and observed["sha256"]==action["manifest"]["action"]["sha256"])
+                action["policy_sha256"]=hashlib.sha256(json.dumps(action["manifest"]["policy"],sort_keys=True,separators=(",",":")).encode()).hexdigest()
+                report_cases.append(action)
+            except (KeyError,ValueError,OSError,sqlite3.Error):
+                report_cases.append({"id":link["target_id"],"integrity_error":True})
     ctx=base_ctx(request,"agents")
-    ctx.update(item=workflows.guidance(work),links=links,decisions=decisions,
+    ctx.update(item=workflows.guidance(work),links=links,decisions=decisions,report_cases=report_cases,
                requests=[t for t in snapshot["tasks"] if any(s["workflow_id"]==work_id and s["task_id"]==t["id"] for s in snapshot["work_sources"]+snapshot["continuations"])],
                authorizations=snapshot["continuation_authorizations"],operator_token=decision_routes.TOKEN)
     response=render("workflow_detail.html",ctx)

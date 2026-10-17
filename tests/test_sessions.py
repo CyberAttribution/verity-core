@@ -164,3 +164,5 @@ def test_outcome_chain_requires_completed_result_and_separate_review(tmp_path):
     assert db.append(sid, reviewed)
     assert not SessionStore(tmp_path / "outcomes.db").append(sid, reviewed)
     assert derive(db.get(sid))["tasks"][0]["outcome"] == "independently_verified"
+    assert derive(db.get(sid))["tasks"][0]["outcome_event_id"] == "accepted"
+    assert derive(db.get(sid))["tasks"][0]["outcome_result_id"] == "result-stop"

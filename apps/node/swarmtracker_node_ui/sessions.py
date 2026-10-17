@@ -77,6 +77,8 @@ def validate_event(event):
         raise ValueError("Invalid task state")
     if event["kind"] == "task" and (not data.get("task_id") or not data.get("title") or data.get("scope") not in {"gpu", "local"}):
         raise ValueError("Task requires identity, title and scope")
+    if event["kind"] in {"task", "request", "result", "outcome"} and "task_id" in data and (not isinstance(data["task_id"], str) or not re.fullmatch(r"[A-Za-z0-9._:-]+", data["task_id"])):
+        raise ValueError("Invalid task ID")
     if event["kind"] == "task" and data.get("scope") == "gpu" and data.get("state") == "verified":
         raise ValueError("GPU task verification requires a separate outcome observation")
     if event["kind"] in {"request", "result"} and not data.get("task_id"):
@@ -250,6 +252,8 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
         item = dict(entry["data"], source=entry["source"])
         outcome = outcomes.get(item["task_id"])
         item["outcome"] = outcome["data"]["state"] if outcome else "unresolved"
+        item["outcome_event_id"] = outcome["id"] if outcome else None
+        item["outcome_result_id"] = outcome["data"].get("result_id") if outcome else None
         item["outcome_source"] = outcome["source"] if outcome else None
         item["outcome_evidence"] = outcome["data"].get("evidence") if outcome else None
         item["outcome_verifier"] = outcome["data"].get("verifier") if outcome else None

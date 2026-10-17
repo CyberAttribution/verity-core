@@ -186,7 +186,7 @@ class VerityAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self.initialOrigin = url
             self.startupComplete = true
             self.startupTimer?.invalidate()
-            let destination = CommandLine.arguments.contains("--smoke-connection-test") ? url.appendingPathComponent("setup") : (CommandLine.arguments.contains("--smoke-agents") ? url.appendingPathComponent("agents") : url)
+            let destination = CommandLine.arguments.contains("--smoke-connection-test") ? url.appendingPathComponent("setup") : (CommandLine.arguments.contains("--smoke-governance") ? url.appendingPathComponent("governance") : (CommandLine.arguments.contains("--smoke-agents") ? url.appendingPathComponent("agents") : url))
             self.webView?.load(URLRequest(url: destination))
         }
         worker.onExit = { [weak self] code in
@@ -287,7 +287,7 @@ class VerityAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     let nav = support.appendingPathComponent("navigate")
                     if let path = try? String(contentsOf: nav, encoding: .utf8) {
                         try? FileManager.default.removeItem(at: nav)
-                        if path == "/agents" || path == "/setup" || path.hasPrefix("/decisions/") {
+                        if path == "/agents" || path == "/governance" || path == "/setup" || path.hasPrefix("/decisions/") {
                             if let origin = self.initialOrigin, let url = URL(string: path, relativeTo: origin), sameOrigin(url.absoluteURL, origin) {
                                 self.webView?.load(URLRequest(url: url.absoluteURL))
                             }

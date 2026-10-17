@@ -33,7 +33,7 @@ Only the public key is bundled. Keep the private key owner-only and separately b
 
 Setup accepts operator label, model and loopback OpenClaw/Ollama addresses. Configuration is validated, durably saved owner-only via atomic replacement, then applied. A remote runtime needs a separately established private tunnel; setup does not install inference models. Product activation does not grant per-job cloud-evidence authorization or alter existing cloud gates.
 
-Data defaults to `~/Library/Application Support/Verity Pilot/data`. `VERITY_DATA_HOME` supports isolated testing. `VERITY_SMOKE_DIR` redirects internal native smoke evidence, and `--smoke-test --smoke-agents` renders the Agents page and quits. Do not collect or publish screenshots with user data.
+Data defaults to `~/Library/Application Support/Verity Pilot/data`. `VERITY_DATA_HOME` supports isolated testing. `VERITY_SMOKE_DIR` redirects internal native smoke evidence, and `--smoke-test --smoke-agents` or `--smoke-test --smoke-governance` render the respective page and quit. Do not collect or publish screenshots with user data.
 
 ## Verified scope and remaining checks
 

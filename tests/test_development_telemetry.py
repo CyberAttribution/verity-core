@@ -136,6 +136,7 @@ def test_agent_card_links_newest_run_when_older_run_is_active():
     assert grouped[0]["status"]=="Recently disconnected"
     assert grouped[0]["contact_lost_during_activity"] is True
     assert grouped[0]["unfinished_disconnected"]==1
+    assert grouped[0]["reported_task"]=="New review"
     assert [v["run_id"] for v in grouped[0]["recent_runs"]]==["run-2","run-1"]
 
 

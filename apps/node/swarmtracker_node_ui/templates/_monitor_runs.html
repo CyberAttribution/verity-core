@@ -15,8 +15,8 @@
       <div class="kv"><span>Creator / source</span><code>{{ run.creator }}</code></div>
       <div class="kv"><span>Model / provider / runtime</span><code>{{ run.model }} / {{ run.provider }} / {{ run.runtime }}</code></div>
       <div class="kv"><span>Reported permissions</span><code>{{ run.permissions }}</code></div>
-      <div class="kv"><span>Reported task</span><code>{{ run.current_task }}</code></div>
-      <div class="kv"><span>Last reported work</span><code>{{ run.last_reported_work }}</code></div>
+      <div class="kv"><span>Reported task</span><code>{{ run.reported_task }}</code></div>
+      {% if run.last_reported_work != run.reported_task %}<div class="kv"><span>Last reported work</span><code>{{ run.last_reported_work }}</code></div>{% endif %}
       <div class="kv"><span>Last received (UTC)</span><code>{{ run.last_seen_utc }}</code></div>
       <div class="kv"><span>Activity</span><code>{{ run.pending|length }} unfinished; {{ run.activities|length }} recent completed</code></div>
     </div>

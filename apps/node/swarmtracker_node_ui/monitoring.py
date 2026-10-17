@@ -134,6 +134,7 @@ def participants(views):
         group["recent_runs"] = history
         group["last_seen_utc"] = newest.get("last_seen_utc") or datetime.fromtimestamp(newest["last_seen"], timezone.utc).isoformat()
         group["last_reported_work"]=next((a.get("task") for a in reversed(newest["activities"]) if a.get("task")),newest["current_task"])
+        group["reported_task"] = newest["current_task"] if newest["current_task"] != "Unknown" else group["last_reported_work"]
         group["creator"] = newest.get("creator", "Not reported")
         group["provider"] = newest.get("provider", "Not reported")
         group["permissions"] = newest.get("permissions", "Not reported")

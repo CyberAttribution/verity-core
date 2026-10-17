@@ -22,7 +22,7 @@ Use branch glm/real-openclaw-action-v0.1 at the tested commit. Confirm M1 servic
       --output-dir /path/to/isolated-output \
       --model qwen2.5:7b-instruct
 
-The M1 host Python can run this standard-library reporter, but its expat linkage prevents pip/venv bootstrap. The demonstrated Verity HTTP UI ran in the MacBook isolated test environment. The prior native package was preserved and does not contain this new code. The operator reviews exact bytes at /report-actions/{record_id}, records approval or rejection and executes only after approval. Agents and Governance link the same record and the detail links to /monitor/runs/{activity_run_id}. Export the decision and retain its checkpoint separately. Verify the disk file independently. The UI marks imported M1 activity and its M1 receipt times.
+The M1 host Python can run this standard-library reporter, but its expat linkage prevents pip/venv bootstrap. The demonstrated Verity HTTP UI ran in the MacBook isolated test environment. The prior native package was preserved and does not contain this new code. The operator reviews exact bytes at /report-actions/{record_id}, records approval or rejection and executes only after approval. Agents and Governance link the same record and the detail links to /monitor/runs/{activity_run_id}. Export the decision and retain its checkpoint separately. Verify the disk file independently. The UI marks imported M1 activity and its M1 receipt times. A disconnected agent card shows its last reported task when no task remains active, while preserving the full run link and a separate warning for interrupted consequential work.
 
 ## Acceptance
 

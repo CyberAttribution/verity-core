@@ -10,6 +10,7 @@ import os
 import secrets
 import sqlite3
 import stat
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -42,7 +43,7 @@ def _label(value, name, limit=240):
 def validate(manifest):
     keys = {"schema", "agent_id", "task_id", "model", "provider", "source_name",
             "source_sha256", "runtime_event_id", "proposal", "action", "policy"}
-    if not isinstance(manifest, dict) or not keys <= set(manifest) or set(manifest) - keys - {"activity_run_id", "response_sha256"} or manifest["schema"] != SCHEMA:
+    if not isinstance(manifest, dict) or not keys <= set(manifest) or set(manifest) - keys - {"activity_run_id", "response_sha256", "effective_configuration"} or manifest["schema"] != SCHEMA:
         raise ValueError("Invalid report proposal")
     for k in ("agent_id", "task_id", "model", "provider", "source_name", "runtime_event_id"):
         _label(manifest[k], k)
@@ -56,6 +57,26 @@ def validate(manifest):
         if not isinstance(value, str) or len(value) != 64:
             raise ValueError("Invalid runtime response digest")
         int(value, 16)
+    if "effective_configuration" in manifest:
+        cfg=manifest["effective_configuration"]
+        required={"agent_id","agent_version","agent_hash","connection_id","connection_version","connection_hash",
+                  "model","model_revision","provider","endpoint","instructions_sha256","instructions","allowed_tools",
+                  "resources","external_sharing","fallback_id","fallback_version","fallback_model","fallback_revision","resource_id","resource_version",
+                  "resource_hash","provenance","machine_id","machine_version","machine_hash","executor_id"}
+        if not isinstance(cfg,dict) or set(cfg)!=required or cfg["agent_id"]!=manifest["agent_id"] or cfg["model"]!=manifest["model"] or cfg["provider"]!=manifest["provider"] or cfg["resource_id"]!=TARGET or cfg["executor_id"]!="verity-report-broker":
+            raise ValueError("Action configuration mismatch")
+        if any(type(cfg[k]) is not int or cfg[k]<1 for k in ("agent_version","connection_version","resource_version")):
+            raise ValueError("Invalid configuration version")
+        for k in ("agent_hash","connection_hash","resource_hash","instructions_sha256"):
+            if not isinstance(cfg[k],str) or len(cfg[k])!=64:raise ValueError("Invalid configuration digest")
+            int(cfg[k],16)
+        if not isinstance(cfg["instructions"],str) or digest(cfg["instructions"].encode())!=cfg["instructions_sha256"] or not isinstance(cfg["resources"],list) or TARGET not in cfg["resources"]:
+            raise ValueError("Invalid effective instructions or resources")
+        if cfg["machine_id"] is not None:
+            if not isinstance(cfg["machine_id"],str) or type(cfg["machine_version"]) is not int or not isinstance(cfg["machine_hash"],str) or len(cfg["machine_hash"])!=64:
+                raise ValueError("Invalid machine linkage")
+        if not isinstance(cfg["allowed_tools"],list) or any(x not in ("generate_text","draft_text") for x in cfg["allowed_tools"]):
+            raise ValueError("Unsupported tool assertion")
     proposal = manifest["proposal"]
     if not isinstance(proposal, str) or not proposal.strip() or len(proposal.encode()) > MAX_OUTPUT:
         raise ValueError("Invalid proposed output")
@@ -90,6 +111,7 @@ def inspect(record):
     if record["subject"] != {"kind": "governed_report_write", "identifier": m["task_id"]}:
         raise ValueError("Proposal identity mismatch")
     state, decision, attempts, reserved = "proposed", "pending", 0, None
+    approval_expires_at = None
     for entry in record["entries"][1:]:
         p = entry["payload"]
         event = p.get("event")
@@ -104,6 +126,10 @@ def inspect(record):
                 raise ValueError("Invalid actor provenance")
             if (entry["entry_type"] == "approval_granted") != (choice == "approved"):
                 raise ValueError("Decision entry mismatch")
+            expiry=p.get("expires_at")
+            if expiry is not None and (choice!="approved" or type(expiry) not in (int,float) or expiry<=0):
+                raise ValueError("Invalid approval expiry")
+            approval_expires_at=expiry
             decision = choice
             state = choice
         elif event == "revocation":
@@ -147,8 +173,11 @@ def inspect(record):
             raise ValueError("Unknown report action event")
     if attempts and state == "denied" and reserved is not None:
         raise ValueError("Denied action missing result")
+    if state=="approved" and approval_expires_at is not None and time.time()>approval_expires_at:
+        state="expired"
     return {"id": record["record_id"], "manifest": m, "decision": decision,
-            "state": state, "attempts": attempts, "can_execute": decision == "approved" and not attempts,
+            "state": state, "attempts": attempts, "approval_expires_at": approval_expires_at,
+            "can_execute": state == "approved" and not attempts,
             "record": record, "head_hash": record["entries"][-1]["entry_hash"],
             "entry_count": len(record["entries"])}
 
@@ -174,9 +203,10 @@ def verify(bundle, anchor=None):
 
 
 class Store:
-    def __init__(self, db_path, output_dir):
+    def __init__(self, db_path, output_dir, config_store=None):
         self.db_path = Path(db_path)
         self.output_dir = Path(output_dir)
+        self.config_store = config_store
         if not self.output_dir.is_absolute() or self.output_dir.is_symlink():
             raise ValueError("Absolute non-symlink output directory required")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -214,6 +244,10 @@ class Store:
                     (trust.canonical_json(record), record["record_id"]))
 
     def create(self, manifest):
+        if self.config_store is not None and "effective_configuration" in manifest:
+            cfg=manifest["effective_configuration"]
+            if cfg != self.config_store.effective(manifest["agent_id"],TARGET):
+                raise ValueError("Effective configuration changed before proposal was saved")
         record = new(manifest)
         with self.connection() as con:
             con.execute("INSERT INTO report_actions VALUES (?,?)",
@@ -242,6 +276,7 @@ class Store:
             trust.append_entry(record, "approval_granted" if choice == "approved" else "note",
                                actor=actor, payload={"event": "decision", "choice": choice,
                                "reason": reason, "binding": binding(view["manifest"], rid),
+                               **({"expires_at": time.time()+600} if choice=="approved" else {}),
                                "identity_provenance": "local operator intent; unauthenticated"})
             self._save(con, record)
         return inspect(record)
@@ -286,8 +321,15 @@ class Store:
         with self.connection() as con:
             con.execute("BEGIN IMMEDIATE")
             record, view = self._get(con, rid)
-            if view["head_hash"] != head or view["attempts"]:
+            if view["head_hash"] != head or view["attempts"] or view["state"]=="expired":
                 raise Conflict("Action changed or already attempted; reload")
+            if self.config_store is not None and "effective_configuration" in view["manifest"]:
+                try:
+                    current=self.config_store.effective(view["manifest"]["agent_id"],TARGET)
+                except ValueError:
+                    raise Conflict("Effective configuration unavailable; renewed proposal required") from None
+                if current!=view["manifest"]["effective_configuration"]:
+                    raise Conflict("Effective configuration changed; renewed proposal and approval required")
             allowed = view["decision"] == "approved"
             attempt = trust.append_entry(record, "action_attempted", actor=actor,
                                          payload={"event": "attempt", "allowed": allowed,

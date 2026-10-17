@@ -1,5 +1,6 @@
 """Local operator pages for real fixed-output report proposals."""
 import os
+import hashlib
 import sqlite3
 from pathlib import Path
 
@@ -7,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from . import decision_routes, report_actions, store
+from .customer_config import CustomerConfig
 
 STORE = None
 
@@ -16,7 +18,8 @@ def actions():
     if STORE is None:
         output = Path(os.environ.get("VERITY_REPORT_OUTPUT_DIR",
                                   str(store.DB_PATH.parent / "governed-report-output")))
-        STORE = report_actions.Store(store.DB_PATH.with_name("report-actions.db"), output)
+        STORE = report_actions.Store(store.DB_PATH.with_name("report-actions.db"), output,
+                 CustomerConfig(store.DB_PATH.with_name("customer-config.db")))
     return STORE
 
 
@@ -44,8 +47,27 @@ def install(app, render, base_ctx):
         except (ValueError, sqlite3.Error, OSError):
             raise HTTPException(503, "Report action history unavailable") from None
         ctx = base_ctx(request, "governance")
-        ctx.update(report_actions=runs)
+        ctx.update(report_actions=runs,operator_token=decision_routes.TOKEN)
         return render("report_actions.html", ctx)
+
+    @router.post("/report-actions/propose")
+    async def propose(request: Request):
+        local_peer(request)
+        form=await decision_routes.operator_form(request)
+        if set(form)!={"operator_token","agent_id","task_id","runtime_event_id","proposal","source_name","source_sha256"}:
+            raise HTTPException(422,"Exact proposal fields required")
+        try:
+            cfg=CustomerConfig(store.DB_PATH.with_name("customer-config.db")).effective(form["agent_id"],report_actions.TARGET)
+            manifest=dict(schema=report_actions.SCHEMA,agent_id=form["agent_id"],task_id=form["task_id"],
+                model=cfg["model"],provider=cfg["provider"],source_name=form["source_name"],
+                source_sha256=form["source_sha256"],runtime_event_id=form["runtime_event_id"],
+                proposal=form["proposal"],action=dict(kind="write_sanitized_summary",target=report_actions.TARGET,
+                sha256=hashlib.sha256(form["proposal"].encode()).hexdigest()),policy=report_actions.POLICY,
+                response_sha256=hashlib.sha256(form["proposal"].encode()).hexdigest(),effective_configuration=cfg)
+            view=actions().create(manifest)
+        except (ValueError,KeyError,sqlite3.Error):
+            raise HTTPException(422,"Proposal or effective configuration invalid; no action was recorded") from None
+        return RedirectResponse("/report-actions/"+view["id"],status_code=303)
 
     @router.get("/report-actions/{rid}")
     def detail(request: Request, rid: str):

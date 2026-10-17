@@ -117,6 +117,18 @@ def test_revoked_approval_denies_stale_and_fresh_execution(db, monkeypatch):
                                  report_actions.checkpoint(denied["record"]))
 
 
+def test_expired_approval_refuses_execution_after_restart(db, monkeypatch):
+    approved=approve(db,db.create(manifest("# Expiring harmless proposal\n")))
+    assert approved["approval_expires_at"] is not None
+    monkeypatch.setattr(report_actions.time,"time",lambda:approved["approval_expires_at"]+1)
+    restarted=report_actions.Store(db.db_path,db.output_dir)
+    expired=restarted.get(approved["id"])
+    assert expired["state"]=="expired" and not expired["can_execute"]
+    with pytest.raises(report_actions.Conflict):
+        restarted.execute(approved["id"],"operator",approved["head_hash"])
+    assert not restarted.observed_file()["present"]
+
+
 def test_interrupted_observation_after_real_file_effect_is_in_doubt(db, monkeypatch):
     approved = approve(db, db.create(manifest("# Synthetic interrupted observation\n")))
     actual_write = db._write

@@ -2365,3 +2365,5 @@ report_routes.install(app, render, base_ctx)
 
 from . import setup_routes
 setup_routes.install(app, render, base_ctx)
+from . import customer_routes
+customer_routes.install(app, render, base_ctx)

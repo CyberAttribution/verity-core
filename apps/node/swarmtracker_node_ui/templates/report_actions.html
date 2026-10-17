@@ -3,7 +3,12 @@
 {% block content %}
 <section class="panel">
 <h2>Governed report writes</h2>
-<p>These records are separate from the fixed sender-block simulation. An OpenClaw text proposal has no write authority. Only this Verity route can write the designated output after a record-specific approval.</p>
+<p>These records are separate from the fixed sender-block simulation. The current OpenClaw API exposes text generation without a file-writing tool. Within this broker, Verity writes the designated output only after record-specific approval. A process with direct filesystem access under the same OS user can bypass this route.</p>
+<details><summary>Import an exact, observed OpenClaw text proposal</summary><p>This operator form records the proposal and current versioned agent configuration. It does not authenticate the runtime event ID; independently compare the OpenClaw log and response before approval.</p>
+<form method="post" action="/report-actions/propose"><input type="hidden" name="operator_token" value="{{ operator_token }}">
+<label>Configured agent ID <input name="agent_id" required></label><label>Task ID <input name="task_id" required></label><label>Runtime event ID <input name="runtime_event_id" required></label>
+<label>Source name <input name="source_name" required></label><label>Source SHA-256 <input name="source_sha256" required minlength="64" maxlength="64"></label>
+<label>Exact proposed text <textarea name="proposal" required rows="5"></textarea></label><button>Record proposal for review</button></form></details>
 {% for action in report_actions %}
 <p><a href="/report-actions/{{ action.id }}">{{ action.manifest.task_id }}</a> · {{ action.manifest.agent_id }} · {{ action.state }} · {{ action.manifest.action.target }}</p>
 {% else %}<p>No report proposals have been imported.</p>{% endfor %}

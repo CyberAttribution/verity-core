@@ -1,0 +1,160 @@
+"""Operator-entered, immutable configuration versions and environment assertions.
+
+These records describe expected access. They do not provision OS permissions,
+authenticate machines, or grant a runtime any new tool capability.
+"""
+import hashlib
+import json
+import re
+import sqlite3
+import time
+import urllib.parse
+from pathlib import Path
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def label(value, limit=160):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}", value) or len(value)>limit:
+        raise ValueError("Invalid configuration identifier")
+    return value
+
+
+def _text(value, limit=1000):
+    if not isinstance(value,str) or not value.strip() or len(value)>limit or "\x00" in value:
+        raise ValueError("Invalid configuration text")
+    return value.strip()
+
+
+class CustomerConfig:
+    def __init__(self, path):
+        self.path=Path(path)
+        self.path.parent.mkdir(parents=True,exist_ok=True)
+        with self._db() as db:
+            db.execute("CREATE TABLE IF NOT EXISTS versions (kind TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, digest TEXT NOT NULL, body TEXT NOT NULL, at REAL NOT NULL, PRIMARY KEY(kind,id,version))")
+            db.execute("CREATE TABLE IF NOT EXISTS observations (kind TEXT NOT NULL, id TEXT NOT NULL, at REAL NOT NULL, state TEXT NOT NULL, detail TEXT NOT NULL, PRIMARY KEY(kind,id))")
+
+    def _db(self):
+        db=sqlite3.connect(self.path,timeout=10)
+        db.row_factory=sqlite3.Row
+        return db
+
+    def save(self, kind, identifier, body):
+        label(identifier)
+        if kind not in {"machine","connection","agent","resource","link"} or not isinstance(body,dict):
+            raise ValueError("Unsupported configuration")
+        if kind=="connection":
+            if set(body)!={"provider","endpoint","model","revision","scope","credential_ref"}:
+                raise ValueError("Invalid connection fields")
+            for key in ("provider","model","scope"):_text(body[key],160)
+            if body["scope"] not in {"local","external"}:raise ValueError("Invalid connection scope")
+            endpoint=urllib.parse.urlsplit(body["endpoint"])
+            if endpoint.username or endpoint.password or endpoint.query or endpoint.fragment or endpoint.path not in ("", "/"):
+                raise ValueError("Endpoint cannot contain credentials or path")
+            if body["scope"]=="local":
+                from .config import assert_local
+                assert_local(body["endpoint"])
+            elif endpoint.scheme!="https" or not endpoint.hostname or endpoint.hostname in {"localhost","127.0.0.1"}:
+                raise ValueError("External model endpoint must be HTTPS")
+            if not isinstance(body["revision"],str) or len(body["revision"])>160:raise ValueError("Invalid revision")
+            # A reference is descriptive only; this workflow does not accept or
+            # export credentials, or silently dispatch to external endpoints.
+            if body["credential_ref"] not in ("none", "separately-managed"):
+                raise ValueError("Secrets cannot be entered in configuration")
+        elif kind=="agent":
+            if set(body)!={"connection_id","instructions","allowed_tools","resources","external_sharing","fallback_id"}:
+                raise ValueError("Invalid agent fields")
+            label(body["connection_id"])
+            _text(body["instructions"],2000)
+            if body["fallback_id"]:label(body["fallback_id"])
+            if not isinstance(body["allowed_tools"],list) or any(x not in {"generate_text","draft_text"} for x in body["allowed_tools"]) or len(set(body["allowed_tools"]))!=len(body["allowed_tools"]):
+                raise ValueError("Only descriptive read-only tools supported")
+            if not isinstance(body["resources"],list) or any(not isinstance(x,str) for x in body["resources"]):raise ValueError("Invalid resources")
+            for x in body["resources"]:label(x)
+            if body["external_sharing"] not in {"none","explicit_per_job"}:raise ValueError("Invalid sharing rule")
+            if not self.latest("connection",body["connection_id"]):raise ValueError("Unknown primary connection")
+            if body["fallback_id"] and not self.latest("connection",body["fallback_id"]):raise ValueError("Unknown fallback")
+            for x in body["resources"]:
+                if not self.latest("resource",x):raise ValueError("Unknown resource")
+        elif kind=="link":
+            if set(body)!={"from_kind","from_id","to_kind","to_id","permission","provenance","status"}:
+                raise ValueError("Invalid environment relationship")
+            if (body["from_kind"],body["to_kind"],body["permission"]) not in {
+                    ("machine","connection","hosts"),("agent","resource","proposes"),
+                    ("machine","resource","executor-host")}:
+                raise ValueError("Unsupported relationship")
+            for key in ("from_id","to_id"):label(body[key])
+            if not self.latest(body["from_kind"],body["from_id"]) or not self.latest(body["to_kind"],body["to_id"]):
+                raise ValueError("Unknown relationship endpoint")
+            if body["provenance"]!="operator-entered" or body["status"]!="unknown":
+                raise ValueError("New relationship is unconfirmed")
+        else:
+            if set(body)!={"description","provenance","status"}:raise ValueError("Invalid environment fields")
+            _text(body["description"],500)
+            if body["provenance"] not in {"operator-entered","observed","confirmed"} or body["status"] not in {"unknown","current","stale"}:
+                raise ValueError("Invalid provenance or status")
+        raw=canonical(body)
+        if re.search(r"(?i)(bearer\s+|api[_-]?key\s*[:=]|password\s*[:=]|secret\s*[:=])",raw):
+            raise ValueError("Credentials cannot be stored in ordinary configuration")
+        digest=hashlib.sha256(raw.encode()).hexdigest()
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT COALESCE(MAX(version),0)+1 FROM versions WHERE kind=? AND id=?",(kind,identifier)).fetchone()
+            version=row[0]
+            db.execute("INSERT INTO versions VALUES (?,?,?,?,?,?)",(kind,identifier,version,digest,raw,time.time()))
+        return self.latest(kind,identifier)
+
+    def latest(self,kind,identifier):
+        with self._db() as db:
+            row=db.execute("SELECT * FROM versions WHERE kind=? AND id=? ORDER BY version DESC LIMIT 1",(kind,identifier)).fetchone()
+            return dict(row,body=json.loads(row["body"])) if row else None
+
+    def all(self):
+        with self._db() as db:
+            return [dict(row,body=json.loads(row["body"])) for row in db.execute("SELECT v.* FROM versions v JOIN (SELECT kind,id,MAX(version) version FROM versions GROUP BY kind,id) x ON (v.kind,v.id,v.version)=(x.kind,x.id,x.version) ORDER BY v.kind,v.id")]
+
+    def observe(self,kind,identifier,state,detail):
+        if not self.latest(kind,identifier) or state not in {"reachable","unavailable","unknown"}:
+            raise ValueError("Invalid observation")
+        with self._db() as db:
+            db.execute("INSERT OR REPLACE INTO observations VALUES (?,?,?,?,?)",(kind,identifier,time.time(),state,_text(detail,300)))
+
+    def observations(self):
+        with self._db() as db:
+            result={(r["kind"],r["id"]):dict(r) for r in db.execute("SELECT * FROM observations")}
+        for item in result.values():
+            if item["state"]=="reachable" and time.time()-item["at"]>300:
+                item["state"]="stale"
+                item["detail"]="Last health observation is stale; current reachability unknown"
+        return result
+
+    def effective(self,agent_id,resource_id):
+        agent=self.latest("agent",agent_id)
+        if not agent or resource_id not in agent["body"]["resources"]:raise ValueError("Agent resource not configured")
+        resource=self.latest("resource",resource_id)
+        conn=self.latest("connection",agent["body"]["connection_id"])
+        fallback=self.latest("connection",agent["body"]["fallback_id"]) if agent["body"]["fallback_id"] else None
+        hosted=[x for x in self.all() if x["kind"]=="link" and x["body"]["to_kind"]=="connection"
+                and x["body"]["to_id"]==conn["id"] and x["body"]["permission"]=="hosts"]
+        machine=self.latest("machine",hosted[0]["body"]["from_id"]) if len(hosted)==1 else None
+        if not resource or not conn:raise ValueError("Incomplete effective configuration")
+        return {"agent_id":agent_id,"agent_version":agent["version"],"agent_hash":agent["digest"],
+                "connection_id":conn["id"],"connection_version":conn["version"],"connection_hash":conn["digest"],
+                "model":conn["body"]["model"],"model_revision":conn["body"]["revision"] or "unknown",
+                "provider":conn["body"]["provider"],"endpoint":conn["body"]["endpoint"],
+                "instructions_sha256":hashlib.sha256(agent["body"]["instructions"].encode()).hexdigest(),
+                "instructions":agent["body"]["instructions"],
+                "allowed_tools":agent["body"]["allowed_tools"],"external_sharing":agent["body"]["external_sharing"],
+                "resources":agent["body"]["resources"],
+                "fallback_id":fallback["id"] if fallback else None,
+                "fallback_version":fallback["version"] if fallback else None,
+                "fallback_model":fallback["body"]["model"] if fallback else None,
+                "fallback_revision":fallback["body"]["revision"] or "unknown" if fallback else None,
+                "machine_id":machine["id"] if machine else None,
+                "machine_version":machine["version"] if machine else None,
+                "machine_hash":machine["digest"] if machine else None,
+                "executor_id":"verity-report-broker",
+                "resource_id":resource_id,"resource_version":resource["version"],"resource_hash":resource["digest"],
+                "provenance":"operator-entered; capabilities and host identity unconfirmed"}

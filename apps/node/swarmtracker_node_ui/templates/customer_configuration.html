@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Models & environment{% endblock %}
+{% block content %}
+<h1>Models, agents &amp; environment</h1>
+<p>These are versioned operator assertions. A health response proves only that an endpoint answered. Agent tool and resource settings describe intended scope; the runtime and OS must separately enforce it. No credential or model prompt body is exported here.</p>
+<section class="panel"><h2>Connections</h2>
+{% for item in configurations if item.kind == 'connection' %}
+<article class="card"><strong>{{ item.id }} v{{ item.version }}</strong> · {{ item.body.provider }} / {{ item.body.model }} · revision {{ item.body.revision or 'unknown' }} · {{ item.body.scope }}<br><code>{{ item.body.endpoint }}</code><br>Configuration SHA-256 <code>{{ item.digest }}</code>
+{% set observation=observations.get(('connection',item.id)) %}
+<p>Connection: {{ observation.state if observation else 'unknown' }} · {{ observation.detail if observation else 'Not checked' }}{% if observation %} · observed {{ observation.at }}{% endif %}</p>
+<form method="post" action="/configuration/connections/{{ item.id }}/check"><input type="hidden" name="operator_token" value="{{ operator_token }}"><button>Check connection</button></form></article>
+{% endfor %}
+<form method="post" action="/configuration"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="kind" value="connection">
+<label>Connection ID <input name="id" required></label><label>Scope <select name="scope"><option value="local">Local or private tunnel</option><option value="external">External HTTPS (registration only)</option></select></label>
+<label>Provider <input name="provider" required></label><label>Endpoint (no credentials or path) <input name="endpoint" required placeholder="http://127.0.0.1:8090"></label>
+<label>Model <input name="model" required></label><label>Revision, if known <input name="revision"></label><button>Save immutable connection version</button></form>
+<p>External registration never sends data or tests a private credential. Configure protected credentials and per-job sharing through a separately supported adapter before dispatch.</p></section>
+<section class="panel"><h2>Environment map</h2>
+{% for item in configurations if item.kind in ('machine','resource') %}
+<article class="card"><strong>{{ item.kind }} {{ item.id }} v{{ item.version }}</strong> · {{ item.body.description }}<br>{{ item.body.provenance }} · {{ item.body.status }} · updated {{ item.at }}</article>
+{% endfor %}
+<form method="post" action="/configuration"><input type="hidden" name="operator_token" value="{{ operator_token }}"><label>Kind <select name="kind"><option value="machine">Machine</option><option value="resource">Protected resource</option></select></label>
+<label>ID <input name="id" required></label><label>Description <input name="description" required></label><button>Record operator assertion</button></form>
+<p>Installation IDs and endpoint names do not authenticate hardware. Observed, confirmed, stale and unknown statuses require their own evidence; this form creates operator-entered, unknown records.</p></section>
+<section class="panel"><h2>Relationships and intended permissions</h2>
+{% for item in configurations if item.kind == 'link' %}<article class="card"><strong>{{ item.id }} v{{ item.version }}</strong> · {{ item.body.from_kind }} {{ item.body.from_id }} → {{ item.body.to_kind }} {{ item.body.to_id }} · {{ item.body.permission }} · {{ item.body.provenance }} / {{ item.body.status }}</article>{% endfor %}
+<form method="post" action="/configuration"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="kind" value="link">
+<label>Relationship ID <input name="id" required></label><label>From kind <select name="from_kind"><option>machine</option><option>agent</option></select></label><label>From ID <input name="from_id" required></label>
+<label>To kind <select name="to_kind"><option>connection</option><option>resource</option></select></label><label>To ID <input name="to_id" required></label>
+<label>Intended permission <select name="permission"><option>hosts</option><option>proposes</option><option>executor-host</option></select></label><button>Record unconfirmed relationship</button></form>
+<p>These links do not change OS filesystem permissions or certify an installation ID.</p></section>
+<section class="panel"><h2>Per-agent configuration</h2>
+{% for item in configurations if item.kind == 'agent' %}
+<article class="card"><strong>{{ item.id }} v{{ item.version }}</strong> · model connection {{ item.body.connection_id }} · fallback {{ item.body.fallback_id or 'none' }}<br>
+Allowed tool assertions {{ item.body.allowed_tools | join(', ') or 'none' }} · resource access {{ item.body.resources | join(', ') or 'none' }} · external sharing {{ item.body.external_sharing }}<br>
+Instructions: {{ item.body.instructions }}<br>Configuration SHA-256 <code>{{ item.digest }}</code> · operator-entered</article>
+{% endfor %}
+<form method="post" action="/configuration"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="kind" value="agent">
+<label>Agent ID <input name="id" required></label><label>Primary connection ID <input name="connection_id" required></label><label>Fallback connection ID (optional) <input name="fallback_id"></label>
+<label>Instructions <textarea name="instructions" required maxlength="2000"></textarea></label><label>Allowed tool assertions (comma-separated generate_text, draft_text) <input name="allowed_tools" value="generate_text"></label>
+<label>Resource IDs (comma-separated) <input name="resources" required></label><label>External data sharing <select name="external_sharing"><option value="none">None</option><option value="explicit_per_job">Explicit per job</option></select></label>
+<button>Save immutable agent version</button></form></section>
+{% endblock %}

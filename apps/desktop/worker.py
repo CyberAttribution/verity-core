@@ -76,8 +76,11 @@ def main(argv=None):
         setup_environment(repo,pilot=args.bundled)
         if args.bundled:
             import platform
+            import plistlib
             os.environ["VERITY_REQUIRE_ACTIVATION"] = "1"
             os.environ["VERITY_ACTIVATION_PUBLIC_KEY"] = str(Path(sys.executable).parent.parent / "activation-public.pem")
+            with (Path(sys.executable).parents[3] / "Info.plist").open("rb") as info:
+                os.environ["VERITY_APP_VERSION"] = plistlib.load(info)["CFBundleShortVersionString"]
             os.environ.setdefault("NODE_UI_NODE", socket.gethostname())
             os.environ.setdefault("NODE_UI_HARDWARE", platform.machine() + " Mac")
             os.environ.setdefault("NODE_UI_HARDWARE_NEXT", "Not configured")

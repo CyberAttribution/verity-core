@@ -189,7 +189,7 @@ class VerityAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             let smokePages = ["--smoke-connection-test": "setup", "--smoke-governance": "governance",
                               "--smoke-agents": "agents", "--smoke-tasks": "tasks",
                               "--smoke-policy": "review-policy", "--smoke-notifications": "notifications",
-                              "--smoke-demo": "demo"]
+                              "--smoke-demo": "demo", "--smoke-registry": "setup/registry"]
             let selected = smokePages.first { CommandLine.arguments.contains($0.key) }?.value
             let destination = selected.map { url.appendingPathComponent($0) } ?? url
             self.webView?.load(URLRequest(url: destination))

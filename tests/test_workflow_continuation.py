@@ -473,6 +473,19 @@ def test_in_app_notifications_cover_gates_and_keep_acknowledgment(tmp_path):
     assert not any(x["id"]=="review:reviewFailure" for x in attention(fresh.snapshot(),now=1401))
 
 
+def test_accepted_successor_resolves_alert_without_rewriting_failed_history(tmp_path):
+    c=Coordinator(tmp_path/"alerts.db",clock=lambda:1000)
+    c.configure(rate=1,start=900,ceiling=110)
+    c.enqueue_work(json.loads(work("oldWork") ["spec"]))
+    c.enqueue_work(json.loads(work("newWork") ["spec"]))
+    c.update_work("oldWork","blocked")
+    assert any(x["id"]=="work:oldWork" for x in attention(c.snapshot()))
+    c.record_successor("oldWork","newWork","Corrected requirement with accepted successor")
+    c.update_work("newWork","finished",checkpoint="checked source",evidence="Independent assertion passed")
+    assert not any(x["id"]=="work:oldWork" for x in attention(c.snapshot()))
+    assert next(x for x in c.snapshot()["work_items"] if x["id"]=="oldWork")["state"]=="blocked"
+
+
 def test_operator_ui_creates_two_dependent_tasks_and_registration(tmp_path,monkeypatch):
     from fastapi.testclient import TestClient
     from swarmtracker_node_ui import app as ui, decision_routes

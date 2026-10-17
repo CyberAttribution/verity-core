@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Installation registry{% endblock %}
+{% block content %}
+<section class="panel"><h2>Installation registry</h2>
+<p>Private operator bookkeeping. Installation IDs are labels, not authenticated hardware identities. Acknowledgments are operator-entered; reported versions and contacts are observations with the listed source. Offline installations cannot learn about a newly issued revocation until its signed list is imported.</p>
+{% for item in installations %}<article class="card"><h3><code>{{ item.installation_id }}</code></h3>
+<p>Enrolled: {{ item.enrolled_at }} · Last contact: {% if item.reported %}{{ item.reported.contact_at }} ({{ item.contact_state }}, {{ item.reported.source }}){% else %}unknown{% endif %} · Acknowledgment: {{ item.acknowledgment }}</p>
+<p>Reported version: {{ item.reported.version if item.reported else 'unknown' }} · Channel: {{ item.reported.channel if item.reported else 'unknown' }} · Update: {{ item.reported.update_state if item.reported else 'unknown' }}</p>
+<ul>{% for license in item.licenses %}<li>Credential <code>{{ license.license_id }}</code>: {{ license.artifact_state }}, expires {{ license.expires_at }}{% if license.expired %} (expired){% endif %}{% if license.revocation_list_issued %}; revocation issued, import unknown{% endif %}{% if license.supersedes %}; replaces {{ license.supersedes }} (older credential is not automatically revoked){% endif %}</li>{% endfor %}</ul>
+<p>Release authorization history:</p><ul>{% for entry in item.release_authorizations %}<li>{{ entry.at }} · {{ entry.data.channel }}/{{ entry.data.release_id }}: {{ 'allow' if entry.data.allowed else 'deny' }} · {{ entry.data.reason }}</li>{% else %}<li>None; all releases denied.</li>{% endfor %}</ul>
+</article>{% else %}<p>No issued installations in this operator registry.</p>{% endfor %}
+<p><a href="/setup">Installation and runtime</a></p></section>
+{% endblock %}

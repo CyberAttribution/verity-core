@@ -73,6 +73,11 @@ def attention(snapshot, *, endpoint_reachable=None, participants=(), now=None):
     now=time.time() if now is None else now
     control=snapshot["control"]
     tasks={x["id"]:x for x in snapshot["tasks"]}
+    works={x["id"]:x for x in snapshot["work_items"]}
+    resolved_successors={x["predecessor"] for x in snapshot.get("work_successors",[])
+                         if works.get(x["successor"],{}).get("state")=="finished"}
+    resolved_requests={x["predecessor"] for x in snapshot.get("task_supersessions",[])
+                       if tasks.get(x["successor"],{}).get("state")=="independently_verified"}
     def add(issue_id,cause,link): issues.append({"id":issue_id,"cause":cause,"link":link})
     for w in snapshot["work_items"]:
         state=w["state"]
@@ -81,12 +86,14 @@ def attention(snapshot, *, endpoint_reachable=None, participants=(), now=None):
             if not any(t["id"] in linked and t["state"] in {"submitted","acknowledged"} for t in snapshot["tasks"]):
                 add("stalled:"+w["id"],"No recorded task progress for more than five minutes; inspect the workflow","/workflows/"+w["id"])
         if state in {"awaiting_approval","blocked","failed","unknown"}:
+            if w["id"] in resolved_successors: continue
             add("work:"+w["id"],{"awaiting_approval":"Missing approval", "blocked":"Blocked work dependency or gate",
                  "failed":"Recorded work failure", "unknown":"Work outcome unresolved"}[state],"/workflows/"+w["id"])
     for p in participants:
         if p["status"]=="Recently disconnected":
             add("agent:"+p["agent_id"],"Runtime contact lost; task outcome remains unknown","/agents")
     for task in snapshot["tasks"]:
+        if task["id"] in resolved_requests: continue
         if task["state"]=="unresolved": add("request:"+task["id"],"Submission or observation unresolved; reconcile before retry","/workflows")
         elif task["state"]=="failed": add("request:"+task["id"],"Failed request (finish "+str(task["finish_reason"] or "unknown")+")","/workflows")
         elif task["state"]=="completed" and task["evidence"] and task["evidence"].startswith("Rejected:"):

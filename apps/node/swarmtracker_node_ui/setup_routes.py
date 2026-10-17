@@ -84,7 +84,7 @@ def apply_settings(settings):
 def install(app,render,base_ctx):
     @app.middleware("http")
     async def activation_gate(request,call_next):
-        if os.environ.get("VERITY_REQUIRE_ACTIVATION") == "1" and request.url.path!="/setup" and not request.url.path.startswith("/static/"):
+        if os.environ.get("VERITY_REQUIRE_ACTIVATION") == "1" and request.url.path not in ("/setup","/setup/registry") and not request.url.path.startswith("/static/"):
             try:
                 with LOCK:
                     value=state();status(value)
@@ -97,7 +97,7 @@ def install(app,render,base_ctx):
                 return RedirectResponse("/setup",status_code=303)
         return await call_next(request)
 
-    def setup_page(request:Request, diagnostics=None, setup_error=None, status_code=200):
+    def setup_page(request:Request, diagnostics=None, setup_error=None, status_code=200, release_preview=None):
         decision_routes.local_request(request)
         try:
             value=state()
@@ -109,18 +109,47 @@ def install(app,render,base_ctx):
         except (ValueError,TypeError,OSError):raise HTTPException(503,"Installation state is unavailable; existing state was preserved") from None
         ctx=base_ctx(request,"setup");ctx.update(installation={"installation_id":value["installation_id"],"settings":value["settings"]},
                    active=active,message=message,license_id=claims["license_id"] if active else None,
-                   diagnostics=diagnostics,setup_error=setup_error,operator_token=decision_routes.TOKEN)
+                   diagnostics=diagnostics,setup_error=setup_error,operator_token=decision_routes.TOKEN,
+                   installed_version=os.environ.get("VERITY_APP_VERSION","0.2.0 (development)"),
+                   registry_available=bool(os.environ.get("VERITY_PILOT_REGISTRY")),release_preview=release_preview,
+                   release_available=bool(os.environ.get("VERITY_PILOT_REGISTRY") and os.environ.get("VERITY_RELEASE_PUBLIC_KEY")))
         response=render("setup.html",ctx);response.status_code=status_code;response.headers["Cache-Control"]="no-store";return response
 
     @app.get("/setup")
     def setup(request:Request):
         return setup_page(request)
 
+    @app.get("/setup/registry")
+    def installation_registry(request:Request):
+        decision_routes.local_request(request)
+        registry_path=os.environ.get("VERITY_PILOT_REGISTRY")
+        if not registry_path:raise HTTPException(503,"Private operator registry is not configured on this profile")
+        from verity_core.pilot_registry import Registry
+        try:installations=Registry(registry_path).installations()
+        except (ValueError,OSError) as error:raise HTTPException(503,"Operator registry unavailable") from error
+        ctx=base_ctx(request,"setup");ctx.update(installations=installations)
+        response=render("installation_registry.html",ctx);response.headers["Cache-Control"]="no-store";return response
+
     @app.post("/setup")
     async def configure(request:Request):
         form=await decision_routes.operator_form(request)
         if form.get("action")=="test_connection":
             return setup_page(request,diagnostics=runtime_diagnostics.check())
+        if form.get("action")=="inspect_release":
+            try:
+                from verity_core.pilot_registry import Registry
+                from verity_core.release_update import inspect
+                registry=os.environ["VERITY_PILOT_REGISTRY"]
+                key=os.environ["VERITY_RELEASE_PUBLIC_KEY"]
+                manifest=Path(form.get("manifest_path", ""));artifact=Path(form.get("artifact_path", ""))
+                if not manifest.is_file() or manifest.stat().st_size>16384:raise ValueError("Invalid manifest file")
+                preview=inspect(manifest.read_text().strip(),Path(key).read_bytes(),artifact,
+                    installation_id=state()["installation_id"],
+                    installed_version=os.environ.get("VERITY_APP_VERSION","0.2.0"),schema_version=1,
+                    authorization=Registry(registry).release_allowed)
+                return setup_page(request,release_preview=preview)
+            except (ValueError,OSError,KeyError,TypeError):
+                return setup_page(request,setup_error="Release inspection failed: check publisher signature, digest, compatibility and this installation's authorization.",status_code=422)
         try:
             with LOCK:
                 value=state();action=form.get("action")

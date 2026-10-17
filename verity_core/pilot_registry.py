@@ -82,6 +82,7 @@ class Registry:
         with self.connection() as con:
             con.execute("CREATE TABLE IF NOT EXISTS licenses (license_id TEXT PRIMARY KEY, installation_id TEXT NOT NULL, claims TEXT NOT NULL, code_sha256 TEXT NOT NULL, artifact_path TEXT NOT NULL, exported INTEGER NOT NULL DEFAULT 0, supersedes TEXT)")
             con.execute("CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, at INTEGER NOT NULL, event TEXT NOT NULL, data TEXT NOT NULL)")
+            con.execute("CREATE TABLE IF NOT EXISTS release_authorizations (installation_id TEXT NOT NULL, channel TEXT NOT NULL, release_id TEXT NOT NULL, allowed INTEGER NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(installation_id,channel,release_id))")
 
     @contextmanager
     def connection(self):
@@ -192,6 +193,48 @@ class Registry:
                 raise Conflict("Registry revocation revisions must advance and lists must be cumulative")
             self.event(con,"revocation_list_issued",dict(revision=claims["revision"],license_ids=claims["license_ids"],
                        list_sha256=fingerprint(raw),artifact_path=str(Path(path).absolute()),installation_import="not observed"))
+
+    def authorize_release(self,installation_id,channel,release_id,allowed,reason):
+        activation._id(installation_id);activation._id(release_id)
+        if channel not in ("pilot","stable") or type(allowed) is not bool or not isinstance(reason,str) or not reason.strip() or len(reason)>500:
+            raise ValueError("Invalid release authorization")
+        with self.connection() as con:
+            if not con.execute("SELECT 1 FROM licenses WHERE installation_id=?",(installation_id,)).fetchone():
+                raise Conflict("Unknown installation")
+            self.event(con,"release_authorization_changed",dict(installation_id=installation_id,channel=channel,release_id=release_id,allowed=allowed,reason=reason))
+            seq=con.execute("SELECT last_insert_rowid()").fetchone()[0]
+            con.execute("INSERT INTO release_authorizations VALUES(?,?,?,?,?) ON CONFLICT(installation_id,channel,release_id) DO UPDATE SET allowed=excluded.allowed,seq=excluded.seq",(installation_id,channel,release_id,int(allowed),seq))
+
+    def release_allowed(self,installation_id,channel,release_id):
+        with self.connection() as con:
+            row=con.execute("SELECT allowed,seq FROM release_authorizations WHERE installation_id=? AND channel=? AND release_id=?",(installation_id,channel,release_id)).fetchone()
+            return dict(allowed=bool(row["allowed"]),event_seq=row["seq"]) if row else dict(allowed=False,event_seq=None)
+
+    def observe(self,installation_id,*,version,channel,update_state,contact_at=None,source="operator-entered"):
+        """An operator report is never promoted to an authenticated device observation."""
+        activation._id(installation_id)
+        if source not in ("operator-entered","installation-report") or channel not in ("pilot","stable") or update_state not in ("unknown","current","available","failed","recovered") or not isinstance(version,str) or not version or len(version)>80:
+            raise ValueError("Invalid installation report")
+        at=int(time.time()) if contact_at is None else contact_at
+        if type(at) is not int or at<0 or at>time.time()+60:raise ValueError("Invalid contact timestamp")
+        with self.connection() as con:
+            if not con.execute("SELECT 1 FROM licenses WHERE installation_id=?",(installation_id,)).fetchone():raise Conflict("Unknown installation")
+            self.event(con,"installation_reported",dict(installation_id=installation_id,version=version,channel=channel,update_state=update_state,contact_at=at,source=source))
+
+    def installations(self,now=None,stale_after=86400):
+        now=time.time() if now is None else now
+        snapshot=self.status(now=now);events=snapshot["events"]
+        out=[]
+        for iid in sorted({r["installation_id"] for r in snapshot["licenses"]}):
+            licenses=[r for r in snapshot["licenses"] if r["installation_id"]==iid]
+            reports=[e for e in events if e["event"]=="installation_reported" and e["data"]["installation_id"]==iid]
+            report=reports[-1] if reports else None
+            out.append(dict(installation_id=iid,enrolled_at=min(r["issued_at"] for r in licenses),licenses=licenses,
+                reported=report["data"] if report else None,reported_at=report["at"] if report else None,
+                contact_state="unknown" if not report else ("stale" if now-report["data"]["contact_at"]>stale_after else "reported"),
+                acknowledgment="operator-entered" if any(r["acknowledgment_reported"] for r in licenses) else "unknown",
+                release_authorizations=[e for e in events if e["event"]=="release_authorization_changed" and e["data"]["installation_id"]==iid]))
+        return out
 
     def prepare_invitation(self,package_path,output,invitation_id=None,days=7):
         from .pilot_invitation import draft

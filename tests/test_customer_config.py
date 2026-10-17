@@ -52,6 +52,18 @@ def test_versioned_configuration_is_bound_to_old_action(tmp_path):
     assert report_actions.verify(report_actions.export(store.get(view["id"])["record"]))
 
 
+def test_earlier_configuration_snapshot_remains_readable(tmp_path):
+    c,_=configured(tmp_path)
+    older=c.effective("openclawM1","summary.md")
+    for key in ("instructions","resources","fallback_model","fallback_revision"):
+        older.pop(key)
+    legacy=report_actions.Store(tmp_path/"legacy.db",tmp_path/"legacy-output")
+    view=legacy.create(manifest(older))
+    reopened=report_actions.Store(tmp_path/"legacy.db",tmp_path/"legacy-output")
+    assert reopened.get(view["id"])["manifest"]["effective_configuration"]==older
+    assert report_actions.verify(report_actions.export(reopened.get(view["id"])["record"]))
+
+
 def test_config_rejects_credentials_and_unsupported_tool_claims(tmp_path):
     c,agent=configured(tmp_path)
     agent["allowed_tools"]=["file_write"]

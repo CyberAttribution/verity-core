@@ -22,7 +22,7 @@ Each new governed report proposal saves the effective agent, connection, fallbac
 
 ## Tests and evidence
 
-- Linux full suite after the initial configuration and broker changes: 783 passed, 3 skipped. Focused tests after the final snapshot-display change: 24 passed; a final full-suite run is recorded in the daily session report.
+- Linux full suite after the final compatibility fix: 784 passed, 3 skipped. The earlier snapshot schema remains readable after restart; focused configuration and broker checks also passed.
 - Disposable runner: `session-data/openclaw-boundary-demo-v5/acceptance.json`, history, separate checkpoint and output; `history_verified=true`, `stale_config_blocked=true`, wrong head/expiry/replay blocked.
 - Mac native UI: `session-data/configuration-native.jpg` and `session-data/action-native.jpg`; disposable profile on MacBook, with native action export/checkpoint and file hash independently verified.
 - GLM focused threat and contract reviews finished with `finish_reason=stop`; useful findings were checked against code. Imagined schema and unsupported enforcement claims were rejected.

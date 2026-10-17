@@ -60,18 +60,20 @@ def validate(manifest):
     if "effective_configuration" in manifest:
         cfg=manifest["effective_configuration"]
         required={"agent_id","agent_version","agent_hash","connection_id","connection_version","connection_hash",
-                  "model","model_revision","provider","endpoint","instructions_sha256","instructions","allowed_tools",
-                  "resources","external_sharing","fallback_id","fallback_version","fallback_model","fallback_revision","resource_id","resource_version",
+                  "model","model_revision","provider","endpoint","instructions_sha256","allowed_tools",
+                  "external_sharing","fallback_id","fallback_version","resource_id","resource_version",
                   "resource_hash","provenance","machine_id","machine_version","machine_hash","executor_id"}
-        if not isinstance(cfg,dict) or set(cfg)!=required or cfg["agent_id"]!=manifest["agent_id"] or cfg["model"]!=manifest["model"] or cfg["provider"]!=manifest["provider"] or cfg["resource_id"]!=TARGET or cfg["executor_id"]!="verity-report-broker":
+        expanded={"instructions","resources","fallback_model","fallback_revision"}
+        if not isinstance(cfg,dict) or set(cfg) not in (required,required|expanded) or cfg["agent_id"]!=manifest["agent_id"] or cfg["model"]!=manifest["model"] or cfg["provider"]!=manifest["provider"] or cfg["resource_id"]!=TARGET or cfg["executor_id"]!="verity-report-broker":
             raise ValueError("Action configuration mismatch")
         if any(type(cfg[k]) is not int or cfg[k]<1 for k in ("agent_version","connection_version","resource_version")):
             raise ValueError("Invalid configuration version")
         for k in ("agent_hash","connection_hash","resource_hash","instructions_sha256"):
             if not isinstance(cfg[k],str) or len(cfg[k])!=64:raise ValueError("Invalid configuration digest")
             int(cfg[k],16)
-        if not isinstance(cfg["instructions"],str) or digest(cfg["instructions"].encode())!=cfg["instructions_sha256"] or not isinstance(cfg["resources"],list) or TARGET not in cfg["resources"]:
-            raise ValueError("Invalid effective instructions or resources")
+        if expanded <= set(cfg):
+            if not isinstance(cfg["instructions"],str) or digest(cfg["instructions"].encode())!=cfg["instructions_sha256"] or not isinstance(cfg["resources"],list) or TARGET not in cfg["resources"]:
+                raise ValueError("Invalid effective instructions or resources")
         if cfg["machine_id"] is not None:
             if not isinstance(cfg["machine_id"],str) or type(cfg["machine_version"]) is not int or not isinstance(cfg["machine_hash"],str) or len(cfg["machine_hash"])!=64:
                 raise ValueError("Invalid machine linkage")

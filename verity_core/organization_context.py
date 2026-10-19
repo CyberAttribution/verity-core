@@ -82,7 +82,10 @@ def _active_digest(state):
 
 def inspect_record(record):
     """Replay semantic state; a valid chain alone cannot confer context approval."""
-    if not trust.chain_valid(record) or len(record["entries"]) > MAX_EVENTS:
+    if (not isinstance(record, dict) or not isinstance(record.get("entries"), list)
+            or len(record["entries"]) > MAX_EVENTS):
+        raise ValueError("Invalid bounded context history")
+    if not trust.chain_valid(record):
         raise ValueError("Invalid bounded context history")
     evidence.fields(record["subject"], "kind identifier")
     profile_id = identifier(record["subject"]["identifier"])

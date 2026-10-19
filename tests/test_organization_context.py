@@ -161,3 +161,12 @@ def test_store_refuses_public_and_symlink_database(tmp_path):
     with pytest.raises(ValueError):ContextStore(public)
     public.chmod(0o600);link=tmp_path/"link.db";link.symlink_to(public)
     with pytest.raises(ValueError):ContextStore(link)
+
+
+def test_overlong_history_is_rejected_before_chain_hash_work(monkeypatch):
+    from verity_core import organization_context as context
+    def unexpected_hash_work(record):
+        raise AssertionError("Overlong history reached chain verification")
+    monkeypatch.setattr(context.trust, "chain_valid", unexpected_hash_work)
+    with pytest.raises(ValueError, match="bounded context history"):
+        context.inspect_record({"entries": [{}] * (context.MAX_EVENTS + 1)})

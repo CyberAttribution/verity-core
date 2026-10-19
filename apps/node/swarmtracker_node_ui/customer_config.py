@@ -3,6 +3,7 @@
 These records describe expected access. They do not provision OS permissions,
 authenticate machines, or grant a runtime any new tool capability.
 """
+from contextlib import contextmanager
 import hashlib
 import json
 import re
@@ -41,6 +42,25 @@ class CustomerConfig:
         db=sqlite3.connect(self.path,timeout=10)
         db.row_factory=sqlite3.Row
         return db
+
+    @contextmanager
+    def dispatch_guard(self, agent_id, resource_id, expected):
+        """Serialize routed inference with configuration writers across processes.
+
+        A request holding this reservation has already started: removal waits
+        for that bounded request, and does not cancel an in-flight call. This
+        does not constrain direct runtime or same-user database access.
+        """
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if self.connection_disabled(expected["connection_id"]):
+                raise ValueError("Primary model connection disabled before dispatch")
+            observation = self.observations().get(("connection", expected["connection_id"]))
+            if observation and observation["state"] != "reachable":
+                raise ValueError("Local connection observation changed before dispatch")
+            if self.effective(agent_id, resource_id) != expected:
+                raise ValueError("Effective configuration changed before dispatch")
+            yield
 
     def save(self, kind, identifier, body):
         label(identifier)

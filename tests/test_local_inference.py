@@ -243,3 +243,131 @@ def test_remote_peer_with_spoofed_loopback_host_cannot_read_or_change_configurat
                    task_id="remote-01",resource_id="report",purpose="generate_text",
                    prompt="Attempt",requested_model="",session_id="")).status_code==403
     assert not config.connection_disabled("openclaw")
+
+
+def test_disable_committed_during_final_snapshot_prevents_dispatch(tmp_path, monkeypatch):
+    config, runs = setup(tmp_path)
+    original = config.effective
+    checks = []
+    def effective(*args):
+        snapshot = original(*args)
+        checks.append(snapshot)
+        if len(checks) == 2:
+            # Deterministic interleaving: removal commits after the old
+            # tombstone check but before the last snapshot returns.
+            CustomerConfig(config.path).disable_connection("openclaw")
+        return snapshot
+    monkeypatch.setattr(config, "effective", effective)
+    seen = []
+    def dispatch(cfg, *_):
+        seen.append(cfg)
+        return dict(model=cfg["model"], response="Complete", id="race-event",
+                    decision="allowed", done=True)
+    result = runs.run(agent_id="existingOpenClaw", task_id="final-check-race",
+                      resource_id="report", purpose="generate_text", prompt="Bounded",
+                      dispatch=dispatch)
+    assert result["state"] == "failed"
+    assert not seen
+
+
+@pytest.mark.parametrize("mutation", ["disable", "deny-purpose"])
+def test_policy_writer_in_another_process_waits_for_actual_dispatch(tmp_path, mutation):
+    import subprocess
+    import sys
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    config, runs = setup(tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    witness = tmp_path / "writer-blocked"
+    def dispatch(cfg, *_):
+        entered.set()
+        assert release.wait(10)
+        return dict(model=cfg["model"], response="Complete", id="in-flight",
+                    decision="allowed", done=True)
+    args = dict(agent_id="existingOpenClaw", resource_id="report",
+                purpose="generate_text", prompt="Bounded", dispatch=dispatch)
+    writer = r"""
+import pathlib,sqlite3,sys
+from apps.node.swarmtracker_node_ui.customer_config import CustomerConfig
+path,witness,mutation=sys.argv[1:]
+db=sqlite3.connect(path,timeout=0)
+try:
+    db.execute('BEGIN IMMEDIATE')
+except sqlite3.OperationalError as exc:
+    assert 'locked' in str(exc)
+    pathlib.Path(witness).write_text('configuration write reservation observed')
+else:
+    raise AssertionError('Dispatch did not hold the configuration reservation')
+finally:
+    db.close()
+c=CustomerConfig(path)
+if mutation=='disable':
+    c.disable_connection('openclaw')
+else:
+    body=c.latest('agent','existingOpenClaw')['body']
+    c.save('agent','existingOpenClaw',dict(body,allowed_tools=[]))
+"""
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(runs.run, task_id="in-flight", **args)
+        assert entered.wait(5)
+        process = subprocess.Popen([sys.executable, "-c", writer, str(config.path), str(witness), mutation],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            deadline = time.monotonic() + 5
+            while not witness.exists() and time.monotonic() < deadline and process.poll() is None:
+                time.sleep(.01)
+            assert witness.exists()
+            assert process.poll() is None
+        finally:
+            release.set()
+        stdout, stderr = process.communicate(timeout=10)
+        assert process.returncode == 0, (stdout, stderr)
+        completed = future.result(timeout=5)
+    assert completed["state"] == "completed"
+    assert completed["configuration"]["agent_version"] == 1
+    # A new instance represents a restarted reader of the updated policy.
+    later = LocalInference(runs.path, CustomerConfig(config.path)).run(task_id="after-change", **args)
+    assert later["state"] == "denied"
+
+
+def test_dispatch_guard_is_released_when_owner_process_dies(tmp_path):
+    import subprocess
+    import sys
+    config, _ = setup(tmp_path)
+    code = r"""
+import sys,time
+from apps.node.swarmtracker_node_ui.customer_config import CustomerConfig
+c=CustomerConfig(sys.argv[1])
+cfg=c.effective('existingOpenClaw','report')
+with c.dispatch_guard('existingOpenClaw','report',cfg):
+    print('guard-held',flush=True)
+    time.sleep(30)
+"""
+    process = subprocess.Popen([sys.executable,"-c",code,str(config.path)],
+                               stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    try:
+        assert process.stdout.readline().strip() == "guard-held"
+    finally:
+        process.kill()
+        process.communicate(timeout=5)
+    # OS/SQLite releases the abandoned lock. No persistent lease to clear.
+    fresh = CustomerConfig(config.path)
+    assert fresh.disable_connection("openclaw")
+
+
+def test_busy_policy_change_is_not_presented_as_confirmed_removal(tmp_path, monkeypatch):
+    from swarmtracker_node_ui import app as ui, decision_routes, store, customer_routes
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "profile.db")
+    config, _ = setup(tmp_path)
+    def busy(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(customer_routes.CustomerConfig, "disable_connection", busy)
+    client = TestClient(ui.app, base_url="http://127.0.0.1")
+    response = client.post("/configuration/connections/openclaw/disable",
+                           data={"operator_token": decision_routes.TOKEN})
+    assert response.status_code == 409
+    assert "not confirmed" in response.json()["detail"]
+    assert config.connection_disabled("openclaw") is None
+    page = client.get("/configuration")
+    assert "An already-started request finishes first" in page.text

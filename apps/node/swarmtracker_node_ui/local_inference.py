@@ -111,7 +111,11 @@ class LocalInference:
                 raise ValueError("Primary model connection disabled before dispatch")
             if self.configuration.effective(agent_id, resource_id) != cfg:
                 raise ValueError("Effective configuration changed before dispatch")
-            result = (dispatch or self._dispatch)(cfg, prompt, purpose)
+            # Hold the configuration write reservation across the last checks
+            # and bounded runtime call. Independent config instances/processes
+            # cannot commit removal or policy changes in that interval.
+            with self.configuration.dispatch_guard(agent_id, resource_id, cfg):
+                result = (dispatch or self._dispatch)(cfg, prompt, purpose)
             if not isinstance(result, dict) or result.get("model") != cfg["model"]:
                 raise ValueError("Runtime model identity missing or mismatched")
             if result.get("decision") not in ("allowed", "allow") or result.get("governance_failures"):

@@ -56,6 +56,8 @@ def install(app,render,base_ctx):
                           permission=form.get("permission",""),provenance="operator-entered",status="unknown")
             else:raise ValueError("Unsupported configuration")
             database().save(kind,identifier,body)
+        except sqlite3.OperationalError:
+            raise HTTPException(409,"Configuration is busy with an in-flight request; change was not confirmed. Retry after it finishes.") from None
         except (ValueError,TypeError,sqlite3.Error):
             raise HTTPException(422,"Configuration refused; check fields and referenced versions. Credentials cannot be entered here.") from None
         return RedirectResponse("/configuration",status_code=303)
@@ -84,6 +86,8 @@ def install(app,render,base_ctx):
         await decision_routes.operator_form(request)
         try:
             database().disable_connection(identifier)
+        except sqlite3.OperationalError:
+            raise HTTPException(409,"Connection removal is not confirmed while a request is in flight; retry after it finishes.") from None
         except ValueError:
             raise HTTPException(422, "Connection removal refused") from None
         return RedirectResponse("/configuration",status_code=303)

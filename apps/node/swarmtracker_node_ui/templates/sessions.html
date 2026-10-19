@@ -15,4 +15,5 @@
 </div>{% for alert in view.alerts %}<p class="alert alert-bad">{{ alert }}</p>{% endfor %}
 </section>
 {% else %}<p class="empty">No session records have been imported.</p>{% endfor %}
+{% include "_company_work_summary.html" %}
 {% endblock %}

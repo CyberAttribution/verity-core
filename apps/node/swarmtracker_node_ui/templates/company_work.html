@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Company Research{% endblock %}
+{% block content %}
+<h1>Company research</h1>
+<p>Source claims and agent interpretations are separate. An agent proposal does not authorize a company task. No decision or outcome is inferred from a completed model response.</p>
+{% for work in company_work_records %}
+<section class="panel"><h2>{{ work.id }}</h2>
+<p><strong>Source claim</strong> · <a href="{{ work.source_claim.url }}">{{ work.source_claim.url }}</a><br>{{ work.source_claim.text }}<br>{{ work.source_claim.provenance }}</p>
+<p><strong>Agent interpretation</strong> · {{ work.agent_interpretation.agent_id }} / {{ work.agent_interpretation.model }} · task {{ work.agent_interpretation.task_id }} · runtime event {{ work.agent_interpretation.runtime_event_id }}<br>{{ work.agent_interpretation.response }}<br>Response SHA-256 <code>{{ work.agent_interpretation.response_sha256 }}</code></p>
+<p><strong>Operator decision:</strong> {{ work.operator_decision.state }}. <strong>Assigned task:</strong> {{ work.assigned_task or 'none' }}. <strong>Observed work:</strong> {{ work.observed_work or 'none' }}. <strong>Verified result:</strong> {{ work.verified_result or 'none' }}.</p>
+<p>Runtime event identity is reported by OpenClaw; this page does not independently authenticate that identity or verify the source.</p></section>
+{% else %}<p>No governed research has been recorded.</p>{% endfor %}
+{% endblock %}

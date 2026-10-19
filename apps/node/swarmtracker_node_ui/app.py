@@ -55,7 +55,7 @@ def render(name: str, ctx: dict):
 
 
 def base_ctx(request: Request, page: str) -> dict:
-    return {
+    ctx = {
         "request": request,
         "page": page,
         "cfg": {
@@ -72,6 +72,14 @@ def base_ctx(request: Request, page: str) -> dict:
             "ledger_path": str(config.LEDGER_PATH),
         },
     }
+    if page in ("agents", "governance", "sessions"):
+        from .company_routes import database as company_database
+        try:
+            ctx["company_work_summaries"] = company_database().recent()
+        except (sqlite3.Error, OSError, ValueError):
+            ctx["company_work_summaries"] = []
+            ctx["company_work_error"] = True
+    return ctx
 
 
 def node_status() -> dict:
@@ -2367,3 +2375,6 @@ from . import setup_routes
 setup_routes.install(app, render, base_ctx)
 from . import customer_routes
 customer_routes.install(app, render, base_ctx)
+
+from . import company_routes
+company_routes.install(app, render, base_ctx)

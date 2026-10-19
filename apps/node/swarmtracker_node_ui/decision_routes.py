@@ -37,7 +37,7 @@ def local_request(request):
             raise HTTPException(403, 'Same-origin operator request required.')
 
 
-async def operator_form(request):
+async def operator_form(request, *, max_fields=10):
     local_request(request)
     # Form size is constrained by Content-Length plus actual bounded streaming,
     # rather than trusting a client-supplied length or parsing arbitrary files.
@@ -50,7 +50,7 @@ async def operator_form(request):
     if request.headers.get('content-type', '').split(';')[0] != 'application/x-www-form-urlencoded':
         raise HTTPException(415, 'A URL-encoded operator form is required.')
     try:
-        pairs = parse_qsl(data.decode('utf-8'), keep_blank_values=True, strict_parsing=True, max_num_fields=10)
+        pairs = parse_qsl(data.decode('utf-8'), keep_blank_values=True, strict_parsing=True, max_num_fields=max_fields)
     except (ValueError, UnicodeError):
         raise HTTPException(400, 'Invalid operator form.') from None
     form = dict(pairs)

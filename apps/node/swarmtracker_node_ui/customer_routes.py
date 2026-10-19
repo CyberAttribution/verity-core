@@ -21,6 +21,39 @@ def local_peer(request):
 
 
 def install(app,render,base_ctx):
+    @app.get("/agents/add")
+    def add_agent_page(request:Request):
+        local_peer(request)
+        db=database();ctx=base_ctx(request,"agents")
+        entries=db.all()
+        ctx.update(operator_token=decision_routes.TOKEN,
+                   connections=[x for x in entries if x["kind"]=="connection" and not db.connection_disabled(x["id"])],
+                   resources=[x for x in entries if x["kind"]=="resource"])
+        response=render("add_agent.html",ctx)
+        response.headers["Cache-Control"]="no-store"
+        return response
+
+    @app.post("/agents/add")
+    async def add_agent(request:Request):
+        local_peer(request)
+        form=await decision_routes.operator_form(request)
+        required={"operator_token","agent_id","adapter_kind","connection_id","resource_id",
+                  "instructions","runtime_version","service_identity"}
+        if set(form)!=required:
+            raise HTTPException(422,"Exact agent registration fields required")
+        try:
+            body=dict(connection_id=form["connection_id"], instructions=form["instructions"],
+                      allowed_tools=["generate_text"], resources=[form["resource_id"]],
+                      external_sharing="none", fallback_id="", daily_request_limit=20,
+                      session_request_limit=0, adapter_kind=form["adapter_kind"],
+                      runtime_version=form["runtime_version"].strip(), service_identity=form["service_identity"].strip())
+            database().save("agent",form["agent_id"],body,new_only=True)
+        except sqlite3.OperationalError:
+            raise HTTPException(409,"Configuration is busy; agent registration was not confirmed. Retry after the request finishes.") from None
+        except (ValueError,KeyError,TypeError,sqlite3.Error):
+            raise HTTPException(422,"Agent registration refused; choose a new ID, supported adapter and existing connection/resource. Do not enter credentials.") from None
+        return RedirectResponse("/agents",status_code=303)
+
     @app.get("/configuration")
     def page(request:Request):
         local_peer(request)
@@ -35,7 +68,7 @@ def install(app,render,base_ctx):
     @app.post("/configuration")
     async def save(request:Request):
         local_peer(request)
-        form=await decision_routes.operator_form(request)
+        form=await decision_routes.operator_form(request, max_fields=12)
         kind=form.get("kind","");identifier=form.get("id","")
         try:
             if kind=="connection":
@@ -48,6 +81,9 @@ def install(app,render,base_ctx):
                           external_sharing=form.get("external_sharing","none"),fallback_id=form.get("fallback_id","").strip(),
                           daily_request_limit=int(form.get("daily_request_limit","20")),
                           session_request_limit=int(form.get("session_request_limit","0")))
+                previous=database().latest("agent",identifier)
+                if previous and "adapter_kind" in previous["body"]:
+                    body.update({k:previous["body"][k] for k in ("adapter_kind","runtime_version","service_identity") if k in previous["body"]})
             elif kind in ("machine","resource"):
                 body=dict(description=form.get("description",""),provenance="operator-entered",status="unknown")
             elif kind=="link":

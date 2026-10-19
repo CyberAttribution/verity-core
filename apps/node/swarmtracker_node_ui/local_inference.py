@@ -52,7 +52,9 @@ class LocalInference:
         connection = self.configuration.latest("connection", cfg["connection_id"])
         observation = self.configuration.observations().get(("connection",cfg["connection_id"]))
         reason = None
-        if observation and observation["state"] != "reachable":
+        if cfg.get("adapter_kind") == "custom_unverified":
+            reason = "Custom agent is unverified; no dispatch adapter is enabled"
+        elif observation and observation["state"] != "reachable":
             reason = "Local connection observation is unavailable or stale; recheck before dispatch"
         elif self.configuration.connection_disabled(cfg["connection_id"]):
             reason = "Primary model connection was disabled by the operator"

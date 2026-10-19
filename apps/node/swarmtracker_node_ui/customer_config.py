@@ -62,7 +62,7 @@ class CustomerConfig:
                 raise ValueError("Effective configuration changed before dispatch")
             yield
 
-    def save(self, kind, identifier, body):
+    def save(self, kind, identifier, body, *, new_only=False):
         label(identifier)
         if kind=="connection" and self.connection_disabled(identifier):
             raise ValueError("Disabled connection IDs cannot be reused")
@@ -88,12 +88,18 @@ class CustomerConfig:
                 raise ValueError("Secrets cannot be entered in configuration")
         elif kind=="agent":
             required={"connection_id","instructions","allowed_tools","resources","external_sharing","fallback_id"}
-            if not required <= set(body) or set(body)-required-{"daily_request_limit","session_request_limit"}:
+            if not required <= set(body) or set(body)-required-{"daily_request_limit","session_request_limit","adapter_kind","runtime_version","service_identity"}:
                 raise ValueError("Invalid agent fields")
             if "daily_request_limit" in body and (type(body["daily_request_limit"]) is not int or not 0<=body["daily_request_limit"]<=10000):
                 raise ValueError("Daily request limit must be 0 to 10000; zero is unlimited")
             if "session_request_limit" in body and (type(body["session_request_limit"]) is not int or not 0<=body["session_request_limit"]<=10000):
                 raise ValueError("Session request limit must be 0 to 10000; zero is unlimited")
+            if "adapter_kind" in body:
+                if body["adapter_kind"] not in {"openclaw_v0", "custom_unverified"}:
+                    raise ValueError("Unsupported agent adapter")
+            for key in ("runtime_version", "service_identity"):
+                if key in body and (not isinstance(body[key], str) or len(body[key]) > 160 or "\x00" in body[key]):
+                    raise ValueError("Invalid declared runtime identity")
             label(body["connection_id"])
             _text(body["instructions"],2000)
             if body["fallback_id"]:label(body["fallback_id"])
@@ -103,6 +109,10 @@ class CustomerConfig:
             for x in body["resources"]:label(x)
             if body["external_sharing"] not in {"none","explicit_per_job"}:raise ValueError("Invalid sharing rule")
             if not self.latest("connection",body["connection_id"]):raise ValueError("Unknown primary connection")
+            if body.get("adapter_kind") == "openclaw_v0":
+                primary = self.latest("connection", body["connection_id"])["body"]
+                if primary["scope"] != "local" or primary["provider"] != "openclaw":
+                    raise ValueError("OpenClaw v0 adapter requires a local OpenClaw connection")
             if body["fallback_id"] and not self.latest("connection",body["fallback_id"]):raise ValueError("Unknown fallback")
             for x in body["resources"]:
                 if not self.latest("resource",x):raise ValueError("Unknown resource")
@@ -129,6 +139,16 @@ class CustomerConfig:
         digest=hashlib.sha256(raw.encode()).hexdigest()
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
+            if new_only and db.execute("SELECT 1 FROM versions WHERE kind=? AND id=?", (kind,identifier)).fetchone():
+                raise ValueError("Configuration identifier already exists")
+            if kind == "agent":
+                previous = db.execute("SELECT body FROM versions WHERE kind='agent' AND id=? ORDER BY version DESC LIMIT 1", (identifier,)).fetchone()
+                if previous:
+                    declared = json.loads(previous["body"]).get("adapter_kind")
+                    if declared and body.get("adapter_kind") != declared:
+                        raise ValueError("Declared adapter cannot be removed or changed; use a new agent ID")
+            if kind == "connection" and db.execute("SELECT 1 FROM disabled_connections WHERE id=?", (identifier,)).fetchone():
+                raise ValueError("Disabled connection IDs cannot be reused")
             row=db.execute("SELECT COALESCE(MAX(version),0)+1 FROM versions WHERE kind=? AND id=?",(kind,identifier)).fetchone()
             version=row[0]
             db.execute("INSERT INTO versions VALUES (?,?,?,?,?,?)",(kind,identifier,version,digest,raw,time.time()))
@@ -201,6 +221,11 @@ class CustomerConfig:
                 "executor_id":"verity-report-broker",
                 "resource_id":resource_id,"resource_version":resource["version"],"resource_hash":resource["digest"],
                 "provenance":"operator-entered; capabilities and host identity unconfirmed"}
+        if "adapter_kind" in agent["body"]:
+            result.update(adapter_kind=agent["body"]["adapter_kind"],
+                          identity_status="unverified; operator-declared",
+                          runtime_version=agent["body"].get("runtime_version", ""),
+                          service_identity=agent["body"].get("service_identity", ""))
         for key in ("daily_request_limit","session_request_limit"):
             if key in agent["body"]:
                 result[key]=agent["body"][key]

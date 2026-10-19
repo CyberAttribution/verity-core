@@ -1977,6 +1977,15 @@ def agents_page(request: Request):
         ctx["work_guidance"] = workflows.records(workflows.coordinator().snapshot(), ctx["monitor_runs"])
     except (ValueError, sqlite3.Error, OSError):
         ctx["work_guidance"] = []
+    try:
+        from .customer_config import CustomerConfig
+        from . import store
+        customer = CustomerConfig(store.DB_PATH.with_name("customer-config.db"))
+        ctx["configured_agents"] = [item for item in customer.all() if item["kind"] == "agent"]
+        ctx["configured_agents_error"] = False
+    except (ValueError, sqlite3.Error, OSError):
+        ctx["configured_agents"] = []
+        ctx["configured_agents_error"] = True
     ctx["review_runtimes"] = workflows.coordinator().snapshot()["agent_registrations"]
     ctx["review_capabilities"] = workflows.CAPABILITIES["glm-review"]
     ctx["operator_token"] = decision_routes.TOKEN

@@ -64,8 +64,14 @@ def validate(manifest):
                   "external_sharing","fallback_id","fallback_version","resource_id","resource_version",
                   "resource_hash","provenance","machine_id","machine_version","machine_hash","executor_id"}
         expanded={"instructions","resources","fallback_model","fallback_revision"}
-        if not isinstance(cfg,dict) or not required <= set(cfg) or set(cfg)-required-expanded-{"daily_request_limit","session_request_limit"} or cfg["agent_id"]!=manifest["agent_id"] or cfg["model"]!=manifest["model"] or cfg["provider"]!=manifest["provider"] or cfg["resource_id"]!=TARGET or cfg["executor_id"]!="verity-report-broker":
+        adapter={"adapter_kind","identity_status","runtime_version","service_identity"}
+        if not isinstance(cfg,dict) or not required <= set(cfg) or set(cfg)-required-expanded-adapter-{"daily_request_limit","session_request_limit"} or cfg["agent_id"]!=manifest["agent_id"] or cfg["model"]!=manifest["model"] or cfg["provider"]!=manifest["provider"] or cfg["resource_id"]!=TARGET or cfg["executor_id"]!="verity-report-broker":
             raise ValueError("Action configuration mismatch")
+        if adapter & set(cfg):
+            if not adapter <= set(cfg) or cfg["adapter_kind"] != "openclaw_v0" or cfg["identity_status"] != "unverified; operator-declared":
+                raise ValueError("Action adapter is unsupported or identity claim invalid")
+            if any(not isinstance(cfg[k],str) or len(cfg[k])>160 or "\x00" in cfg[k] for k in ("runtime_version","service_identity")):
+                raise ValueError("Invalid declared adapter identity")
         if "daily_request_limit" in cfg and (type(cfg["daily_request_limit"]) is not int or not 0<=cfg["daily_request_limit"]<=10000):
             raise ValueError("Invalid daily request cap")
         if "session_request_limit" in cfg and (type(cfg["session_request_limit"]) is not int or not 0<=cfg["session_request_limit"]<=10000):

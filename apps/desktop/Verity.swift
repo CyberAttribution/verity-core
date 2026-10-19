@@ -190,7 +190,7 @@ class VerityAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                               "--smoke-agents": "agents", "--smoke-tasks": "tasks",
                               "--smoke-policy": "review-policy", "--smoke-notifications": "notifications",
                               "--smoke-demo": "demo", "--smoke-registry": "setup/registry",
-                              "--smoke-configuration": "configuration", "--smoke-report-actions": "report-actions"]
+                              "--smoke-configuration": "configuration", "--smoke-add-agent": "agents/add", "--smoke-report-actions": "report-actions"]
             let workflow = ProcessInfo.processInfo.environment["VERITY_SMOKE_WORKFLOW"] ?? ""
             let selected = (CommandLine.arguments.contains("--smoke-workflow") && workflow.hasPrefix("demo") && workflow.range(of: "^[A-Za-z0-9]+$", options: .regularExpression) != nil)
                 ? "workflows/" + workflow : smokePages.first { CommandLine.arguments.contains($0.key) }?.value

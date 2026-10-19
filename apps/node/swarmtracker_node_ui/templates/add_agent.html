@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Add an agent{% endblock %}
+{% block content %}
+<section class="panel">
+<h1>Add an agent</h1>
+<p>Choose the agent you already run, then select its model connection and a resource. Registration does not verify its identity or grant access to your Mac.</p>
+{% if not connections or not resources %}
+<p>First <a href="/configuration">add a model connection and a resource</a>. No runtime will be installed or downloaded by this form.</p>
+{% else %}
+<form method="post" action="/agents/add">
+<input type="hidden" name="operator_token" value="{{ operator_token }}">
+<label>Agent ID <input name="agent_id" required maxlength="160" placeholder="myOpenClaw"></label>
+<label>Agent type <select name="adapter_kind"><option value="openclaw_v0">Existing OpenClaw v0 — local text requests</option><option value="custom_unverified">Custom agent — registration only</option></select></label>
+<label>Primary model connection <select name="connection_id">{% for item in connections %}<option value="{{ item.id }}">{{ item.id }} — {{ item.body.provider }} / {{ item.body.model }}</option>{% endfor %}</select></label>
+<label>Resource <select name="resource_id">{% for item in resources %}<option value="{{ item.id }}">{{ item.id }} — {{ item.body.description }}</option>{% endfor %}</select></label>
+<label>Instructions <textarea name="instructions" required maxlength="2000">Summarize the supplied specimen concisely. Do not attempt tools.</textarea></label>
+<label>Runtime version, if known <input name="runtime_version" maxlength="160" placeholder="Operator-declared; not verified"></label>
+<label>macOS service account, if known <input name="service_identity" maxlength="160" placeholder="Account name only; never a password"></label>
+<p>Starts with text generation only, no external sharing, no fallback and a daily cap of 20 routed requests. Review these settings under Models &amp; Environment before submitting work. A custom agent cannot dispatch through this adapter.</p>
+<button type="submit">Register agent</button>
+</form>
+{% endif %}
+</section>
+<section class="panel"><h2>Connect the existing OpenClaw pilot</h2>
+<p>This adapter was tested with the existing local OpenClaw v0 service and its <code>/v0/generate</code> interface. Choose a local model connection whose provider is <code>openclaw</code>; it must point to that service, such as <code>http://127.0.0.1:8090</code>. A remote Mac needs an independently established private tunnel.</p>
+<p>If the service is absent, have the administrator restore the tested pilot before registering it. This form does not install a current OpenClaw framework, and compatibility with other OpenClaw versions has not been established.</p>
+<p>After registration, check connection health and run a bounded request in <a href="/configuration">Models &amp; Environment</a>. Health alone does not prove a model request completed. Inspect the recorded task, runtime event and result hash afterward.</p>
+<p>Verity gates the local text requests it routes. It does not capture arbitrary framework tools, stop direct runtime calls or isolate a process with the same macOS account. Account names, versions and machine details are operator declarations.</p>
+</section>
+<section class="panel"><h2>Other agents</h2><p>Google ADK and Muse adapters require separate implementation and acceptance. Instinct requires a supported integration. Use custom registration to record a planned setup; it will not enable these routes.</p></section>
+{% endblock %}

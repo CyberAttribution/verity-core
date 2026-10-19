@@ -112,3 +112,28 @@ def test_native_routes_show_versions_and_bind_imported_proposal(tmp_path,monkeyp
     assert "New instructions for future actions" not in client.get(response.headers["location"]).text
     assert "openclawM1 v2" in client.get("/configuration").text
     assert client.post("/report-actions/propose",data=dict(form,proposal="Changed",task_id="uiNew"),follow_redirects=False).status_code==303
+
+
+def test_registered_adapter_identity_survives_governed_action_export(tmp_path):
+    c, body = configured(tmp_path)
+    primary = c.latest("connection", "m1OpenClaw")["body"]
+    c.save("connection", "m1OpenClaw", dict(primary, provider="openclaw"))
+    declared = dict(body, adapter_kind="openclaw_v0", runtime_version="0.3 declared", service_identity="standardAgent")
+    c.save("agent", "openclawM1", declared)
+    cfg = c.effective("openclawM1", "summary.md")
+    broker = report_actions.Store(tmp_path / "registered-actions.db", tmp_path / "registered-output", c)
+    proposed = broker.create(manifest(cfg))
+    approved = broker.decide(proposed["id"], "approved", "Disposable acceptance", "operator", proposed["head_hash"])
+    written = broker.execute(proposed["id"], "operator", approved["head_hash"])
+    assert written["state"] == "written"
+    exported = report_actions.export(written["record"])
+    assert report_actions.verify(exported, exported["checkpoint"])
+    assert broker.get(proposed["id"])["manifest"]["effective_configuration"] == cfg
+    false_identity = manifest(dict(cfg, identity_status="verified"))
+    with pytest.raises(ValueError, match="identity claim"):
+        report_actions.validate(false_identity)
+    c.save("agent", "customAgent", dict(declared, adapter_kind="custom_unverified"), new_only=True)
+    custom = manifest(c.effective("customAgent", "summary.md"))
+    custom["agent_id"] = "customAgent"
+    with pytest.raises(ValueError, match="adapter is unsupported"):
+        report_actions.validate(custom)

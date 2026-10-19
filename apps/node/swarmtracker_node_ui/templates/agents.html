@@ -1,6 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Active Agents{% endblock %}
 {% block content %}
+<section class="panel"><div class="panel-head"><h2>Your configured agents</h2><a class="btn" href="/agents/add">Add an agent</a></div>
+<p>Registration records your intended setup. Runtime contact, completed requests and identity verification are separate.</p>
+{% if configured_agents_error %}<p>Agent configuration could not be read. Current setup is unknown.</p>{% endif %}
+{% for item in configured_agents %}<article class="card"><h3>{{ item.id }} · version {{ item.version }}</h3>
+<p>Adapter: {{ item.body.adapter_kind or 'legacy configuration; adapter not declared' }} · Identity: unverified, operator-declared.</p>
+<p>Runtime version: {{ item.body.runtime_version or 'not provided' }} · Service account: {{ item.body.service_identity or 'not provided' }} · Primary model connection: {{ item.body.connection_id }}</p>
+{% if item.body.adapter_kind == 'custom_unverified' %}<p>Registration only. No custom-agent dispatch or tool enforcement is available.</p>{% else %}<p>Verity can gate its routed local text requests. Direct runtime calls and OS tools remain outside this control.</p>{% endif %}
+<a href="/configuration">Review model, purpose and resource policy or run a bounded task</a></article>
+{% else %}<p>No customer agent configuration is recorded.</p>{% endfor %}</section>
+
 <section class="panel"><div class="panel-head"><h2>Connect a review runtime</h2><a href="/tasks">Manage review tasks</a> · <a href="/notifications">Session notifications</a> · <a href="/demo">Disposable demo</a></div>
 <p>This fixed integration reaches a model endpoint for read-only GLM requests. It is not a tool-executing agent or a resumable conversation. Credentials are not accepted here.</p>
 {% for runtime in review_runtimes %}<article><h3>{{ runtime.id }} · {{ runtime.connection_state }}</h3>

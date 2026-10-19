@@ -12,6 +12,10 @@ from pathlib import Path
 
 import requests
 
+from verity_core.json_safety import bounded_json_loads
+
+MAX_RUNTIME_RESPONSE_BYTES = 128 * 1024
+
 from . import config
 from .customer_config import CustomerConfig, canonical, label
 
@@ -154,9 +158,17 @@ class LocalInference:
                        meta={"verity_task_purpose": purpose})
         with requests.Session() as session:
             session.trust_env = False
-            response = session.post(url, json=payload, timeout=90, allow_redirects=False)
-            if response.is_redirect:
-                raise ValueError("Runtime redirect refused")
-            response.raise_for_status()
-            data = response.json()
+            with session.post(url, json=payload, timeout=90, allow_redirects=False,
+                              stream=True) as response:
+                if response.is_redirect:
+                    raise ValueError("Runtime redirect refused")
+                response.raise_for_status()
+                # Count actual decoded bytes, not a possibly absent or false
+                # Content-Length. Close the response on overflow or parse failure.
+                raw = bytearray()
+                for chunk in response.iter_content(chunk_size=16384):
+                    if len(raw) + len(chunk) > MAX_RUNTIME_RESPONSE_BYTES:
+                        raise ValueError("Runtime response envelope exceeds size limit")
+                    raw.extend(chunk)
+                data = bounded_json_loads(raw, max_depth=32)
         return data

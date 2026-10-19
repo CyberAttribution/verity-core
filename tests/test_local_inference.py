@@ -371,3 +371,40 @@ def test_busy_policy_change_is_not_presented_as_confirmed_removal(tmp_path, monk
     assert config.connection_disabled("openclaw") is None
     page = client.get("/configuration")
     assert "An already-started request finishes first" in page.text
+
+
+@pytest.mark.parametrize("case", ["valid", "oversized", "deep", "compressed", "unadvertised"])
+def test_runtime_http_envelope_is_bounded_before_completion(tmp_path,case):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+    config,runs=setup(tmp_path)
+    result=dict(model="qwen2.5:7b-instruct",response="A bounded result",event_id="http-event",decision="allowed",done=True,done_reason="stop")
+    if case in {"oversized","compressed","unadvertised"}:result["unused_metadata"]="x"*(256*1024)
+    elif case=="deep":
+        nested="leaf"
+        for _ in range(140):nested=[nested]
+        result["unused_metadata"]=nested
+    raw=json.dumps(result).encode()
+    if case=="compressed":
+        import gzip
+        raw=gzip.compress(raw)
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args):pass
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(200);self.send_header("Content-Type","application/json")
+            if case!="unadvertised":self.send_header("Content-Length",str(len(raw)))
+            if case=="compressed":self.send_header("Content-Encoding","gzip")
+            self.end_headers()
+            try:self.wfile.write(raw)
+            except (BrokenPipeError,ConnectionResetError):pass
+    server=ThreadingHTTPServer(("127.0.0.1",0),Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        body=config.latest("connection","openclaw")["body"]
+        config.save("connection","openclaw",dict(body,endpoint="http://127.0.0.1:"+str(server.server_port)))
+        observed=runs.run(agent_id="existingOpenClaw",task_id="http-"+case,resource_id="report",purpose="generate_text",prompt="Specimen")
+        assert observed["state"]==("completed" if case=="valid" else "failed")
+        if case!="valid":assert observed["result"] is None
+    finally:
+        server.shutdown();server.server_close();thread.join(timeout=2)

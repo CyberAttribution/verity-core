@@ -67,3 +67,39 @@ def test_gateway_readback_blocks_wrong_recipient_or_already_accepted(tmp_path):
         store.prepare_from_gateway(gateway,'invitation_test','pilot@example.com')
     data['state']='pending';data['accepted_user_id']=data['accepted_at']=None
     assert store.prepare_from_gateway(gateway,'invitation_test','pilot@example.com')['state']=='pending'
+
+
+def test_fake_staging_to_signed_code_and_explicit_offline_revocation_gap(tmp_path):
+    import time
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives import serialization
+    from verity_core import activation
+    from verity_core.pilot_enrollment import EnrollmentStore
+    from verity_core.pilot_registry import Registry
+    data=invitation();fake=FakeSession(data);gateway=StagingInvitations('sk_example_private',fake)
+    sent=gateway.send('pilot@example.com')
+    enrollment=EnrollmentStore(tmp_path/'private/enrollment.db')
+    enrollment.prepare_from_gateway(gateway,sent['id'],'pilot@example.com')
+    data['state']='accepted';data['accepted_user_id']='user_test'
+    data['accepted_at']=datetime.now(timezone.utc).isoformat()
+    candidate=enrollment.accept(sent['id'],gateway.get(sent['id']),
+        dict(id='user_test',email='pilot@example.com',email_verified=True),
+        'Pilot Name','Visible Org')
+    assert candidate['organization']=='Visible Org'
+    enrollment.bind_installation(sent['id'],'install_test')
+    key=Ed25519PrivateKey.generate()
+    public=key.public_key().public_bytes(serialization.Encoding.PEM,serialization.PublicFormat.SubjectPublicKeyInfo)
+    claims=dict(schema='verity_pilot_entitlement/v1',installation_id='install_test',
+                license_id='license_test',issued_at=int(time.time())-10,expires_at=int(time.time())+3600)
+    payload=activation.canonical(claims)
+    code=activation.encode(payload)+'.'+activation.encode(key.sign(payload))
+    registry=Registry(tmp_path/'private/registry.db')
+    exported=enrollment.issue_bound_entitlement(sent['id'],'install_test',code,public,
+                  tmp_path/'private/code',registry)
+    assert exported['activation_issued']
+    assert 'must-not-return' not in str(enrollment.get(sent['id']))
+    revoked=enrollment.revoke(sent['id'],'Disposable revocation')
+    assert revoked['offline_revocation_pending']
+    assert activation.entitlement(code,public,'install_test',time.time())['license_id']=='license_test'
+    with pytest.raises(ValueError):
+        activation.entitlement(code,public,'install_test',time.time(),['license_test'])

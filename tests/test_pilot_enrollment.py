@@ -223,3 +223,22 @@ def test_revocation_serializes_with_entitlement_export(tmp_path,monkeypatch):
         assert issued.result(timeout=10)['activation_issued']
         assert revoked.result(timeout=10)['offline_revocation_pending']
     assert store.get('invite-race')['state']=='revoked'
+
+
+def test_revocation_after_uncertain_export_reservation_flags_offline_risk(tmp_path):
+    from verity_core.pilot_enrollment import EnrollmentStore
+    store=EnrollmentStore(tmp_path/'private/enroll.db')
+    expiry=(datetime.now(timezone.utc)+timedelta(days=1)).isoformat()
+    store.prepare('invite-uncertain','pilot@example.com',expiry)
+    invite=dict(id='invite-uncertain',email='pilot@example.com',state='accepted',
+                accepted_user_id='user-uncertain',accepted_at=datetime.now(timezone.utc).isoformat(),
+                expires_at=expiry)
+    store.accept('invite-uncertain',invite,dict(id='user-uncertain',email='pilot@example.com',
+                 email_verified=True),'Pilot')
+    store.bind_installation('invite-uncertain','install-uncertain')
+    with store._db() as db:
+        db.execute("INSERT INTO activation_links VALUES (?,?,?,?,?)",
+                   ('invite-uncertain','install-uncertain','license-uncertain','0'*64,'pending'))
+    state=store.revoke('invite-uncertain','Unknown export status')
+    assert state['export_status_uncertain'] and state['offline_revocation_pending']
+    assert not state['exported_code_at_revocation']

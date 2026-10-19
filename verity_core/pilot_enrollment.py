@@ -206,12 +206,14 @@ class EnrollmentStore:
                 raise EnrollmentConflict("Unknown or already revoked invitation")
             link=db.execute("SELECT state FROM activation_links WHERE invitation_id=?",(invitation_id,)).fetchone()
             exported=bool(link and link["state"]=="exported")
+            uncertain=bool(link and link["state"]=="pending")
             db.execute("UPDATE invitations SET state='revoked' WHERE id=?",(invitation_id,))
             db.execute("INSERT INTO invitation_revocations VALUES (?,?,?,?)",
                        (invitation_id,current,reason.strip(),int(exported)))
         return dict(invitation_id=invitation_id,state="revoked",
                     exported_code_at_revocation=exported,
-                    offline_revocation_pending=exported,
+                    offline_revocation_pending=exported or uncertain,
+                    export_status_uncertain=uncertain,
                     source="local enrollment state; signed cumulative revocation import not observed")
 
     def revocation(self,invitation_id):

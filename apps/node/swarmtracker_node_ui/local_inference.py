@@ -88,7 +88,7 @@ class LocalInference:
             body = result.get("response")
             if not isinstance(body, str) or not body.strip() or len(body) > 20000:
                 raise ValueError("Runtime result empty, incomplete, or oversized")
-            if result.get("done") is not True or result.get("done_reason") == "length":
+            if result.get("done") is not True or result.get("done_reason") != "stop":
                 raise ValueError("Runtime result incomplete")
             record["state"] = "completed"
             record["result"] = dict(response=body, response_sha256=hashlib.sha256(body.encode()).hexdigest(),

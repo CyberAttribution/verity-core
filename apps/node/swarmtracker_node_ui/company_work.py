@@ -19,6 +19,7 @@ class CompanyWorkStore:
         self.path.parent.mkdir(parents=True,exist_ok=True)
         with self._db() as db:
             db.execute("CREATE TABLE IF NOT EXISTS research (id TEXT PRIMARY KEY, agent_task_id TEXT NOT NULL UNIQUE, at REAL NOT NULL, record TEXT NOT NULL)")
+            db.execute("CREATE TABLE IF NOT EXISTS research_events (seq INTEGER PRIMARY KEY, work_id TEXT NOT NULL, at REAL NOT NULL, action TEXT NOT NULL, detail TEXT NOT NULL)")
 
     def _db(self):
         db=sqlite3.connect(self.path,timeout=10)
@@ -73,3 +74,46 @@ class CompanyWorkStore:
     def recent(self):
         with self._db() as db:
             return [json.loads(row["record"]) for row in db.execute("SELECT record FROM research ORDER BY at DESC LIMIT 20")]
+
+    def decide(self,work_id,state,detail):
+        """Record an explicit local operator choice; never infer it from the model."""
+        label(work_id)
+        if state not in ("accepted","rejected") or not isinstance(detail,str) or not detail.strip() or len(detail)>1000:
+            raise ValueError("Bounded operator decision and explanation required")
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT record FROM research WHERE id=?",(work_id,)).fetchone()
+            if not row:raise KeyError(work_id)
+            record=json.loads(row["record"])
+            if record["operator_decision"]["state"]!="pending":
+                raise ValueError("Operator decision is immutable")
+            now=time.time()
+            record["operator_decision"]=dict(state=state,detail=detail.strip(),at=now,
+                                             provenance="local operator form; identity unverified")
+            db.execute("UPDATE research SET record=? WHERE id=?",(canonical(record),work_id))
+            db.execute("INSERT INTO research_events(work_id,at,action,detail) VALUES (?,?,?,?)",
+                       (work_id,now,"operator_decision",canonical(record["operator_decision"])))
+        return record
+
+    def assign(self,work_id,task_id,assignee):
+        label(work_id);label(task_id);label(assignee)
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT record FROM research WHERE id=?",(work_id,)).fetchone()
+            if not row:raise KeyError(work_id)
+            record=json.loads(row["record"])
+            if record["operator_decision"]["state"]!="accepted" or record["assigned_task"] is not None:
+                raise ValueError("Accepted, unassigned operator decision required")
+            now=time.time()
+            record["assigned_task"]=dict(task_id=task_id,assignee=assignee,at=now,
+                                          provenance="local operator form; work not yet observed")
+            db.execute("UPDATE research SET record=? WHERE id=?",(canonical(record),work_id))
+            db.execute("INSERT INTO research_events(work_id,at,action,detail) VALUES (?,?,?,?)",
+                       (work_id,now,"task_assigned",canonical(record["assigned_task"])))
+        return record
+
+    def events(self,work_id):
+        label(work_id)
+        with self._db() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT seq,work_id,at,action,detail FROM research_events WHERE work_id=? ORDER BY seq",(work_id,))]

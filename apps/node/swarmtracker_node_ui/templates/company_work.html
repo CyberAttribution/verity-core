@@ -8,6 +8,16 @@
 <p><strong>Source claim</strong> · <a href="{{ work.source_claim.url }}">{{ work.source_claim.url }}</a><br>{{ work.source_claim.text }}<br>{{ work.source_claim.provenance }}</p>
 <p><strong>Agent interpretation</strong> · {{ work.agent_interpretation.agent_id }} / {{ work.agent_interpretation.model }} · task {{ work.agent_interpretation.task_id }} · runtime event {{ work.agent_interpretation.runtime_event_id }}<br>{{ work.agent_interpretation.response }}<br>Response SHA-256 <code>{{ work.agent_interpretation.response_sha256 }}</code></p>
 <p><strong>Operator decision:</strong> {{ work.operator_decision.state }}. <strong>Assigned task:</strong> {{ work.assigned_task or 'none' }}. <strong>Observed work:</strong> {{ work.observed_work or 'none' }}. <strong>Verified result:</strong> {{ work.verified_result or 'none' }}.</p>
+{% if work.operator_decision.state == 'pending' %}
+<form method="post" action="/company-work/{{ work.id }}/decision"><input type="hidden" name="operator_token" value="{{ operator_token }}">
+<label>Operator choice <select name="state"><option value="accepted">Accept proposal</option><option value="rejected">Reject proposal</option></select></label>
+<label>Reason <textarea name="detail" maxlength="1000" required></textarea></label><button>Record decision</button></form>
+{% elif work.operator_decision.state == 'accepted' and not work.assigned_task %}
+<form method="post" action="/company-work/{{ work.id }}/assignment"><input type="hidden" name="operator_token" value="{{ operator_token }}">
+<label>Task ID <input name="task_id" required></label><label>Assignee ID <input name="assignee" required></label>
+<button>Assign task</button></form>
+{% endif %}
+<p>Local form decisions do not authenticate the human operator. Assignment alone does not prove work or a result.</p>
 <p>Runtime event identity is reported by OpenClaw; this page does not independently authenticate that identity or verify the source.</p></section>
 {% else %}<p>No governed research has been recorded.</p>{% endfor %}
 {% endblock %}

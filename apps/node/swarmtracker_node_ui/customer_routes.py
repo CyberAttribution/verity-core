@@ -38,7 +38,8 @@ def install(app,render,base_ctx):
                 body=dict(connection_id=form.get("connection_id","").strip(),instructions=form.get("instructions","").strip(),
                           allowed_tools=[x.strip() for x in form.get("allowed_tools","").split(",") if x.strip()],
                           resources=[x.strip() for x in form.get("resources","").split(",") if x.strip()],
-                          external_sharing=form.get("external_sharing","none"),fallback_id=form.get("fallback_id","").strip())
+                          external_sharing=form.get("external_sharing","none"),fallback_id=form.get("fallback_id","").strip(),
+                          daily_request_limit=int(form.get("daily_request_limit","20")))
             elif kind in ("machine","resource"):
                 body=dict(description=form.get("description",""),provenance="operator-entered",status="unknown")
             elif kind=="link":

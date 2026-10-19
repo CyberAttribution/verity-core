@@ -133,3 +133,31 @@ def test_operator_can_disable_connection_in_configuration_page(tmp_path, monkeyp
     assert "disabled permanently" in client.get("/configuration").text
     assert client.post("/configuration/connections/openclaw/check",
                        data={"operator_token": decision_routes.TOKEN}).status_code == 409
+
+
+def test_daily_agent_cap_is_atomic_durable_and_versioned(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    config, runs = setup(tmp_path)
+    agent = config.latest("agent", "existingOpenClaw")["body"]
+    new = config.save("agent", "existingOpenClaw", dict(agent, daily_request_limit=1))
+    assert new["version"] == 2 and config.effective("existingOpenClaw", "report")["daily_request_limit"] == 1
+    seen = []
+    def dispatch(cfg, prompt, purpose):
+        seen.append(cfg["agent_version"])
+        return dict(model=cfg["model"],response="Complete",id="event-"+prompt,
+                    decision="allowed",done=True,done_reason="stop")
+    def run(i):
+        return runs.run(agent_id="existingOpenClaw",task_id="daily-"+str(i),resource_id="report",
+                        purpose="generate_text",prompt=str(i),dispatch=dispatch)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes=list(pool.map(run,(1,2)))
+    assert sorted(x["state"] for x in outcomes) == ["completed","denied"]
+    assert len(seen)==1
+    assert any(x["reason"]=="Daily agent request cap reached before dispatch" for x in outcomes)
+    after_restart=LocalInference(tmp_path / "runs.db",config)
+    denied=after_restart.run(agent_id="existingOpenClaw",task_id="daily-3",resource_id="report",
+                             purpose="generate_text",prompt="3",dispatch=dispatch)
+    assert denied["state"]=="denied" and len(seen)==1
+    assert config.latest("agent","existingOpenClaw")["version"]==2
+    with pytest.raises(ValueError):
+        config.save("agent","existingOpenClaw",dict(agent,daily_request_limit=-1))

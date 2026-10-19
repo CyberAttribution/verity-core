@@ -67,8 +67,11 @@ class CustomerConfig:
             if body["credential_ref"] not in ("none", "separately-managed"):
                 raise ValueError("Secrets cannot be entered in configuration")
         elif kind=="agent":
-            if set(body)!={"connection_id","instructions","allowed_tools","resources","external_sharing","fallback_id"}:
+            required={"connection_id","instructions","allowed_tools","resources","external_sharing","fallback_id"}
+            if set(body) not in (required,required|{"daily_request_limit"}):
                 raise ValueError("Invalid agent fields")
+            if "daily_request_limit" in body and (type(body["daily_request_limit"]) is not int or not 0<=body["daily_request_limit"]<=10000):
+                raise ValueError("Daily request limit must be 0 to 10000; zero is unlimited")
             label(body["connection_id"])
             _text(body["instructions"],2000)
             if body["fallback_id"]:label(body["fallback_id"])
@@ -158,7 +161,7 @@ class CustomerConfig:
                 and x["body"]["to_id"]==conn["id"] and x["body"]["permission"]=="hosts"]
         machine=self.latest("machine",hosted[0]["body"]["from_id"]) if len(hosted)==1 else None
         if not resource or not conn:raise ValueError("Incomplete effective configuration")
-        return {"agent_id":agent_id,"agent_version":agent["version"],"agent_hash":agent["digest"],
+        result={"agent_id":agent_id,"agent_version":agent["version"],"agent_hash":agent["digest"],
                 "connection_id":conn["id"],"connection_version":conn["version"],"connection_hash":conn["digest"],
                 "model":conn["body"]["model"],"model_revision":conn["body"]["revision"] or "unknown",
                 "provider":conn["body"]["provider"],"endpoint":conn["body"]["endpoint"],
@@ -176,3 +179,6 @@ class CustomerConfig:
                 "executor_id":"verity-report-broker",
                 "resource_id":resource_id,"resource_version":resource["version"],"resource_hash":resource["digest"],
                 "provenance":"operator-entered; capabilities and host identity unconfirmed"}
+        if "daily_request_limit" in agent["body"]:
+            result["daily_request_limit"]=agent["body"]["daily_request_limit"]
+        return result

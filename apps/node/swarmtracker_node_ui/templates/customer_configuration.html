@@ -49,12 +49,13 @@ Request SHA-256 <code>{{ run.prompt_sha256 }}</code>{% if run.reason %}<p>{{ run
 <section class="panel"><h2>Per-agent configuration</h2>
 {% for item in configurations if item.kind == 'agent' %}
 <article class="card"><strong>{{ item.id }} v{{ item.version }}</strong> · model connection {{ item.body.connection_id }} · fallback {{ item.body.fallback_id or 'none' }}<br>
-Allowed tool assertions {{ item.body.allowed_tools | join(', ') or 'none' }} · resource access {{ item.body.resources | join(', ') or 'none' }} · external sharing {{ item.body.external_sharing }}<br>
+Allowed tool assertions {{ item.body.allowed_tools | join(', ') or 'none' }} · resource access {{ item.body.resources | join(', ') or 'none' }} · external sharing {{ item.body.external_sharing }} · daily request cap {{ item.body.daily_request_limit if item.body.daily_request_limit is defined and item.body.daily_request_limit else 'unlimited (legacy)' }}<br>
 Instructions: {{ item.body.instructions }}<br>Configuration SHA-256 <code>{{ item.digest }}</code> · operator-entered</article>
 {% endfor %}
 <form method="post" action="/configuration"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="kind" value="agent">
 <label>Agent ID <input name="id" required></label><label>Primary connection ID <input name="connection_id" required></label><label>Fallback connection ID (optional) <input name="fallback_id"></label>
 <label>Instructions <textarea name="instructions" required maxlength="2000"></textarea></label><label>Allowed tool assertions (comma-separated generate_text, draft_text) <input name="allowed_tools" value="generate_text"></label>
 <label>Resource IDs (comma-separated) <input name="resources" required></label><label>External data sharing <select name="external_sharing"><option value="none">None</option><option value="explicit_per_job">Explicit per job</option></select></label>
+<label>Daily request cap (UTC; 0 means unlimited) <input type="number" name="daily_request_limit" min="0" max="10000" value="20" required></label>
 <button>Save immutable agent version</button></form></section>
 {% endblock %}

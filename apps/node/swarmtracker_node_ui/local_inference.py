@@ -70,6 +70,14 @@ class LocalInference:
                       configuration=cfg, result=None)
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
+            limit = cfg.get("daily_request_limit",0)
+            if not reason and limit:
+                day_start = int(record["at"] // 86400) * 86400  # UTC calendar day
+                count = db.execute("SELECT COUNT(*) FROM runs WHERE agent_id=? AND decision='allowed' AND at>=? AND at<?",
+                                   (agent_id,day_start,day_start+86400)).fetchone()[0]
+                if count >= limit:
+                    reason = "Daily agent request cap reached before dispatch"
+                    record.update(decision="denied",state="denied",reason=reason)
             db.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?)",
                        (rid, task_id, record["at"], agent_id, purpose, record["decision"],
                         record["state"], canonical(record)))

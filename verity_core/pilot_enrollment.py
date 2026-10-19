@@ -67,6 +67,17 @@ class EnrollmentStore:
                 raise EnrollmentConflict("Invitation ID already prepared") from None
         return {"invitation_id": invitation_id, "state": "pending", "grants_authority": False}
 
+    def prepare_from_gateway(self, gateway, invitation_id, expected_email, *, now=None):
+        """Read back provider metadata before storing a pending local invitation."""
+        _id(invitation_id)
+        recipient=_email(expected_email)
+        invitation=gateway.get(invitation_id)
+        if (invitation.get("id")!=invitation_id or _email(invitation.get("email"))!=recipient
+                or invitation.get("state")!="pending" or invitation.get("accepted_user_id")
+                or invitation.get("accepted_at")):
+            raise ValueError("Provider invitation is not pending for exact recipient")
+        return self.prepare(invitation_id,recipient,invitation["expires_at"],now=now)
+
     def accept(self, invitation_id, invitation, user, name, organization="", *, now=None):
         """Bind a verified user once; never issue a license from a bare link."""
         _id(invitation_id)

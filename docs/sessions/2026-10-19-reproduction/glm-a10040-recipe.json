@@ -1,0 +1,16 @@
+{
+  "model": "wtdcode/GLM-5.3-Flash-AWQ-W4A16",
+  "revision": "abd7b07719111f137e1de8a0c1b7e01c11b74d1a",
+  "image": "lazymio/vllm-backport@sha256:2627d2a97e7f539b99ac98f511c589f5f520d3fc5630b195aca7f6ef865ead4e",
+  "gpus": 8,
+  "tensor_parallel_size": 8,
+  "max_model_len": 8192,
+  "max_num_seqs": 2,
+  "reasoning_effort": "low",
+  "chat_template_kwargs": {
+    "reasoning_effort": "low"
+  },
+  "authorization": "Operator corrected intended model to GLM; existing Lambda instance only",
+  "at": "2026-10-19T18:36:49.098369+00:00",
+  "setup_deadline_seconds": 900
+}

@@ -1,0 +1,15 @@
+{
+  "model": "glm-5.3-flash",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Reply with exactly GLM_READY and no explanation."
+    }
+  ],
+  "max_tokens": 256,
+  "temperature": 0,
+  "reasoning_effort": "low",
+  "chat_template_kwargs": {
+    "reasoning_effort": "low"
+  }
+}

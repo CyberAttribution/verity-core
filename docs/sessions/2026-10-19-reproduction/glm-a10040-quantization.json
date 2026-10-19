@@ -1,0 +1,53 @@
+{
+  "architectures": [
+    "Glm5NextForConditionalGeneration"
+  ],
+  "dtype": "bfloat16",
+  "quantization_config": {
+    "config_groups": {
+      "group_0": {
+        "format": "pack-quantized",
+        "input_activations": null,
+        "output_activations": null,
+        "targets": [
+          "Linear"
+        ],
+        "weights": {
+          "actorder": null,
+          "block_structure": null,
+          "dynamic": false,
+          "group_size": 128,
+          "num_bits": 4,
+          "observer": "memoryless_minmax",
+          "observer_kwargs": {},
+          "scale_dtype": null,
+          "strategy": "group",
+          "symmetric": true,
+          "type": "int",
+          "zp_dtype": null
+        }
+      }
+    },
+    "format": "pack-quantized",
+    "global_compression_ratio": null,
+    "ignore": [
+      "lm_head",
+      "re:.*embed_tokens.*",
+      "re:.*visual\\..*",
+      "re:.*self_attn\\..*",
+      "re:.*shared_experts.*",
+      "re:.*mlp\\.gate$",
+      "re:.*_hc\\..*",
+      "re:.*eh_proj.*",
+      "re:.*layers\\.(0|1|2)\\.mlp\\..*",
+      "re:.*layers\\.45\\..*",
+      "re:.*shared_head.*"
+    ],
+    "kv_cache_scheme": null,
+    "quant_method": "compressed-tensors",
+    "quantization_status": "compressed",
+    "sparsity_config": {},
+    "transform_config": {},
+    "version": "0.18.1.a20260826"
+  }
+}

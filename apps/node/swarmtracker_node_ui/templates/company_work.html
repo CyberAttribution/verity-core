@@ -8,6 +8,27 @@
 <p><strong>Source claim</strong> · <a href="{{ work.source_claim.url }}">{{ work.source_claim.url }}</a><br>{{ work.source_claim.text }}<br>{{ work.source_claim.provenance }}</p>
 <p><strong>Agent interpretation</strong> · {{ work.agent_interpretation.agent_id }} / {{ work.agent_interpretation.model }} · task {{ work.agent_interpretation.task_id }} · runtime event {{ work.agent_interpretation.runtime_event_id }}<br>{{ work.agent_interpretation.response }}<br>Response SHA-256 <code>{{ work.agent_interpretation.response_sha256 }}</code></p>
 <p><strong>Operator decision:</strong> {{ work.operator_decision.state }}. <strong>Assigned task:</strong> {{ work.assigned_task or 'none' }}. <strong>Observed work:</strong> {{ work.observed_work or 'none' }}. <strong>Verified result:</strong> {{ work.verified_result or 'none' }}.</p>
+<h3>Evidence checks</h3>
+<form method="post" action="/company-work/{{ work.id }}/quotation"><input type="hidden" name="operator_token" value="{{ operator_token }}">
+<label>Paste a source passage (up to 2,000 characters)<textarea name="snapshot" maxlength="2000" required></textarea></label>
+<p>Checks whether the exact source claim occurs in this supplied text. No website is fetched and no model is called. A missing quotation leaves the check unresolved; it does not show the claim is false.</p>
+<button>Check exact quotation</button></form>
+<p>Checks concern the source claim above. Source support does not prove truth, approve a proposal, or verify task completion. Imported checker identities and judgments are assertions.</p>
+{% for bundle in evidence_checks[work.id] %}
+{% set check = bundle.record.entries[0].payload.check %}
+<details><summary>{{ check.id }} · {{ check.assessment.outcome }}{% if check.assessment.unresolved %} · unresolved{% endif %}</summary>
+<p>{{ check.assessment.reason }}</p>
+<p>{{ check.method.checker_model }} · {{ check.method.checker_revision }} · {{ check.checked_at }}</p>
+{% for citation in check.assessment.citations %}<blockquote>{{ citation.passage }}</blockquote><p>Source {{ citation.source_id }} · characters {{ citation.start }}–{{ citation.end }}</p>{% endfor %}
+{% for source in check.sources %}<details><summary>Source {{ source.id }} · {{ source.reference }}</summary><p>Revision {{ source.revision }} · recorded {{ source.retrieved_at }} · SHA-256 <code>{{ source.sha256 }}</code></p><pre>{{ source.text }}</pre></details>{% endfor %}
+{% for limitation in check.limitations %}<p>{{ limitation }}</p>{% endfor %}
+<p>Retain checkpoint separately: <code>{{ bundle.checkpoint.head_hash }}</code>. A checkpoint downloaded with a record is not an independent trust anchor.</p>
+</details>
+{% else %}<p>No evidence check recorded. Independent source review remains pending.</p>{% endfor %}
+<a href="/company-work/{{ work.id }}/evidence.json">Export evidence checks and checkpoints</a>
+<details><summary>Import a small evidence check</summary>
+<p>Advanced local import: evidence_check/v0.1 JSON, exact claim ID <code>{{ work.id }}:source-claim</code>, matching claim text and source URL. The entire encoded form is limited to 8 KiB. No source is fetched and no model is called. Approved context references are not yet supported.</p>
+<form method="post" action="/company-work/{{ work.id }}/evidence"><input type="hidden" name="operator_token" value="{{ operator_token }}"><label>Check JSON <textarea name="check_json" maxlength="6000" required></textarea></label><button>Record evidence check</button></form></details>
 {% if work.operator_decision.state == 'pending' %}
 <form method="post" action="/company-work/{{ work.id }}/decision"><input type="hidden" name="operator_token" value="{{ operator_token }}">
 <label>Operator choice <select name="state"><option value="accepted">Accept proposal</option><option value="rejected">Reject proposal</option></select></label>

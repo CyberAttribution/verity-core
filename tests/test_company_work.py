@@ -125,3 +125,104 @@ def test_remote_peer_cannot_read_form_token_or_submit_with_loopback_host(tmp_pat
     assert remote.post('/company-work/docker-brief/decision',
         data=dict(operator_token=decision_routes.TOKEN,state='accepted',detail='Spoofed host')).status_code==403
     assert CompanyWorkStore(tmp_path/'company-work.db').get('docker-brief')['operator_decision']['state']=='pending'
+
+
+def source_check(work_id='fixture-research'):
+    from verity_core.trust import evidence_check as e
+    claim='The maintenance window is Monday.'
+    return dict(schema=e.SCHEMA,id='check-01',claim=dict(id=work_id+':source-claim',text=claim,sha256=e.digest(claim)),
+        sources=[dict(id='notice',reference='https://example.com/notice',revision='1',retrieved_at='2026-10-19T18:00:00Z',text=claim,sha256=e.digest(claim))],
+        assessment=dict(outcome='supported',citations=[dict(source_id='notice',start=0,end=len(claim),passage=claim)],reason='Exact quotation present.',unresolved=False),
+        method=dict(kind='exact_quote_presence',version='1',checker_model='deterministic',checker_revision='1',request_id='fixture',attempt=1,max_requests=1,latency_ms=0,usage=dict(prompt_tokens=0,completion_tokens=0),billing_source='fixture; no model call'),
+        checked_at='2026-10-19T18:01:00Z',context_ref=None,limitations=['Quotation presence does not establish factual truth.'])
+
+
+def test_evidence_attachment_preserves_authorization_and_reconstructs_after_restart(tmp_path):
+    from verity_core.trust import evidence_check as e
+    path=tmp_path/'company-work.db';work=CompanyWorkStore(path)
+    original=work.create('fixture-research','https://example.com/notice',source_check()['claim']['text'],completed_run())
+    check=source_check();bundle=work.attach_check('fixture-research',check)
+    anchor=json.loads(json.dumps(bundle['checkpoint']))
+    check['assessment']['reason']='Caller mutation'
+    restored=CompanyWorkStore(path)
+    assert restored.get('fixture-research')==original
+    assert e.verify(restored.checks('fixture-research')[0],anchor)
+    with pytest.raises(ValueError,match='Duplicate'):restored.attach_check('fixture-research',source_check())
+    second=source_check();second['id']='check-02';second['assessment']['outcome']='conflicting'
+    with pytest.raises(ValueError):restored.attach_check('fixture-research',second)
+    assert len(restored.checks('fixture-research'))==1
+
+
+@pytest.mark.parametrize('change',['claim_id','claim_text','url','context'])
+def test_unlinked_or_unapproved_context_checks_are_refused(tmp_path,change):
+    from verity_core.trust import evidence_check as e
+    work=CompanyWorkStore(tmp_path/'company-work.db')
+    work.create('fixture-research','https://example.com/notice',source_check()['claim']['text'],completed_run())
+    check=source_check()
+    if change=='claim_id':check['claim']['id']='other:source-claim'
+    elif change=='claim_text':
+        check['claim']['text']='Another claim';check['claim']['sha256']=e.digest('Another claim')
+        check['method']['kind']='model_interpretation'
+    elif change=='url':check['sources'][0]['reference']='https://other.example/notice'
+    else:check['context_ref']=dict(profile_id='fiction',version=1,sha256='a'*64,approval_status='approved')
+    with pytest.raises(ValueError):work.attach_check('fixture-research',check)
+    assert work.checks('fixture-research')==[]
+
+
+def test_evidence_ui_export_and_local_security_boundaries(tmp_path,monkeypatch):
+    from swarmtracker_node_ui import app as ui, decision_routes, store
+    from verity_core.trust import evidence_check as e
+    monkeypatch.setattr(store,'DB_PATH',tmp_path/'profile.db')
+    work=CompanyWorkStore(tmp_path/'company-work.db')
+    work.create('fixture-research','https://example.com/notice',source_check()['claim']['text'],completed_run())
+    client=TestClient(ui.app,base_url='http://127.0.0.1')
+    path='/company-work/fixture-research/evidence'
+    form=dict(operator_token=decision_routes.TOKEN,check_json=json.dumps(source_check()))
+    assert client.post(path,data={**form,'operator_token':'bad'}).status_code==403
+    assert client.post(path,data={**form,'extra':'x'}).status_code==422
+    assert client.post(path,data={**form,'check_json':'{' }).status_code==422
+    assert client.post(path,data={**form,'check_json':'x'*9000}).status_code==413
+    assert client.post(path,data=form,headers={'Origin':'https://evil.example'}).status_code==403
+    remote=TestClient(ui.app,base_url='http://127.0.0.1',client=('203.0.113.15',40000))
+    assert remote.post(path,data=form).status_code==403
+    assert remote.get(path+'.json').status_code==403
+    assert client.post(path,data=form,follow_redirects=False).status_code==303
+    assert client.post(path,data=form).status_code==422
+    page=client.get('/company-work')
+    assert 'check-01' in page.text and 'supported' in page.text
+    assert 'does not prove truth' in page.text and 'pending' in page.text
+    export=client.get(path+'.json')
+    assert export.headers['cache-control']=='no-store'
+    bundle=export.json()['checks'][0]
+    assert e.verify(bundle,bundle['checkpoint'])
+    assert work.get('fixture-research')['operator_decision']['state']=='pending'
+    assert work.get('fixture-research')['verified_result'] is None
+    with work._db() as db:
+        db.execute("UPDATE research_events SET detail='{}' WHERE action='evidence_check_attached'")
+    assert client.get(path+'.json').status_code==503
+    assert client.get('/company-work').status_code==503
+
+
+def test_quotation_form_records_both_outcomes_without_approving_and_escapes_source(tmp_path,monkeypatch):
+    from swarmtracker_node_ui import app as ui, decision_routes, store
+    from verity_core.trust import evidence_check as e
+    monkeypatch.setattr(store,'DB_PATH',tmp_path/'profile.db')
+    work=CompanyWorkStore(tmp_path/'company-work.db')
+    work.create('fixture-research','https://example.com/notice',source_check()['claim']['text'],completed_run())
+    client=TestClient(ui.app,base_url='http://127.0.0.1')
+    url='/company-work/fixture-research/quotation'
+    form=dict(operator_token=decision_routes.TOKEN,snapshot='Preface '+source_check()['claim']['text']+' <script>alert(1)</script>')
+    assert client.post(url,data={**form,'operator_token':'bad'}).status_code==403
+    assert client.post(url,data=form,follow_redirects=False).status_code==303
+    assert client.post(url,data={**form,'snapshot':'Notice mentions another topic.'},follow_redirects=False).status_code==303
+    bundles=work.checks('fixture-research')
+    checks=[b['record']['entries'][0]['payload']['check'] for b in bundles]
+    assert [c['assessment']['outcome'] for c in checks]==['supported','insufficient']
+    assert [c['assessment']['unresolved'] for c in checks]==[False,True]
+    assert all(e.verify(b,b['checkpoint']) for b in bundles)
+    assert all(c['method']['usage']==dict(prompt_tokens=0,completion_tokens=0) for c in checks)
+    assert work.get('fixture-research')['operator_decision']['state']=='pending'
+    assert work.get('fixture-research')['verified_result'] is None
+    text=client.get('/company-work').text
+    assert 'unresolved' in text and '<script>alert(1)</script>' not in text
+    assert client.post(url,data={**form,'snapshot':'x'*2001}).status_code==422

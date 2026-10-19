@@ -1,8 +1,9 @@
 """Read-only company research trace; no implied operator approval."""
 import sqlite3
+import json
 from pathlib import Path
 from fastapi import HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from . import decision_routes, store
 from .company_work import CompanyWorkStore
 
@@ -24,6 +25,10 @@ def install(app,render,base_ctx):
         local_peer(request)
         ctx=base_ctx(request,"company_work")
         ctx["company_work_records"]=database().recent()
+        try:
+            ctx["evidence_checks"]={w["id"]: database().checks(w["id"]) for w in ctx["company_work_records"]}
+        except (ValueError,TypeError,sqlite3.Error):
+            raise HTTPException(503,"Evidence integrity or storage unavailable") from None
         ctx["operator_token"]=decision_routes.TOKEN
         response=render("company_work.html",ctx)
         response.headers["Cache-Control"]="no-store"
@@ -75,4 +80,47 @@ def install(app,render,base_ctx):
             raise HTTPException(409,"Commit observation refused or local checkout unavailable") from None
         except sqlite3.Error:
             raise HTTPException(503,"Observation storage unavailable") from None
+        return RedirectResponse("/company-work",status_code=303)
+
+    @app.post("/company-work/{work_id}/evidence")
+    async def attach_evidence(request:Request,work_id:str):
+        local_peer(request)
+        form=await decision_routes.operator_form(request)
+        if set(form)!={"operator_token","check_json"}:
+            raise HTTPException(422,"Exact evidence fields required")
+        try:
+            database().attach_check(work_id,json.loads(form["check_json"]))
+        except KeyError:
+            raise HTTPException(404,"Research record not found") from None
+        except (ValueError,TypeError,UnicodeError,RecursionError):
+            raise HTTPException(422,"Invalid, duplicate, or unlinked evidence check") from None
+        except sqlite3.Error:
+            raise HTTPException(503,"Evidence storage unavailable") from None
+        return RedirectResponse("/company-work",status_code=303)
+
+    @app.get("/company-work/{work_id}/evidence.json")
+    def export_evidence(request:Request,work_id:str):
+        local_peer(request)
+        try:
+            bundles=database().checks(work_id)
+        except KeyError:
+            raise HTTPException(404,"Research record not found") from None
+        except (ValueError,TypeError,sqlite3.Error):
+            raise HTTPException(503,"Evidence integrity or storage unavailable") from None
+        return JSONResponse({"schema":"research_evidence/v0.1","work_id":work_id,"checks":bundles},headers={"Cache-Control":"no-store"})
+
+    @app.post("/company-work/{work_id}/quotation")
+    async def check_quotation(request:Request,work_id:str):
+        local_peer(request)
+        form=await decision_routes.operator_form(request)
+        if set(form)!={"operator_token","snapshot"}:
+            raise HTTPException(422,"Exact quotation fields required")
+        try:
+            database().check_quotation(work_id,form["snapshot"])
+        except KeyError:
+            raise HTTPException(404,"Research record not found") from None
+        except (ValueError,TypeError,UnicodeError):
+            raise HTTPException(422,"Quotation check refused; snapshot or check allowance invalid") from None
+        except sqlite3.Error:
+            raise HTTPException(503,"Evidence storage unavailable") from None
         return RedirectResponse("/company-work",status_code=303)

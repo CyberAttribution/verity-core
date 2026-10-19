@@ -4,6 +4,8 @@ A model response is interpretation, never an operator decision or verified work.
 This store records the first two stages; later stages remain visibly pending.
 """
 import hashlib
+import datetime
+import uuid
 import json
 import re
 import subprocess
@@ -13,6 +15,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .customer_config import canonical, label
+from verity_core.trust import evidence_check
 
 
 class CompanyWorkStore:
@@ -22,6 +25,76 @@ class CompanyWorkStore:
         with self._db() as db:
             db.execute("CREATE TABLE IF NOT EXISTS research (id TEXT PRIMARY KEY, agent_task_id TEXT NOT NULL UNIQUE, at REAL NOT NULL, record TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS research_events (seq INTEGER PRIMARY KEY, work_id TEXT NOT NULL, at REAL NOT NULL, action TEXT NOT NULL, detail TEXT NOT NULL)")
+
+    def check_quotation(self, work_id, snapshot):
+        """Deterministic quotation presence only; no semantic or factual verdict."""
+        began = time.perf_counter()
+        evidence_check.text(snapshot, 2000)
+        work = self.get(work_id)
+        claim = work["source_claim"]["text"]
+        start = snapshot.find(claim)
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        identity = "quote-" + uuid.uuid4().hex
+        check = dict(schema=evidence_check.SCHEMA,id=identity,
+            claim=dict(id=work_id+":source-claim",text=claim,sha256=evidence_check.digest(claim)),
+            sources=[dict(id="operator-snapshot",reference=work["source_claim"]["url"],
+                revision="operator-supplied; source revision unknown",retrieved_at=stamp,
+                text=snapshot,sha256=evidence_check.digest(snapshot))],
+            assessment=dict(outcome="supported" if start >= 0 else "insufficient",
+                citations=[dict(source_id="operator-snapshot",start=start,end=start+len(claim),passage=claim)] if start >= 0 else [],
+                reason="Exact claim quotation occurs in the supplied snapshot." if start >= 0 else "Exact claim quotation was not found; semantic support was not assessed.",
+                unresolved=start < 0),
+            method=dict(kind="exact_quote_presence",version="1",checker_model="none; deterministic quotation check",
+                checker_revision="exact_quote_presence/v1",request_id=identity,attempt=1,max_requests=1,
+                latency_ms=(time.perf_counter()-began)*1000,usage=dict(prompt_tokens=0,completion_tokens=0),billing_source="local string comparison; no model request"),
+            checked_at=stamp,context_ref=None,limitations=[
+                "Source support is not guaranteed factual truth or authorization.",
+                "Snapshot supplied by the operator; origin and freshness were not independently verified. Retrieval time records intake time.",
+                "Exact quotation only; paraphrases, contradictions and semantic relevance are not assessed."])
+        return self.attach_check(work_id,check)
+
+    def attach_check(self, work_id, check):
+        """Retain a source-claim check without changing any authorization state."""
+        label(work_id)
+        # Serialize first to isolate caller mutation and bound storage.
+        encoded = canonical(check)
+        if len(encoded.encode("utf-8")) > 65536:
+            raise ValueError("Evidence check too large")
+        check = json.loads(encoded)
+        evidence_check.validate(check)
+        if check["context_ref"] is not None:
+            raise ValueError("Approved context store is not connected")
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT record FROM research WHERE id=?", (work_id,)).fetchone()
+            if not row:
+                raise KeyError(work_id)
+            work = json.loads(row["record"])
+            if check["claim"]["id"] != work_id + ":source-claim" or check["claim"]["text"] != work["source_claim"]["text"]:
+                raise ValueError("Check must bind the exact research source claim")
+            if not any(s["reference"] == work["source_claim"]["url"] for s in check["sources"]):
+                raise ValueError("Research source snapshot required")
+            previous = self._checks(db, work_id)
+            if len(previous) >= 20 or any(c["record"]["entries"][0]["payload"]["check"]["id"] == check["id"] for c in previous):
+                raise ValueError("Duplicate check or research check allowance exceeded")
+            bundle = evidence_check.export(check)
+            db.execute("INSERT INTO research_events(work_id,at,action,detail) VALUES (?,?,?,?)",
+                       (work_id,time.time(),"evidence_check_attached",canonical(bundle)))
+        return bundle
+
+    @staticmethod
+    def _checks(db, work_id):
+        bundles = [json.loads(r["detail"]) for r in db.execute(
+            "SELECT detail FROM research_events WHERE work_id=? AND action='evidence_check_attached' ORDER BY seq", (work_id,))]
+        for bundle in bundles:
+            if not evidence_check.verify(bundle, bundle.get("checkpoint")):
+                raise ValueError("Stored evidence integrity check failed")
+        return bundles
+
+    def checks(self, work_id):
+        self.get(work_id)
+        with self._db() as db:
+            return self._checks(db, work_id)
 
     def _db(self):
         db=sqlite3.connect(self.path,timeout=10)

@@ -226,3 +226,23 @@ def test_quotation_form_records_both_outcomes_without_approving_and_escapes_sour
     text=client.get('/company-work').text
     assert 'unresolved' in text and '<script>alert(1)</script>' not in text
     assert client.post(url,data={**form,'snapshot':'x'*2001}).status_code==422
+
+
+def test_individual_evidence_downloads_match_retained_checkpoint(tmp_path,monkeypatch):
+    from swarmtracker_node_ui import app as ui, store
+    from verity_core.trust import evidence_check as e
+    monkeypatch.setattr(store,'DB_PATH',tmp_path/'profile.db')
+    work=CompanyWorkStore(tmp_path/'company-work.db')
+    work.create('fixture-research','https://example.com/notice',source_check()['claim']['text'],completed_run())
+    original=work.check_quotation('fixture-research',source_check()['claim']['text'])
+    client=TestClient(ui.app,base_url='http://127.0.0.1')
+    base='/company-work/fixture-research/evidence/'
+    response=client.get(base+'0/bundle.json');anchor=client.get(base+'0/checkpoint.json')
+    assert response.status_code==anchor.status_code==200
+    assert e.verify(response.json(),original['checkpoint'])
+    assert anchor.json()==original['checkpoint']
+    assert 'attachment;' in response.headers['content-disposition']
+    for suffix in ('-1/bundle.json','1/bundle.json','0/unknown.json'):
+        assert client.get(base+suffix).status_code==404
+    remote=TestClient(ui.app,base_url='http://127.0.0.1',client=('203.0.113.15',40000))
+    assert remote.get(base+'0/checkpoint.json').status_code==403

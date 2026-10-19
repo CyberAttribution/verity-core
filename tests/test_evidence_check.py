@@ -146,3 +146,25 @@ def test_checking_limits_and_required_provenance_fail_closed(alter):
         c["limitations"] = []
     with pytest.raises(ValueError):
         evidence.export(c)
+
+
+def test_offline_cli_reconstructs_and_refuses_changed_payload_and_wrong_anchor(tmp_path):
+    import subprocess
+    import sys
+    bundle=evidence.export(check())
+    path=tmp_path/'bundle.json';anchor=tmp_path/'checkpoint.json'
+    path.write_text(json.dumps(bundle));anchor.write_text(json.dumps(bundle['checkpoint']))
+    command=[sys.executable,'-m','verity_core.trust.evidence_check',str(path),str(anchor)]
+    valid=subprocess.run(command,capture_output=True,text=True)
+    assert valid.returncode==0 and 'remain unverified' in valid.stdout
+    altered=copy.deepcopy(bundle)
+    altered['record']['entries'][0]['payload']['check']['sources'][0]['text']='Altered'
+    path.write_text(json.dumps(altered))
+    assert subprocess.run(command,capture_output=True).returncode==1
+    path.write_text(json.dumps(bundle))
+    anchor.write_text(json.dumps(evidence.export(check())['checkpoint']))
+    assert subprocess.run(command,capture_output=True).returncode==1
+    anchor.write_text('{"record_id":"a","record_id":"b"}')
+    assert subprocess.run(command,capture_output=True).returncode==2
+    path.write_bytes(b'x'*1048577)
+    assert subprocess.run(command,capture_output=True).returncode==2

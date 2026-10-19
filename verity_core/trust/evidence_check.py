@@ -181,3 +181,43 @@ def verify(bundle, retained_checkpoint):
         return record["subject"] == {"kind": "evidence_check", "identifier": check["id"]}
     except (ValueError, TypeError, KeyError, IndexError, UnicodeError, AttributeError):
         return False
+
+
+def main(argv=None):
+    """Verify files offline; the checkpoint must be independently retained."""
+    import argparse
+    import json
+    from pathlib import Path
+    parser = argparse.ArgumentParser(description="Reconstruct evidence integrity, not factual truth.")
+    parser.add_argument("bundle", help="Exported evidence check bundle JSON")
+    parser.add_argument("checkpoint", help="Separately retained checkpoint JSON")
+    args = parser.parse_args(argv)
+
+    def read_json(path, limit):
+        with Path(path).open("rb") as f:
+            raw = f.read(limit + 1)
+        if len(raw) > limit:
+            raise ValueError("File allowance exceeded")
+        def unique(pairs):
+            value = {}
+            for key, item in pairs:
+                if key in value:
+                    raise ValueError("Duplicate JSON field")
+                value[key] = item
+            return value
+        return json.loads(raw.decode("utf-8"), object_pairs_hook=unique)
+    try:
+        bundle = read_json(args.bundle, 1048576)
+        checkpoint = read_json(args.checkpoint, 2048)
+    except (OSError,ValueError,UnicodeError,RecursionError):
+        print("Evidence files could not be read as bounded, unambiguous JSON.")
+        return 2
+    if not verify(bundle, checkpoint):
+        print("Evidence integrity does not match the retained checkpoint.")
+        return 1
+    print("Evidence integrity matches the retained checkpoint. Source truth, model judgments and context approval remain unverified.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

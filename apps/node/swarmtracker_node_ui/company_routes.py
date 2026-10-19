@@ -124,3 +124,20 @@ def install(app,render,base_ctx):
         except sqlite3.Error:
             raise HTTPException(503,"Evidence storage unavailable") from None
         return RedirectResponse("/company-work",status_code=303)
+
+    @app.get("/company-work/{work_id}/evidence/{index}/{artifact}.json")
+    def export_one_evidence(request:Request,work_id:str,index:int,artifact:str):
+        local_peer(request)
+        if artifact not in ("bundle","checkpoint"):
+            raise HTTPException(404,"Unknown evidence artifact")
+        try:
+            bundles=database().checks(work_id)
+        except KeyError:
+            raise HTTPException(404,"Research record not found") from None
+        except (ValueError,TypeError,sqlite3.Error):
+            raise HTTPException(503,"Evidence integrity or storage unavailable") from None
+        if index < 0 or index >= len(bundles):
+            raise HTTPException(404,"Evidence check not found")
+        payload=bundles[index] if artifact=="bundle" else bundles[index]["checkpoint"]
+        return JSONResponse(payload,headers={"Cache-Control":"no-store",
+            "Content-Disposition":f'attachment; filename="evidence-{index}.{artifact}.json"'})

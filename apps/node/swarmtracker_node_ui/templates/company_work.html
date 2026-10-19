@@ -22,6 +22,8 @@
 {% for citation in check.assessment.citations %}<blockquote>{{ citation.passage }}</blockquote><p>Source {{ citation.source_id }} · characters {{ citation.start }}–{{ citation.end }}</p>{% endfor %}
 {% for source in check.sources %}<details><summary>Source {{ source.id }} · {{ source.reference }}</summary><p>Revision {{ source.revision }} · recorded {{ source.retrieved_at }} · SHA-256 <code>{{ source.sha256 }}</code></p><pre>{{ source.text }}</pre></details>{% endfor %}
 {% for limitation in check.limitations %}<p>{{ limitation }}</p>{% endfor %}
+<p><a href="/company-work/{{ work.id }}/evidence/{{ loop.index0 }}/bundle.json">Download this check</a> · <a href="/company-work/{{ work.id }}/evidence/{{ loop.index0 }}/checkpoint.json">Download checkpoint</a></p>
+<p>Offline verification from a source checkout: <code>python3 -m verity_core.trust.evidence_check evidence-{{ loop.index0 }}.bundle.json evidence-{{ loop.index0 }}.checkpoint.json</code></p>
 <p>Retain checkpoint separately: <code>{{ bundle.checkpoint.head_hash }}</code>. A checkpoint downloaded with a record is not an independent trust anchor.</p>
 </details>
 {% else %}<p>No evidence check recorded. Independent source review remains pending.</p>{% endfor %}

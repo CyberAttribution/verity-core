@@ -43,23 +43,100 @@ def test_disposable_verified_enrollment_can_issue_offline_code_then_revoke(tmp_p
     from cryptography.hazmat.primitives import serialization
     from verity_core import activation
     from verity_core.pilot_registry import Registry
+    current=datetime.now(timezone.utc)
     s=EnrollmentStore(tmp_path/'private/enroll.db');invite,user=records()
-    s.prepare('invite-test','pilot@example.com',invite['expires_at'],now=NOW.timestamp())
-    s.accept('invite-test',invite,user,'Pilot Name',now=NOW)
-    bound=s.bind_installation('invite-test','install-test',now=NOW.timestamp())
+    invite["expires_at"]=(current+timedelta(days=1)).isoformat()
+    invite["accepted_at"]=(current-timedelta(minutes=1)).isoformat()
+    s.prepare('invite-test','pilot@example.com',invite['expires_at'],now=current.timestamp())
+    s.accept('invite-test',invite,user,'Pilot Name',now=current)
+    bound=s.bind_installation('invite-test','install-test',now=current.timestamp())
     assert bound['activation_issued'] is False
     issuer=Ed25519PrivateKey.generate()
     public=issuer.public_key().public_bytes(serialization.Encoding.PEM,serialization.PublicFormat.SubjectPublicKeyInfo)
     claims=dict(schema='verity_pilot_entitlement/v1',installation_id='install-test',license_id='license-test',
-                issued_at=int(NOW.timestamp()),expires_at=int((NOW+timedelta(hours=1)).timestamp()))
+                issued_at=int(current.timestamp()),expires_at=int((current+timedelta(hours=1)).timestamp()))
     payload=activation.canonical(claims)
     code=activation.encode(payload)+'.'+activation.encode(issuer.sign(payload))
     registry=Registry(tmp_path/'private/registry.db')
     registry.issue(code,public,tmp_path/'private/entitlement.code')
-    assert activation.entitlement(code,public,'install-test',NOW.timestamp())['license_id']=='license-test'
-    assert activation.entitlement(code,public,'install-test',NOW.timestamp()+60)['license_id']=='license-test'
-    with pytest.raises(ValueError):activation.entitlement(code,public,'other-install',NOW.timestamp())
-    with pytest.raises(ValueError):activation.entitlement(code,public,'install-test',(NOW+timedelta(hours=2)).timestamp())
-    with pytest.raises(ValueError):activation.entitlement(code,public,'install-test',NOW.timestamp(),['license-test'])
+    assert activation.entitlement(code,public,'install-test',current.timestamp())['license_id']=='license-test'
+    assert activation.entitlement(code,public,'install-test',current.timestamp()+60)['license_id']=='license-test'
+    with pytest.raises(ValueError):activation.entitlement(code,public,'other-install',current.timestamp())
+    with pytest.raises(ValueError):activation.entitlement(code,public,'install-test',(current+timedelta(hours=2)).timestamp())
+    with pytest.raises(ValueError):activation.entitlement(code,public,'install-test',current.timestamp(),['license-test'])
     # Binding and code issuance are separate administrator actions; no WorkOS call occurred.
     assert s.get('invite-test')['state']=='installation_bound'
+
+
+def test_bound_entitlement_requires_verified_identity_exact_installation_and_one_license(tmp_path):
+    import time
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives import serialization
+    from verity_core import activation
+    from verity_core.pilot_registry import Registry
+    from verity_core.pilot_enrollment import EnrollmentConflict
+    current=datetime.now(timezone.utc)
+    expiry=(current+timedelta(days=1)).isoformat()
+    invite=dict(id='invite-bound',email='pilot@example.com',state='accepted',accepted_user_id='user-bound',
+                accepted_at=(current-timedelta(minutes=1)).isoformat(),expires_at=expiry)
+    user=dict(id='user-bound',email='pilot@example.com',email_verified=True)
+    store=EnrollmentStore(tmp_path/'private/enroll.db')
+    store.prepare('invite-bound','pilot@example.com',expiry,now=current.timestamp())
+    key=Ed25519PrivateKey.generate()
+    public=key.public_key().public_bytes(serialization.Encoding.PEM,serialization.PublicFormat.SubjectPublicKeyInfo)
+    def code(license_id):
+        claims=dict(schema='verity_pilot_entitlement/v1',installation_id='install-bound',
+                    license_id=license_id,issued_at=int(time.time())-10,expires_at=int(time.time())+3600)
+        payload=activation.canonical(claims)
+        return activation.encode(payload)+'.'+activation.encode(key.sign(payload))
+    signed=code('license-bound')
+    registry=Registry(tmp_path/'private/registry.db')
+    output=tmp_path/'private/entitlement.code'
+    with pytest.raises(EnrollmentConflict):
+        store.issue_bound_entitlement('invite-bound','install-bound',signed,public,output,registry)
+    store.accept('invite-bound',invite,user,'Pilot',now=current)
+    with pytest.raises(EnrollmentConflict):
+        store.issue_bound_entitlement('invite-bound','install-bound',signed,public,output,registry)
+    store.bind_installation('invite-bound','install-bound',now=current.timestamp())
+    with pytest.raises(ValueError):
+        store.issue_bound_entitlement('invite-bound','other-install',signed,public,output,registry)
+    issued=store.issue_bound_entitlement('invite-bound','install-bound',signed,public,output,registry)
+    assert issued['activation_issued'] and output.stat().st_mode & 0o077==0
+    assert registry.status('license-bound')['licenses'][0]['artifact_state']=='exported'
+    assert EnrollmentStore(tmp_path/'private/enroll.db').activation_link('invite-bound')['state']=='exported'
+    again=store.issue_bound_entitlement('invite-bound','install-bound',signed,public,output,registry)
+    assert again['license_id']=='license-bound'
+    with pytest.raises(EnrollmentConflict):
+        store.issue_bound_entitlement('invite-bound','install-bound',code('different-license'),public,
+                                      tmp_path/'private/other.code',registry)
+
+def test_entitlement_reservation_failure_stays_visible_for_reconciliation(tmp_path,monkeypatch):
+    import time
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives import serialization
+    from verity_core import activation
+    from verity_core.pilot_registry import Registry
+    now=datetime.now(timezone.utc);expiry=(now+timedelta(days=1)).isoformat()
+    store=EnrollmentStore(tmp_path/'private/enroll.db')
+    store.prepare('invite-fail','pilot@example.com',expiry,now=now.timestamp())
+    invitation=dict(id='invite-fail',email='pilot@example.com',state='accepted',accepted_user_id='user-fail',
+                    accepted_at=now.isoformat(),expires_at=expiry)
+    store.accept('invite-fail',invitation,dict(id='user-fail',email='pilot@example.com',email_verified=True),
+                 'Pilot',now=now)
+    store.bind_installation('invite-fail','install-fail',now=now.timestamp())
+    key=Ed25519PrivateKey.generate()
+    public=key.public_key().public_bytes(serialization.Encoding.PEM,serialization.PublicFormat.SubjectPublicKeyInfo)
+    claims=dict(schema='verity_pilot_entitlement/v1',installation_id='install-fail',license_id='license-fail',
+                issued_at=int(time.time())-10,expires_at=int(time.time())+3600)
+    payload=activation.canonical(claims);signed=activation.encode(payload)+'.'+activation.encode(key.sign(payload))
+    registry=Registry(tmp_path/'private/registry.db')
+    output=tmp_path/'private/entitlement.code'
+    original=registry.issue
+    def interrupted(*args,**kwargs):
+        raise OSError('Simulated export interruption')
+    monkeypatch.setattr(registry,'issue',interrupted)
+    with pytest.raises(OSError):
+        store.issue_bound_entitlement('invite-fail','install-fail',signed,public,output,registry)
+    assert store.activation_link('invite-fail')['state']=='pending'
+    monkeypatch.setattr(registry,'issue',original)
+    assert store.issue_bound_entitlement('invite-fail','install-fail',signed,public,output,registry)['activation_issued']

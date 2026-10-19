@@ -4,6 +4,7 @@ Only a backend that fetched invitation/user records from WorkOS after an
 AuthKit code exchange should call accept(). Browser-supplied objects do not
 authenticate a user. This store never persists invitation tokens or API keys.
 """
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -36,6 +37,10 @@ class EnrollmentStore:
             db.execute("""CREATE TABLE IF NOT EXISTS invitations (
                 id TEXT PRIMARY KEY, email TEXT NOT NULL, expires_at REAL NOT NULL,
                 state TEXT NOT NULL, acceptance TEXT, installation_id TEXT)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS activation_links (
+                invitation_id TEXT PRIMARY KEY, installation_id TEXT NOT NULL,
+                license_id TEXT NOT NULL UNIQUE, code_sha256 TEXT NOT NULL,
+                state TEXT NOT NULL)""")
 
     def _db(self):
         db = sqlite3.connect(self.path, timeout=10)
@@ -103,3 +108,67 @@ class EnrollmentStore:
         if not row:
             raise EnrollmentConflict("Unknown invitation")
         return dict(row, acceptance=json.loads(row["acceptance"]) if row["acceptance"] else None)
+
+    def issue_bound_entitlement(self, invitation_id, installation_id, code, public_key,
+                                output, registry, *, now=None):
+        """Reserve exact verified binding before an administrator exports signed code.
+
+        An interruption after reservation is visible as pending. A prior registry
+        issuance can be reconciled only when its identity and digest match.
+        This is not an AuthKit callback or an automatic signing service.
+        """
+        from . import activation
+        from .pilot_registry import Conflict
+        _id(invitation_id);_id(installation_id)
+        claims=activation.unpack(code,public_key)
+        current=time.time() if now is None else now
+        activation.entitlement(code,public_key,installation_id,current)
+        _id(claims["license_id"])
+        license_id=claims["license_id"]
+        digest=hashlib.sha256(code.strip().encode()).hexdigest()
+        created=False
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT * FROM invitations WHERE id=?",(invitation_id,)).fetchone()
+            if not row or row["state"]!="installation_bound" or row["installation_id"]!=installation_id:
+                raise EnrollmentConflict("Verified installation binding required")
+            if current>=row["expires_at"]:
+                raise ValueError("Invitation expired before entitlement issuance")
+            link=db.execute("SELECT * FROM activation_links WHERE invitation_id=?",(invitation_id,)).fetchone()
+            if link:
+                if (link["installation_id"],link["license_id"],link["code_sha256"])!=(installation_id,license_id,digest):
+                    raise EnrollmentConflict("Invitation already reserved for another entitlement")
+            else:
+                db.execute("INSERT INTO activation_links VALUES (?,?,?,?,?)",
+                           (invitation_id,installation_id,license_id,digest,"pending"))
+                created=True
+        # Never claim export merely because the local reservation exists.
+        try:
+            status=registry.status(license_id)
+        except Conflict as exc:
+            if str(exc)!="Unknown license":
+                raise
+            status=None
+        if status is not None and created:
+            raise EnrollmentConflict("License pre-exists verified enrollment reservation")
+        if status is None:
+            registry.issue(code,public_key,output)
+            status=registry.status(license_id)
+        entry=status["licenses"][0]
+        if (entry["license_id"],entry["installation_id"],entry["code_sha256"])!=(license_id,installation_id,digest):
+            raise EnrollmentConflict("Registry entitlement differs from reservation")
+        if entry["artifact_state"]!="exported":
+            raise EnrollmentConflict("Registry export needs administrator reconciliation")
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("UPDATE activation_links SET state='exported' WHERE invitation_id=? AND state='pending'",
+                       (invitation_id,))
+        return dict(invitation_id=invitation_id,installation_id=installation_id,
+                    license_id=license_id,code_sha256=digest,activation_issued=True,
+                    source="verified local enrollment and administrator-signed offline code")
+
+    def activation_link(self,invitation_id):
+        _id(invitation_id)
+        with self._db() as db:
+            row=db.execute("SELECT * FROM activation_links WHERE invitation_id=?",(invitation_id,)).fetchone()
+        return dict(row) if row else None

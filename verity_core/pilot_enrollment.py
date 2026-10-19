@@ -41,6 +41,9 @@ class EnrollmentStore:
                 invitation_id TEXT PRIMARY KEY, installation_id TEXT NOT NULL,
                 license_id TEXT NOT NULL UNIQUE, code_sha256 TEXT NOT NULL,
                 state TEXT NOT NULL)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS invitation_revocations (
+                invitation_id TEXT PRIMARY KEY, at REAL NOT NULL, reason TEXT NOT NULL,
+                exported_code_at_revocation INTEGER NOT NULL)""")
 
     def _db(self):
         db = sqlite3.connect(self.path, timeout=10)
@@ -142,25 +145,31 @@ class EnrollmentStore:
                 db.execute("INSERT INTO activation_links VALUES (?,?,?,?,?)",
                            (invitation_id,installation_id,license_id,digest,"pending"))
                 created=True
-        # Never claim export merely because the local reservation exists.
-        try:
-            status=registry.status(license_id)
-        except Conflict as exc:
-            if str(exc)!="Unknown license":
-                raise
-            status=None
-        if status is not None and created:
-            raise EnrollmentConflict("License pre-exists verified enrollment reservation")
-        if status is None:
-            registry.issue(code,public_key,output)
-            status=registry.status(license_id)
-        entry=status["licenses"][0]
-        if (entry["license_id"],entry["installation_id"],entry["code_sha256"])!=(license_id,installation_id,digest):
-            raise EnrollmentConflict("Registry entitlement differs from reservation")
-        if entry["artifact_state"]!="exported":
-            raise EnrollmentConflict("Registry export needs administrator reconciliation")
+        # Serialize revocation with export. The earlier reservation is already
+        # committed, so a crash during registry issuance remains reconcilable.
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT state,installation_id,expires_at FROM invitations WHERE id=?",(invitation_id,)).fetchone()
+            if not row or row["state"]!="installation_bound" or row["installation_id"]!=installation_id:
+                raise EnrollmentConflict("Invitation changed before entitlement export")
+            if time.time()>=row["expires_at"]:
+                raise ValueError("Invitation expired before entitlement export")
+            try:
+                status=registry.status(license_id)
+            except Conflict as exc:
+                if str(exc)!="Unknown license":
+                    raise
+                status=None
+            if status is not None and created:
+                raise EnrollmentConflict("License pre-exists verified enrollment reservation")
+            if status is None:
+                registry.issue(code,public_key,output)
+                status=registry.status(license_id)
+            entry=status["licenses"][0]
+            if (entry["license_id"],entry["installation_id"],entry["code_sha256"])!=(license_id,installation_id,digest):
+                raise EnrollmentConflict("Registry entitlement differs from reservation")
+            if entry["artifact_state"]!="exported":
+                raise EnrollmentConflict("Registry export needs administrator reconciliation")
             db.execute("UPDATE activation_links SET state='exported' WHERE invitation_id=? AND state='pending'",
                        (invitation_id,))
         return dict(invitation_id=invitation_id,installation_id=installation_id,
@@ -171,4 +180,31 @@ class EnrollmentStore:
         _id(invitation_id)
         with self._db() as db:
             row=db.execute("SELECT * FROM activation_links WHERE invitation_id=?",(invitation_id,)).fetchone()
+        return dict(row) if row else None
+
+    def revoke(self,invitation_id,reason,*,now=None):
+        """Stop local enrollment/issuance; exported offline code needs signed-list import."""
+        _id(invitation_id)
+        if not isinstance(reason,str) or not reason.strip() or len(reason)>300:
+            raise ValueError("Bounded revocation reason required")
+        current=time.time() if now is None else now
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT * FROM invitations WHERE id=?",(invitation_id,)).fetchone()
+            if not row or row["state"]=="revoked":
+                raise EnrollmentConflict("Unknown or already revoked invitation")
+            link=db.execute("SELECT state FROM activation_links WHERE invitation_id=?",(invitation_id,)).fetchone()
+            exported=bool(link and link["state"]=="exported")
+            db.execute("UPDATE invitations SET state='revoked' WHERE id=?",(invitation_id,))
+            db.execute("INSERT INTO invitation_revocations VALUES (?,?,?,?)",
+                       (invitation_id,current,reason.strip(),int(exported)))
+        return dict(invitation_id=invitation_id,state="revoked",
+                    exported_code_at_revocation=exported,
+                    offline_revocation_pending=exported,
+                    source="local enrollment state; signed cumulative revocation import not observed")
+
+    def revocation(self,invitation_id):
+        _id(invitation_id)
+        with self._db() as db:
+            row=db.execute("SELECT * FROM invitation_revocations WHERE invitation_id=?",(invitation_id,)).fetchone()
         return dict(row) if row else None

@@ -140,3 +140,86 @@ def test_entitlement_reservation_failure_stays_visible_for_reconciliation(tmp_pa
     assert store.activation_link('invite-fail')['state']=='pending'
     monkeypatch.setattr(registry,'issue',original)
     assert store.issue_bound_entitlement('invite-fail','install-fail',signed,public,output,registry)['activation_issued']
+
+
+def test_local_revocation_blocks_pending_and_accepted_enrollment(tmp_path):
+    store=EnrollmentStore(tmp_path/'private/enroll.db');invite,user=records()
+    store.prepare('invite-test','pilot@example.com',invite['expires_at'],now=NOW.timestamp())
+    revoked=store.revoke('invite-test','Operator cancelled',now=NOW.timestamp())
+    assert revoked['state']=='revoked' and not revoked['offline_revocation_pending']
+    assert EnrollmentStore(tmp_path/'private/enroll.db').revocation('invite-test')['reason']=='Operator cancelled'
+    with pytest.raises(EnrollmentConflict):store.accept('invite-test',invite,user,'Pilot',now=NOW)
+    with pytest.raises(EnrollmentConflict):store.revoke('invite-test','Replay',now=NOW.timestamp())
+    assert store.get('invite-test')['state']=='revoked'
+
+
+def test_revoking_exported_code_preserves_offline_delay_until_signed_list_import(tmp_path):
+    import time
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives import serialization
+    from verity_core import activation
+    from verity_core.pilot_registry import Registry
+    now=datetime.now(timezone.utc);expiry=(now+timedelta(days=1)).isoformat()
+    store=EnrollmentStore(tmp_path/'private/enroll.db')
+    store.prepare('invite-revoke','pilot@example.com',expiry,now=now.timestamp())
+    invitation=dict(id='invite-revoke',email='pilot@example.com',state='accepted',
+                    accepted_user_id='user-revoke',accepted_at=now.isoformat(),expires_at=expiry)
+    store.accept('invite-revoke',invitation,dict(id='user-revoke',email='pilot@example.com',
+                 email_verified=True),'Pilot',now=now)
+    store.bind_installation('invite-revoke','install-revoke',now=now.timestamp())
+    key=Ed25519PrivateKey.generate()
+    public=key.public_key().public_bytes(serialization.Encoding.PEM,serialization.PublicFormat.SubjectPublicKeyInfo)
+    claims=dict(schema='verity_pilot_entitlement/v1',installation_id='install-revoke',
+                license_id='license-revoke',issued_at=int(time.time())-10,expires_at=int(time.time())+3600)
+    payload=activation.canonical(claims);code=activation.encode(payload)+'.'+activation.encode(key.sign(payload))
+    registry=Registry(tmp_path/'private/registry.db')
+    store.issue_bound_entitlement('invite-revoke','install-revoke',code,public,
+                                  tmp_path/'private/entitlement.code',registry)
+    result=store.revoke('invite-revoke','Operator revoked',now=now.timestamp())
+    assert result['offline_revocation_pending'] and result['exported_code_at_revocation']
+    # Local state alone cannot make an already exported offline signature invalid.
+    assert activation.entitlement(code,public,'install-revoke',time.time())['license_id']=='license-revoke'
+    with pytest.raises(ValueError):
+        activation.entitlement(code,public,'install-revoke',time.time(),['license-revoke'])
+    with pytest.raises(EnrollmentConflict):
+        store.issue_bound_entitlement('invite-revoke','install-revoke',code,public,
+                                      tmp_path/'private/entitlement.code',registry)
+
+
+def test_revocation_serializes_with_entitlement_export(tmp_path,monkeypatch):
+    import threading,time
+    from concurrent.futures import ThreadPoolExecutor
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives import serialization
+    from verity_core import activation
+    from verity_core.pilot_registry import Registry
+    now=datetime.now(timezone.utc);expiry=(now+timedelta(days=1)).isoformat()
+    store=EnrollmentStore(tmp_path/'private/enroll.db')
+    store.prepare('invite-race','pilot@example.com',expiry,now=now.timestamp())
+    invitation=dict(id='invite-race',email='pilot@example.com',state='accepted',
+                    accepted_user_id='user-race',accepted_at=now.isoformat(),expires_at=expiry)
+    store.accept('invite-race',invitation,dict(id='user-race',email='pilot@example.com',
+                 email_verified=True),'Pilot',now=now)
+    store.bind_installation('invite-race','install-race',now=now.timestamp())
+    key=Ed25519PrivateKey.generate()
+    public=key.public_key().public_bytes(serialization.Encoding.PEM,serialization.PublicFormat.SubjectPublicKeyInfo)
+    claims=dict(schema='verity_pilot_entitlement/v1',installation_id='install-race',
+                license_id='license-race',issued_at=int(time.time())-10,expires_at=int(time.time())+3600)
+    payload=activation.canonical(claims);code=activation.encode(payload)+'.'+activation.encode(key.sign(payload))
+    registry=Registry(tmp_path/'private/registry.db')
+    original=registry.issue
+    entered=threading.Event();release=threading.Event()
+    def paused(*args,**kwargs):
+        entered.set()
+        assert release.wait(5)
+        return original(*args,**kwargs)
+    monkeypatch.setattr(registry,'issue',paused)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        issued=pool.submit(store.issue_bound_entitlement,'invite-race','install-race',code,public,
+                           tmp_path/'private/entitlement.code',registry)
+        assert entered.wait(5)
+        revoked=pool.submit(store.revoke,'invite-race','Operator revokes during export')
+        release.set()
+        assert issued.result(timeout=10)['activation_issued']
+        assert revoked.result(timeout=10)['offline_revocation_pending']
+    assert store.get('invite-race')['state']=='revoked'

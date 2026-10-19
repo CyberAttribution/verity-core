@@ -29,6 +29,21 @@
 <label>To kind <select name="to_kind"><option>connection</option><option>resource</option></select></label><label>To ID <input name="to_id" required></label>
 <label>Intended permission <select name="permission"><option>hosts</option><option>proposes</option><option>executor-host</option></select></label><button>Record unconfirmed relationship</button></form>
 <p>These links do not change OS filesystem permissions or certify an installation ID.</p></section>
+<section class="panel"><h2>Governed local inference</h2>
+<p>Verity gates requests submitted here against the selected agent's primary model and allowed purpose before contacting a loopback OpenClaw endpoint. This does not prevent direct calls to OpenClaw or same-user access outside Verity.</p>
+<form method="post" action="/configuration/inference"><input type="hidden" name="operator_token" value="{{ operator_token }}">
+<label>Agent ID <input name="agent_id" required></label><label>Unique task ID <input name="task_id" required></label>
+<label>Configured resource ID <input name="resource_id" required></label>
+<label>Purpose <select name="purpose"><option>generate_text</option><option>draft_text</option></select></label>
+<label>Requested model (optional; blank uses primary) <input name="requested_model"></label>
+<label>Bounded request <textarea name="prompt" maxlength="4000" required></textarea></label>
+<button>Run through configured local agent</button></form>
+{% for run in inference_runs %}
+<article class="card"><strong>{{ run.task_id }}</strong> · {{ run.agent_id }} · {{ run.decision }} / {{ run.state }} · {{ run.purpose }}<br>
+Model {{ run.model }} · revision {{ run.model_revision }} · agent config v{{ run.configuration.agent_version }} · connection v{{ run.configuration.connection_version }}<br>
+Request SHA-256 <code>{{ run.prompt_sha256 }}</code>{% if run.reason %}<p>{{ run.reason }}</p>{% endif %}
+{% if run.result %}<p>Runtime decision: {{ run.result.runtime_decision or 'unreported' }} · event {{ run.result.runtime_event_id or 'unreported' }} · result SHA-256 <code>{{ run.result.response_sha256 }}</code></p><pre>{{ run.result.response }}</pre>{% endif %}</article>
+{% endfor %}</section>
 <section class="panel"><h2>Per-agent configuration</h2>
 {% for item in configurations if item.kind == 'agent' %}
 <article class="card"><strong>{{ item.id }} v{{ item.version }}</strong> · model connection {{ item.body.connection_id }} · fallback {{ item.body.fallback_id or 'none' }}<br>

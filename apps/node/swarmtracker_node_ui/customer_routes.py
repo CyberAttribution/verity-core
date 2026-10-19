@@ -3,10 +3,11 @@ import os
 import sqlite3
 import urllib.request
 from fastapi import HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from . import decision_routes, store
 from .customer_config import CustomerConfig
+from .local_inference import LocalInference
 
 
 def database():
@@ -18,7 +19,8 @@ def install(app,render,base_ctx):
     def page(request:Request):
         decision_routes.local_request(request)
         db=database();ctx=base_ctx(request,"configuration")
-        ctx.update(configurations=db.all(),observations=db.observations(),operator_token=decision_routes.TOKEN)
+        ctx.update(configurations=db.all(),observations=db.observations(),operator_token=decision_routes.TOKEN,
+                   inference_runs=LocalInference(store.DB_PATH.with_name("local-inference.db"),db).recent())
         response=render("customer_configuration.html",ctx)
         response.headers["Cache-Control"]="no-store"
         return response
@@ -47,6 +49,25 @@ def install(app,render,base_ctx):
         except (ValueError,TypeError,sqlite3.Error):
             raise HTTPException(422,"Configuration refused; check fields and referenced versions. Credentials cannot be entered here.") from None
         return RedirectResponse("/configuration",status_code=303)
+
+    @app.post("/configuration/inference")
+    async def inference(request:Request):
+        decision_routes.local_request(request)
+        if not request.client or request.client.host not in ("127.0.0.1","::1","testclient"):
+            raise HTTPException(403,"Loopback peer required")
+        form=await decision_routes.operator_form(request)
+        if set(form)!={"operator_token","agent_id","task_id","resource_id","purpose","prompt","requested_model"}:
+            raise HTTPException(422,"Exact inference fields required")
+        try:
+            run=LocalInference(store.DB_PATH.with_name("local-inference.db"),database()).run(
+                agent_id=form["agent_id"],task_id=form["task_id"],
+                resource_id=form["resource_id"],purpose=form["purpose"],
+                prompt=form["prompt"],requested_model=form["requested_model"])
+        except sqlite3.IntegrityError:
+            raise HTTPException(409,"Task ID already recorded") from None
+        except (ValueError,KeyError):
+            raise HTTPException(422,"Inference configuration invalid") from None
+        return JSONResponse(run,headers={"Cache-Control":"no-store"})
 
     @app.post("/configuration/connections/{identifier}/check")
     async def check(request:Request,identifier:str):

@@ -99,3 +99,25 @@ def test_glm_profile_preserves_explicit_low_in_both_request_locations(tmp_path):
 def test_unknown_profile_with_null_authorization_is_not_an_allowlist_match():
     m=manifest();m.update(model='unknown',revision='unknown',authorization=None)
     with pytest.raises(ValueError):review.validate(m)
+
+
+def test_kolibri_requires_pinned_input_and_sends_supported_low_settings(tmp_path):
+    m=manifest();m.update(model=review.KOLIBRI_MODEL,revision=review.KOLIBRI_REVISION,
+                         authorization='explicit-finite-kolibri-review',max_tokens=1536)
+    with pytest.raises(ValueError,match='input commit'):review.validate(m)
+    for task in m['tasks']:task['input_commit']='a'*40
+    c=Coordinator(tmp_path/'queue.db');opener=Opener(model=review.KOLIBRI_MODEL);states=[]
+    def progress(state):
+        states.append((state['state'],state['current_task']))
+        raise RuntimeError('A failed notification must not block or retry work')
+    results=review.run_batch(m,c,tmp_path/'out',opener=opener,progress=progress)
+    assert len(opener.calls)==3 and all(r['state']=='awaiting_review' for r in results)
+    assert [current for state,current in states if current]==['Review0','Review1','Review2']
+    assert states[-1]==('finished',None)
+    for request,timeout in opener.calls:
+        payload=json.loads(request.data)
+        assert payload['model']==review.KOLIBRI_MODEL
+        assert payload['chat_template_kwargs']=={'reasoning_effort':'low'}
+        assert 'reasoning_effort' not in payload
+        assert payload['top_p']==0.97 and payload['top_k']==128 and payload['temperature']==1.0
+    assert all(r['input_commit']=='a'*40 for r in results)

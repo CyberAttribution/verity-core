@@ -6,6 +6,7 @@ automatic acceptance. Rental billing is separate from these request limits.
 import hashlib
 import json
 import os
+import re
 import time
 import urllib.request
 from pathlib import Path
@@ -16,7 +17,10 @@ MODEL = "qwen-coder-14b-awq"
 REVISION = "eb3172f06a6d6b3a15f08947b0668d782e4d2d2c"
 GLM_MODEL = "glm-5.3-flash"
 GLM_REVISION = "abd7b07719111f137e1de8a0c1b7e01c11b74d1a"
-PROFILES = {(MODEL, REVISION): "explicit-finite-qwen-review",
+KOLIBRI_MODEL = "kolibri-1-bf16"
+KOLIBRI_REVISION = "ee7d86e7d6ffdaaeb7fb6bd486f52a1e31cb4ce1"
+PROFILES = {(KOLIBRI_MODEL, KOLIBRI_REVISION): "explicit-finite-kolibri-review",
+            (MODEL, REVISION): "explicit-finite-qwen-review",
             (GLM_MODEL, GLM_REVISION): "explicit-finite-glm-review"}
 ENDPOINT = "http://127.0.0.1:18002/v1/chat/completions"
 
@@ -29,11 +33,11 @@ def validate(manifest):
     for key in ("id", "session_id"):
         if not isinstance(manifest[key], str) or not manifest[key].isalnum() or len(manifest[key]) > 80:
             raise ValueError("Invalid batch identity")
-    if (manifest["authorization"] not in ("explicit-finite-qwen-review", "explicit-finite-glm-review")
+    if (manifest["authorization"] not in ("explicit-finite-qwen-review", "explicit-finite-glm-review", "explicit-finite-kolibri-review")
             or not isinstance(manifest["model"], str) or not isinstance(manifest["revision"], str)
             or PROFILES.get((manifest["model"], manifest["revision"])) != manifest["authorization"]):
         raise ValueError("Unapproved review model or authorization")
-    token_limit = 2048 if manifest["model"] == GLM_MODEL else 1024
+    token_limit = 2048 if manifest["model"] in (GLM_MODEL, KOLIBRI_MODEL) else 1024
     if type(manifest["max_tokens"]) is not int or not 1 <= manifest["max_tokens"] <= token_limit:
         raise ValueError("Invalid output token allowance")
     if type(manifest["max_seconds"]) is not int or not 1 <= manifest["max_seconds"] <= 600:
@@ -43,8 +47,12 @@ def validate(manifest):
         raise ValueError("One to six prepared reviews required")
     seen = set()
     for task in tasks:
-        if not isinstance(task, dict) or set(task) != {"id", "purpose", "source", "sha256", "acceptance"}:
+        required = {"id", "purpose", "source", "sha256", "acceptance"}
+        if not isinstance(task, dict) or not required <= set(task) or set(task) - required - {"input_commit"}:
             raise ValueError("Exact prepared review fields required")
+        if "input_commit" in task or manifest["model"] == KOLIBRI_MODEL:
+            if not isinstance(task.get("input_commit"), str) or not re.fullmatch(r"[0-9a-f]{40}", task["input_commit"]):
+                raise ValueError("Pinned input commit required")
         identity = task["id"]
         if not isinstance(identity, str) or not identity.isalnum() or len(identity) > 80 or identity in seen:
             raise ValueError("Invalid or duplicate review identity")
@@ -58,7 +66,7 @@ def validate(manifest):
     return manifest
 
 
-def run_batch(manifest, coordinator, output, *, opener=LOCAL_OPENER, clock=time.monotonic):
+def run_batch(manifest, coordinator, output, *, opener=LOCAL_OPENER, clock=time.monotonic, progress=None):
     # Copy through JSON so callers cannot change queued source packets.
     manifest = json.loads(json.dumps(validate(manifest), allow_nan=False))
     output = Path(output)
@@ -76,7 +84,7 @@ def run_batch(manifest, coordinator, output, *, opener=LOCAL_OPENER, clock=time.
             acceptance_criteria=task["acceptance"],
             expected_outputs=str(output / (task["id"] + ".raw.json")),
             validation_gates="Independent source review; no automatic acceptance. Source SHA-256 " + task["sha256"],
-            agent_id="glm-review" if manifest["model"] == GLM_MODEL else "qwen-review", session_id=manifest["session_id"]))
+            agent_id={GLM_MODEL:"glm-review",KOLIBRI_MODEL:"kolibri-review"}.get(manifest["model"],"qwen-review"), session_id=manifest["session_id"]))
     started = clock()
     results = []
     blocked = False
@@ -89,6 +97,11 @@ def run_batch(manifest, coordinator, output, *, opener=LOCAL_OPENER, clock=time.
         temporary = output / "status.tmp"
         temporary.write_text(json.dumps(value, indent=2))
         temporary.replace(output / "status.json")
+        if progress is not None:
+            try:
+                progress(json.loads(json.dumps(value)))
+            except Exception:
+                pass  # Notification failure never authorizes, retries or blocks model work.
 
     status("running")
     try:
@@ -114,10 +127,13 @@ def run_batch(manifest, coordinator, output, *, opener=LOCAL_OPENER, clock=time.
             if manifest["model"] == GLM_MODEL:
                 payload["reasoning_effort"] = "low"
                 payload["chat_template_kwargs"] = {"reasoning_effort": "low"}
+            if manifest["model"] == KOLIBRI_MODEL:
+                payload["chat_template_kwargs"] = {"reasoning_effort": "low"}
+                payload.update(temperature=1.0,top_p=0.97,top_k=128)
             request = urllib.request.Request(ENDPOINT, data=json.dumps(payload).encode(),
                 headers={"Content-Type": "application/json", "X-Request-ID": request_id})
             try:
-                with opener.open(request, timeout=min(90, remaining)) as response:
+                with opener.open(request, timeout=min(180 if manifest["model"] == KOLIBRI_MODEL else 90, remaining)) as response:
                     raw = response.read(1048577)
                 with (output / (task["id"] + ".raw.json")).open("xb") as f:
                     f.write(raw)
@@ -132,7 +148,7 @@ def run_batch(manifest, coordinator, output, *, opener=LOCAL_OPENER, clock=time.
                 state = "awaiting_review" if complete else "failed"
                 result = dict(id=task["id"], state=state, request_id=request_id,
                     remote_id=response.get("id"), finish_reason=choice.get("finish_reason"),
-                    source_sha256=task["sha256"], response_sha256=hashlib.sha256(raw).hexdigest(),
+                    input_commit=task.get("input_commit"), source_sha256=task["sha256"], response_sha256=hashlib.sha256(raw).hexdigest(),
                     usage=response.get("usage"), model=response.get("model"))
                 coordinator.update_work(task["id"], state,
                     evidence=json.dumps(result, sort_keys=True))

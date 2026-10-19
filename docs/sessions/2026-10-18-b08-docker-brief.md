@@ -1,0 +1,14 @@
+# B08 bounded research trace — Docker Hub credential ownership
+
+Status: source-linked research and governed local agent demonstration; the company work view is not yet integrated. No operator decision to build a feature has been recorded.
+
+| Stage | Record |
+| --- | --- |
+| Source claim | The SwarmTracker.ai Threat Intel Brief listed the October 13 Docker Hub token-transfer report. Docker's October 12 advisory says account-to-organization conversion reassigned personal access tokens without owner consent or rotating secrets; Docker fixed it September 30, found no evidence of exploitation, and notes that unused transferred tokens leave no registry trace. Sources: https://swarmtracker.ai/ and https://www.docker.com/blog/docker-hub-security-advisory-cve-2026-105445/ |
+| Agent interpretation | Disposable Mac mini `existingOpenClaw`, primary `qwen2.5:7b-instruct`, task `b08-docker-brief-01` summarized two supported claims and an inference about undetected unused tokens. Follow-up `b08-docker-implication-02` proposed asking how Verity should handle agent/model connection ownership changes. The agent did not decide company work. |
+| Review decision | Assistant source review accepted the two Docker claims as consistent with Docker's advisory. The earlier Lambda Qwen proposal to add personal-token ownership verification was rejected as unsupported product scope. The operator's company decision is pending. |
+| Assigned research check | Inspect the current Verity model connection schema for a credential ownership-transfer path. This is a read-only development check, not approval of a product feature. |
+| Observed work | `customer_config.py` stores only `credential_ref` values `none` or `separately-managed`. A source search found no model-connection credential ownership-transfer operation in that module or the new enrollment module. |
+| Verified result | No credential transfer is implemented in this slice. Further design would require an actual identity/credential adapter and explicit owner consent, revocation and usage evidence. B08's Agents, Governance, Sessions and company-record alignment remains open. |
+
+The private request and complete result records are `b08-governed-brief.json` SHA-256 `ef14a53330c895909d772afd51b8068aab9afa9f99ccf58e63c3e74a30ec03bd` and `b08-governed-implication.json` SHA-256 `b7c5442f7bfc60e3a4f35f7e55e3190642d220e136155fd86bf8ecea804938d0` in the Mac mini disposable profile and the MacBook private-evidence directory. Runtime event IDs `61f786b5-d2c3-491d-9223-94b4b8634df5` and `4d96e17d-21cb-4892-83ad-d49dae2ec783` each matched one OpenClaw log event by model, response hash, allowed decision, `done=True`, and `generate_text` purpose. These are independently checked local records, not authenticated runtime identity or a provider-side audit.

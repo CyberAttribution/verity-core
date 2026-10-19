@@ -86,3 +86,23 @@ def test_rejected_proposal_cannot_be_assigned(tmp_path):
     work.decide('docker-brief','rejected','No task approved.')
     with pytest.raises(ValueError):work.assign('docker-brief','task-01','human-01')
     assert work.get('docker-brief')['assigned_task'] is None
+
+
+def test_observed_commit_requires_assignment_and_keeps_result_pending(tmp_path):
+    import subprocess
+    from pathlib import Path
+    work=CompanyWorkStore(tmp_path/'company-work.db')
+    work.create('docker-brief','https://www.docker.com/blog/docker-hub-security-advisory-cve-2026-105445/',
+                'Docker reported token owner reassignment.',completed_run())
+    root=Path(__file__).resolve().parents[1]
+    commit=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip()
+    with pytest.raises(ValueError):work.observe_commit('docker-brief',commit,root)
+    work.decide('docker-brief','accepted','Fixture approval.')
+    work.assign('docker-brief','fixture-task','local-test')
+    with pytest.raises(ValueError):work.observe_commit('docker-brief','0'*40,root)
+    observed=work.observe_commit('docker-brief',commit,root)
+    assert observed['observed_work']['commit_sha']==commit
+    assert observed['verified_result'] is None
+    with pytest.raises(ValueError):work.observe_commit('docker-brief',commit,root)
+    assert [x['action'] for x in work.events('docker-brief')]==[
+        'operator_decision','task_assigned','commit_observed']

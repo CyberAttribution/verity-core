@@ -5,6 +5,8 @@ This store records the first two stages; later stages remain visibly pending.
 """
 import hashlib
 import json
+import re
+import subprocess
 import sqlite3
 import time
 from pathlib import Path
@@ -117,3 +119,33 @@ class CompanyWorkStore:
         with self._db() as db:
             return [dict(row) for row in db.execute(
                 "SELECT seq,work_id,at,action,detail FROM research_events WHERE work_id=? ORDER BY seq",(work_id,))]
+
+    def observe_commit(self,work_id,commit_sha,repository):
+        """Check a local Git commit object; this does not verify task relevance."""
+        label(work_id)
+        if not isinstance(commit_sha,str) or not re.fullmatch(r"[0-9a-f]{40}",commit_sha):
+            raise ValueError("Full lowercase commit SHA required")
+        root=Path(repository).resolve()
+        if not (root/".git").exists():
+            raise ValueError("Local source checkout unavailable")
+        try:
+            result=subprocess.run(["git","-C",str(root),"cat-file","-t",commit_sha],
+                                  capture_output=True,text=True,timeout=5,check=True)
+        except (OSError,subprocess.SubprocessError):
+            raise ValueError("Git commit could not be verified") from None
+        if result.stdout.strip()!="commit":
+            raise ValueError("Git object is not a commit")
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT record FROM research WHERE id=?",(work_id,)).fetchone()
+            if not row:raise KeyError(work_id)
+            record=json.loads(row["record"])
+            if record["operator_decision"]["state"]!="accepted" or not record["assigned_task"] or record["observed_work"] is not None:
+                raise ValueError("Accepted, assigned, unobserved task required")
+            now=time.time()
+            record["observed_work"]=dict(commit_sha=commit_sha,at=now,
+                provenance="local Git commit object verified; task relevance and tests not verified")
+            db.execute("UPDATE research SET record=? WHERE id=?",(canonical(record),work_id))
+            db.execute("INSERT INTO research_events(work_id,at,action,detail) VALUES (?,?,?,?)",
+                       (work_id,now,"commit_observed",canonical(record["observed_work"])))
+        return record

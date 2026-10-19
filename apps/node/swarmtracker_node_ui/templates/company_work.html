@@ -16,7 +16,12 @@
 <form method="post" action="/company-work/{{ work.id }}/assignment"><input type="hidden" name="operator_token" value="{{ operator_token }}">
 <label>Task ID <input name="task_id" required></label><label>Assignee ID <input name="assignee" required></label>
 <button>Assign task</button></form>
+{% elif work.assigned_task and not work.observed_work %}
+<form method="post" action="/company-work/{{ work.id }}/commit"><input type="hidden" name="operator_token" value="{{ operator_token }}">
+<label>Full local source commit SHA <input name="commit_sha" minlength="40" maxlength="40" required></label>
+<button>Observe commit object</button></form>
 {% endif %}
+<p>A local Git object check proves the commit exists in this checkout; it does not verify task relevance, tests, or outcome.</p>
 <p>Local form decisions do not authenticate the human operator. Assignment alone does not prove work or a result.</p>
 <p>Runtime event identity is reported by OpenClaw; this page does not independently authenticate that identity or verify the source.</p></section>
 {% else %}<p>No governed research has been recorded.</p>{% endfor %}

@@ -1,5 +1,6 @@
 """Read-only company research trace; no implied operator approval."""
 import sqlite3
+from pathlib import Path
 from fastapi import HTTPException, Request
 from fastapi.responses import RedirectResponse
 from . import decision_routes, store
@@ -49,4 +50,19 @@ def install(app,render,base_ctx):
             raise HTTPException(409,"Assignment refused or already recorded") from None
         except sqlite3.Error:
             raise HTTPException(503,"Assignment storage unavailable") from None
+        return RedirectResponse("/company-work",status_code=303)
+
+    @app.post("/company-work/{work_id}/commit")
+    async def observe_commit(request:Request,work_id:str):
+        form=await decision_routes.operator_form(request)
+        if set(form)!={"operator_token","commit_sha"}:
+            raise HTTPException(422,"Exact commit observation fields required")
+        try:
+            database().observe_commit(work_id,form["commit_sha"],Path(__file__).resolve().parents[3])
+        except KeyError:
+            raise HTTPException(404,"Research record not found") from None
+        except ValueError:
+            raise HTTPException(409,"Commit observation refused or local checkout unavailable") from None
+        except sqlite3.Error:
+            raise HTTPException(503,"Observation storage unavailable") from None
         return RedirectResponse("/company-work",status_code=303)

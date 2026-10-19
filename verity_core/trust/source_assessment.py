@@ -33,6 +33,7 @@ def from_model_response(*, identifier, claim_id, claim_text, sources, content,
     This proves exact quotation binding, not semantic relevance or source truth.
     Missing usage or checker identity is rejected, never invented as zero.
     """
+    evidence.text(claim_text)
     if not isinstance(content, str):
         raise ValueError("Model assessment must be plain JSON text")
     if len(content.encode("utf-8")) > MAX_ASSESSMENT_BYTES:
@@ -68,14 +69,16 @@ def from_model_response(*, identifier, claim_id, claim_text, sources, content,
         raise ValueError("Observed model-check method metadata required")
     check = dict(schema=evidence.SCHEMA, id=identifier,
         claim=dict(id=claim_id, text=claim_text, sha256=evidence.digest(claim_text)),
-        sources=copy.deepcopy(sources),
+        sources=sources,
         assessment=dict(outcome=assessment["outcome"], citations=citations,
             reason=assessment["reason"],
             unresolved=assessment["outcome"] in ("insufficient", "conflicting")),
-        method=copy.deepcopy(method), checked_at=checked_at, context_ref=None,
+        method=method, checked_at=checked_at, context_ref=None,
         limitations=[evidence.LIMITATION,
             "Exact passages and hashes do not independently verify model judgments or source freshness.",
             "Checker identity and billing metadata are caller observations, not authenticated attestation.",
             "Evidence does not authorize company work or establish a verified task outcome."])
+    # Reject malformed caller metadata before recursively copying it. The
+    # validated schema has bounded depth/size, and the result owns its snapshot.
     evidence.validate(check)
-    return check
+    return copy.deepcopy(check)

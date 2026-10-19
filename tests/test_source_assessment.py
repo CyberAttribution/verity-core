@@ -75,3 +75,14 @@ def test_caller_observations_and_source_integrity_must_also_validate(change):
     elif change=="wrong_source_hash":kwargs["sources"][0]["sha256"]="0"*64
     else:kwargs["sources"].append(dict(kwargs["sources"][0]))
     with pytest.raises(ValueError):from_model_response(**kwargs)
+
+
+@pytest.mark.parametrize("bad_input", ["claim_type", "nested_unknown_metadata"])
+def test_invalid_caller_metadata_is_refused_before_recursive_copy(bad_input):
+    kwargs=inputs()
+    if bad_input=="claim_type":kwargs["claim_text"]=None
+    else:
+        value="invalid"
+        for _ in range(600):value=[value]
+        kwargs["method"]["unexpected"]=value
+    with pytest.raises(ValueError):from_model_response(**kwargs)

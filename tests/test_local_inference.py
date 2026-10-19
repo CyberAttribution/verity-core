@@ -65,7 +65,11 @@ def test_runtime_model_mismatch_is_failed_and_version_history_survives(tmp_path)
     missing_done = runs.run(task_id="task-4", dispatch=lambda c, *_: dict(
         model=c["model"], response="Partial", id="evt-4", decision="allowed"), **base)
     assert missing_done["state"] == "failed" and missing_done["result"] is None
-    for reason in (None, "length", "cancelled", "error"):
+    omitted_reason = runs.run(task_id="omitted-finish", dispatch=lambda c, *_: dict(
+        model=c["model"], response="Complete", id="evt-omitted", decision="allowed",
+        done=True), **base)
+    assert omitted_reason["state"] == "completed" and omitted_reason["result"]["finish_reason"] is None
+    for reason in ("length", "cancelled", "error"):
         incomplete = runs.run(task_id="bad-finish-" + str(reason), dispatch=lambda c, *_: dict(
             model=c["model"], response="Looks complete", id="evt-bad", decision="allowed",
             done=True, done_reason=reason), **base)

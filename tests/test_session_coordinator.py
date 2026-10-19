@@ -161,7 +161,11 @@ def test_unexpected_exit_stale_status_and_safe_operator_recovery(tmp_path):
     assert c.snapshot()["control"]["mode"] == "running"
     assert c.worker_status()["state"] == "stale"  # Mode is not process liveness.
     assert c.snapshot()["tasks"][0]["state"] == "submitted"
-    now[0]+=31
+    # The spawned child uses real time; expire its actual persisted lease,
+    # rather than assuming process startup completed within one second.
+    with c.db() as db:
+        heartbeat=db.execute("SELECT heartbeat FROM control WHERE id=1").fetchone()[0]
+    now[0]=heartbeat+31
     dispatched=[]
     recovered=Coordinator(path,adapter=lambda s,r: (dispatched.append(s["id"]) or
                     {"request_id":r,"content":"review","finish_reason":"stop"}),clock=lambda:now[0])

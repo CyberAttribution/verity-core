@@ -1,7 +1,12 @@
 # B19 proposed organization-context boundary
 
-Status: design only, October 19, 2026. No organizational profile, trusted-context
-store, authenticated approver, connector, or payment executor is implemented here.
+Status: disposable backend prototype, October 19, 2026.
+`verity_core.organization_context.ContextStore` implements bounded local proposals,
+exact approval/rejection, withdrawal and monotonic generation, SQLite serialization,
+qualified snapshots, and anchored history verification. Eighteen synthetic tests
+cover these boundaries. Full suite: 940 passed, 2 skipped.
+No real organizational profile, authenticated approver, app integration, connector,
+or payment executor is implemented. Existing context-reference import denial remains.
 
 ## Existing code and reuse
 

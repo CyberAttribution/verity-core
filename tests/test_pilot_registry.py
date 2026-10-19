@@ -82,3 +82,23 @@ def test_ack_requires_integrity_installation_and_real_analysis_snapshot(tmp_path
     assert sum(e["event"]=="analysis_acknowledged" for e in r.status()["events"])==1
     anchor["head_hash"]="0"*64
     with pytest.raises(ValueError):r.acknowledge("first","install-test",bundle,anchor)
+
+@pytest.mark.parametrize("artifact", ["missing", "partial", "intact"])
+def test_retry_export_rejects_issued_revocation_before_artifact_mutation(tmp_path,issuer,artifact):
+    key,pub,code=issuer;r=Registry(tmp_path/"registry.db");path=tmp_path/"first.code"
+    original=code("first");r.issue(original,pub,path)
+    claims=dict(schema="verity_pilot_revocations/v1",revision=1,issued_at=int(time.time()),license_ids=["first"])
+    payload=activation.canonical(claims)
+    raw=activation.encode(payload)+"."+activation.encode(key.sign(payload))
+    rev=tmp_path/"revocations.code";rev.write_text(raw);r.record_revocations(raw,pub,rev)
+    if artifact=="missing":path.unlink()
+    elif artifact=="partial":path.write_text("partial")
+    before=path.read_bytes() if path.exists() else None
+    events=r.status()["events"]
+    with pytest.raises(Conflict,match="revocation"):
+        r.retry_export("first",key,preserve_partial=True)
+    assert (path.read_bytes() if path.exists() else None)==before
+    assert not list(tmp_path.glob("first.code.partial-*"))
+    assert r.status()["events"]==events
+    # Issuer bookkeeping does not remotely invalidate an exported signature.
+    assert activation.entitlement(original,pub,"install-test",time.time())["license_id"]=="first"

@@ -151,6 +151,12 @@ class Registry:
         with self.connection() as con:
             row=con.execute("SELECT * FROM licenses WHERE license_id=?",(license_id,)).fetchone()
             if not row:raise Conflict("Unknown license")
+            # The same write transaction serializes this check and artifact
+            # export with record_revocations. A committed list forbids retry;
+            # an export already holding the lock finishes before that list.
+            latest=con.execute("SELECT data FROM events WHERE event='revocation_list_issued' ORDER BY seq DESC LIMIT 1").fetchone()
+            if latest and license_id in json.loads(latest[0])["license_ids"]:
+                raise Conflict("License appears in the issued revocation list; export refused")
             claims=json.loads(row["claims"]);path=Path(row["artifact_path"])
             payload=activation.canonical(claims)
             raw=(activation.encode(payload)+"."+activation.encode(key.sign(payload))).encode()

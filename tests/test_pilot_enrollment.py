@@ -36,3 +36,30 @@ def test_wrong_recipient_unverified_and_expiry_never_bind(tmp_path):
     assert s.get('invite-test')['state']=='pending'
     with pytest.raises(ValueError):s.accept('invite-test',invite,user,'Pilot Name',now=NOW+timedelta(days=2))
     with pytest.raises(EnrollmentConflict):s.bind_installation('invite-test','install-test')
+
+
+def test_disposable_verified_enrollment_can_issue_offline_code_then_revoke(tmp_path):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives import serialization
+    from verity_core import activation
+    from verity_core.pilot_registry import Registry
+    s=EnrollmentStore(tmp_path/'private/enroll.db');invite,user=records()
+    s.prepare('invite-test','pilot@example.com',invite['expires_at'],now=NOW.timestamp())
+    s.accept('invite-test',invite,user,'Pilot Name',now=NOW)
+    bound=s.bind_installation('invite-test','install-test',now=NOW.timestamp())
+    assert bound['activation_issued'] is False
+    issuer=Ed25519PrivateKey.generate()
+    public=issuer.public_key().public_bytes(serialization.Encoding.PEM,serialization.PublicFormat.SubjectPublicKeyInfo)
+    claims=dict(schema='verity_pilot_entitlement/v1',installation_id='install-test',license_id='license-test',
+                issued_at=int(NOW.timestamp()),expires_at=int((NOW+timedelta(hours=1)).timestamp()))
+    payload=activation.canonical(claims)
+    code=activation.encode(payload)+'.'+activation.encode(issuer.sign(payload))
+    registry=Registry(tmp_path/'private/registry.db')
+    registry.issue(code,public,tmp_path/'private/entitlement.code')
+    assert activation.entitlement(code,public,'install-test',NOW.timestamp())['license_id']=='license-test'
+    assert activation.entitlement(code,public,'install-test',NOW.timestamp()+60)['license_id']=='license-test'
+    with pytest.raises(ValueError):activation.entitlement(code,public,'other-install',NOW.timestamp())
+    with pytest.raises(ValueError):activation.entitlement(code,public,'install-test',(NOW+timedelta(hours=2)).timestamp())
+    with pytest.raises(ValueError):activation.entitlement(code,public,'install-test',NOW.timestamp(),['license-test'])
+    # Binding and code issuance are separate administrator actions; no WorkOS call occurred.
+    assert s.get('invite-test')['state']=='installation_bound'

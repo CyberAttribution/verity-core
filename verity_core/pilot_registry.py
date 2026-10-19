@@ -98,12 +98,31 @@ class Registry:
         con.execute("INSERT INTO events(at,event,data) VALUES(?,?,?)",
                     (int(time.time()),kind,json.dumps(data,sort_keys=True,allow_nan=False)))
 
+    def _check_export_allowed(self,con,license_id):
+        # Call under the same write transaction as any code artifact mutation.
+        latest=con.execute("SELECT data FROM events WHERE event='revocation_list_issued' ORDER BY seq DESC LIMIT 1").fetchone()
+        if latest and license_id in json.loads(latest[0])["license_ids"]:
+            raise Conflict("License appears in the issued revocation list; export refused")
+
+    @contextmanager
+    def export_guard(self,license_id):
+        """Serialize a local export confirmation with issued revocation lists.
+
+        Callers must commit their confirmation before leaving this context.
+        This does not revoke signatures already held by an installation.
+        """
+        activation._id(license_id)
+        with self.connection() as con:
+            self._check_export_allowed(con,license_id)
+            yield
+
     def _reserve(self,con,claims,code_sha256,artifact,supersedes):
         activation._id(claims["license_id"]);activation._id(claims["installation_id"])
         if set(claims)!={"schema","installation_id","license_id","issued_at","expires_at"} or claims["schema"]!="verity_pilot_entitlement/v1":
             raise ValueError("Invalid signed entitlement metadata")
         if any(type(claims[k]) is not int for k in ("issued_at","expires_at")) or not 0<claims["expires_at"]-claims["issued_at"]<=30*86400:
             raise ValueError("Invalid pilot validity interval")
+        self._check_export_allowed(con,claims["license_id"])
         if con.execute("SELECT 1 FROM licenses WHERE license_id=?",(claims["license_id"],)).fetchone():
             raise Conflict("License IDs are never reused, including expired IDs")
         if supersedes:
@@ -129,34 +148,37 @@ class Registry:
         with self.connection() as con:
             self._reserve(con,claims,fingerprint(raw),output,supersedes)
             if invitation_id:self._associate_invitation(con,invitation_id,claims["license_id"])
-        if not existing:save_private_new(output,raw)
-        self.reconcile(claims["license_id"])
+        # Reservation is durable before filesystem work. Recheck under a new
+        # write lock so a list committed in between cannot permit a fresh export.
+        with self.connection() as con:
+            self._check_export_allowed(con,claims["license_id"])
+            if not existing:save_private_new(output,raw)
+            self._reconcile(con,claims["license_id"])
         return self.status(claims["license_id"])
 
     def reconcile(self,license_id):
         activation._id(license_id)
         with self.connection() as con:
-            row=con.execute("SELECT * FROM licenses WHERE license_id=?",(license_id,)).fetchone()
-            if not row:raise Conflict("Unknown license")
-            if row["exported"]:return
-            path=Path(row["artifact_path"]);info=path.lstat()
-            if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o077:
-                raise ValueError("Code artifact must be owner-only")
-            if info.st_size>8192 or fingerprint(read_private(path).strip())!=row["code_sha256"]:
-                raise ValueError("Code artifact missing, partial, or does not match reserved fingerprint")
-            con.execute("UPDATE licenses SET exported=1 WHERE license_id=?",(license_id,))
-            self.event(con,"issuance_exported",dict(license_id=license_id))
+            self._reconcile(con,license_id)
+
+    def _reconcile(self,con,license_id):
+        row=con.execute("SELECT * FROM licenses WHERE license_id=?",(license_id,)).fetchone()
+        if not row:raise Conflict("Unknown license")
+        if row["exported"]:return
+        path=Path(row["artifact_path"]);info=path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o077:
+            raise ValueError("Code artifact must be owner-only")
+        if info.st_size>8192 or fingerprint(read_private(path).strip())!=row["code_sha256"]:
+            raise ValueError("Code artifact missing, partial, or does not match reserved fingerprint")
+        con.execute("UPDATE licenses SET exported=1 WHERE license_id=?",(license_id,))
+        self.event(con,"issuance_exported",dict(license_id=license_id))
+
 
     def retry_export(self,license_id,key,preserve_partial=False):
         with self.connection() as con:
             row=con.execute("SELECT * FROM licenses WHERE license_id=?",(license_id,)).fetchone()
             if not row:raise Conflict("Unknown license")
-            # The same write transaction serializes this check and artifact
-            # export with record_revocations. A committed list forbids retry;
-            # an export already holding the lock finishes before that list.
-            latest=con.execute("SELECT data FROM events WHERE event='revocation_list_issued' ORDER BY seq DESC LIMIT 1").fetchone()
-            if latest and license_id in json.loads(latest[0])["license_ids"]:
-                raise Conflict("License appears in the issued revocation list; export refused")
+            self._check_export_allowed(con,license_id)
             claims=json.loads(row["claims"]);path=Path(row["artifact_path"])
             payload=activation.canonical(claims)
             raw=(activation.encode(payload)+"."+activation.encode(key.sign(payload))).encode()

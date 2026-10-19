@@ -184,8 +184,12 @@ class EnrollmentStore:
                 raise EnrollmentConflict("Registry entitlement differs from reservation")
             if entry["artifact_state"]!="exported":
                 raise EnrollmentConflict("Registry export needs administrator reconciliation")
-            db.execute("UPDATE activation_links SET state='exported' WHERE invitation_id=? AND state='pending'",
-                       (invitation_id,))
+            # The registry lock spans the enrollment commit, closing the gap
+            # between its earlier status snapshot and activation confirmation.
+            with registry.export_guard(license_id):
+                db.execute("UPDATE activation_links SET state='exported' WHERE invitation_id=? AND state='pending'",
+                           (invitation_id,))
+                db.commit()
         return dict(invitation_id=invitation_id,installation_id=installation_id,
                     license_id=license_id,code_sha256=digest,activation_issued=True,
                     source="verified local enrollment and administrator-signed offline code")

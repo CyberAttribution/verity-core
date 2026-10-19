@@ -68,7 +68,8 @@ def test_disposable_verified_enrollment_can_issue_offline_code_then_revoke(tmp_p
     assert s.get('invite-test')['state']=='installation_bound'
 
 
-def test_bound_entitlement_requires_verified_identity_exact_installation_and_one_license(tmp_path):
+@pytest.mark.parametrize("revocation_timing", ["before_resume", "after_status"])
+def test_bound_entitlement_requires_verified_identity_exact_installation_and_one_license(tmp_path,monkeypatch,revocation_timing):
     import time
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from cryptography.hazmat.primitives import serialization
@@ -109,6 +110,24 @@ def test_bound_entitlement_requires_verified_identity_exact_installation_and_one
     with pytest.raises(EnrollmentConflict):
         store.issue_bound_entitlement('invite-bound','install-bound',code('different-license'),public,
                                       tmp_path/'private/other.code',registry)
+    # A registry-issued signed list must block a resumed confirmation as well.
+    revclaims=dict(schema="verity_pilot_revocations/v1",revision=1,issued_at=int(time.time()),license_ids=["license-bound"])
+    payload=activation.canonical(revclaims)
+    revcode=activation.encode(payload)+"."+activation.encode(key.sign(payload))
+    revpath=tmp_path/"revocations.code";revpath.write_text(revcode)
+    if revocation_timing=="before_resume":
+        registry.record_revocations(revcode,public,revpath)
+    else:
+        original_status=registry.status
+        def revoke_after_snapshot(*args,**kwargs):
+            snapshot=original_status(*args,**kwargs)
+            registry.record_revocations(revcode,public,revpath)
+            return snapshot
+        monkeypatch.setattr(registry,"status",revoke_after_snapshot)
+    from verity_core.pilot_registry import Conflict
+    with pytest.raises(Conflict,match="revocation"):
+        store.issue_bound_entitlement('invite-bound','install-bound',signed,public,output,registry)
+
 
 def test_entitlement_reservation_failure_stays_visible_for_reconciliation(tmp_path,monkeypatch):
     import time

@@ -102,3 +102,37 @@ def test_retry_export_rejects_issued_revocation_before_artifact_mutation(tmp_pat
     assert r.status()["events"]==events
     # Issuer bookkeeping does not remotely invalidate an exported signature.
     assert activation.entitlement(original,pub,"install-test",time.time())["license_id"]=="first"
+
+
+def test_initial_issue_refuses_license_already_on_issued_list(tmp_path,issuer):
+    key,pub,code=issuer;r=Registry(tmp_path/"registry.db")
+    claims=dict(schema="verity_pilot_revocations/v1",revision=1,issued_at=int(time.time()),license_ids=["first"])
+    payload=activation.canonical(claims);raw=activation.encode(payload)+"."+activation.encode(key.sign(payload))
+    rev=tmp_path/"rev.code";rev.write_text(raw);r.record_revocations(raw,pub,rev)
+    with pytest.raises(Conflict,match="revocation"):
+        r.issue(code("first"),pub,tmp_path/"first.code")
+    assert not (tmp_path/"first.code").exists()
+    assert not r.status()["licenses"]
+    r.issue(code("unrevoked"),pub,tmp_path/"unrevoked.code")
+    assert (tmp_path/"unrevoked.code").exists()
+
+
+def test_initial_issue_rechecks_revocation_committed_after_reservation(tmp_path,issuer,monkeypatch):
+    from contextlib import contextmanager
+    key,pub,code=issuer;r=Registry(tmp_path/"registry.db");other=Registry(r.path)
+    claims=dict(schema="verity_pilot_revocations/v1",revision=1,issued_at=int(time.time()),license_ids=["first"])
+    payload=activation.canonical(claims);raw=activation.encode(payload)+"."+activation.encode(key.sign(payload))
+    rev=tmp_path/"rev.code";rev.write_text(raw)
+    original=r.connection;triggered=False
+    @contextmanager
+    def interleaved():
+        nonlocal triggered
+        with original() as con:yield con
+        if not triggered:
+            triggered=True
+            other.record_revocations(raw,pub,rev)
+    monkeypatch.setattr(r,"connection",interleaved)
+    with pytest.raises(Conflict,match="revocation"):
+        r.issue(code("first"),pub,tmp_path/"first.code")
+    assert not (tmp_path/"first.code").exists()
+    assert r.status("first")["licenses"][0]["artifact_state"]=="pending_reconciliation"

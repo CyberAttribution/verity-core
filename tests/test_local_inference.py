@@ -190,3 +190,41 @@ def test_session_cap_survives_restart_and_serializes_concurrent_reservations(tmp
     assert config.effective("existingOpenClaw","report")["session_request_limit"]==1
     with pytest.raises(ValueError):
         config.save("agent","existingOpenClaw",dict(agent,session_request_limit=-1))
+
+
+def test_unavailable_or_stale_connection_denies_before_dispatch_until_recheck(tmp_path):
+    config,runs=setup(tmp_path)
+    seen=[]
+    def dispatch(cfg,prompt,purpose):
+        seen.append(1)
+        return dict(model=cfg["model"],response="Complete",id="evt",decision="allowed",done=True)
+    base=dict(agent_id="existingOpenClaw",resource_id="report",purpose="generate_text",
+              prompt="Bounded",dispatch=dispatch)
+    config.observe("connection","openclaw","unavailable","Health request failed")
+    unavailable=runs.run(task_id="stale-1",**base)
+    assert unavailable["state"]=="denied" and not seen
+    config.observe("connection","openclaw","reachable","Loopback health only")
+    with config._db() as db:
+        db.execute("UPDATE observations SET at=0 WHERE kind='connection' AND id='openclaw'")
+    stale=runs.run(task_id="stale-2",**base)
+    assert stale["state"]=="denied" and not seen
+    config.observe("connection","openclaw","reachable","Loopback health only")
+    allowed=runs.run(task_id="stale-3",**base)
+    assert allowed["state"]=="completed" and len(seen)==1
+    assert allowed["result"]["runtime_event_id"]=="evt"
+
+
+def test_observation_becomes_unavailable_after_reservation_before_dispatch(tmp_path,monkeypatch):
+    config,runs=setup(tmp_path)
+    original=config.observations
+    checks=[]
+    def observations():
+        checks.append(1)
+        if len(checks)==2:
+            config.observe("connection","openclaw","unavailable","Changed")
+        return original()
+    monkeypatch.setattr(config,"observations",observations)
+    seen=[]
+    result=runs.run(agent_id="existingOpenClaw",task_id="stale-race",resource_id="report",
+                    purpose="generate_text",prompt="Bounded",dispatch=lambda *_:seen.append(1))
+    assert result["state"]=="failed" and not seen

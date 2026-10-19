@@ -32,7 +32,7 @@
 <label>Intended permission <select name="permission"><option>hosts</option><option>proposes</option><option>executor-host</option></select></label><button>Record unconfirmed relationship</button></form>
 <p>These links do not change OS filesystem permissions or certify an installation ID.</p></section>
 <section class="panel"><h2>Governed local inference</h2>
-<p>Verity gates requests submitted here against the selected agent's primary model and allowed purpose before contacting a loopback OpenClaw endpoint. This does not prevent direct calls to OpenClaw or same-user access outside Verity.</p>
+<p>Verity gates requests submitted here against the selected agent's primary model and allowed purpose before contacting a loopback OpenClaw endpoint. Known unavailable or stale local connection health blocks this route until rechecked. A health response does not prove model readiness. A connection never checked by this feature remains legacy-allowed. This does not prevent direct calls to OpenClaw or same-user access outside Verity.</p>
 <form method="post" action="/configuration/inference"><input type="hidden" name="operator_token" value="{{ operator_token }}">
 <label>Agent ID <input name="agent_id" required></label><label>Unique task ID <input name="task_id" required></label>
 <label>Configured resource ID <input name="resource_id" required></label><label>Session ID (required when capped) <input name="session_id" value=""></label>

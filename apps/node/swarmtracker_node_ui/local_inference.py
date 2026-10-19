@@ -50,8 +50,11 @@ class LocalInference:
             raise ValueError("Invalid requested model")
         cfg = self.configuration.effective(agent_id, resource_id)
         connection = self.configuration.latest("connection", cfg["connection_id"])
+        observation = self.configuration.observations().get(("connection",cfg["connection_id"]))
         reason = None
-        if self.configuration.connection_disabled(cfg["connection_id"]):
+        if observation and observation["state"] != "reachable":
+            reason = "Local connection observation is unavailable or stale; recheck before dispatch"
+        elif self.configuration.connection_disabled(cfg["connection_id"]):
             reason = "Primary model connection was disabled by the operator"
         elif purpose not in cfg["allowed_tools"]:
             reason = "Purpose denied by agent configuration"
@@ -101,6 +104,9 @@ class LocalInference:
         # The reservation is durable before dispatch. A crash leaves it visibly
         # reserved; the same task ID cannot be dispatched again silently.
         try:
+            current_observation = self.configuration.observations().get(("connection",cfg["connection_id"]))
+            if current_observation and current_observation["state"] != "reachable":
+                raise ValueError("Local connection observation changed before dispatch")
             if self.configuration.connection_disabled(cfg["connection_id"]):
                 raise ValueError("Primary model connection disabled before dispatch")
             if self.configuration.effective(agent_id, resource_id) != cfg:

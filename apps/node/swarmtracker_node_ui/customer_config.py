@@ -35,6 +35,7 @@ class CustomerConfig:
         with self._db() as db:
             db.execute("CREATE TABLE IF NOT EXISTS versions (kind TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, digest TEXT NOT NULL, body TEXT NOT NULL, at REAL NOT NULL, PRIMARY KEY(kind,id,version))")
             db.execute("CREATE TABLE IF NOT EXISTS observations (kind TEXT NOT NULL, id TEXT NOT NULL, at REAL NOT NULL, state TEXT NOT NULL, detail TEXT NOT NULL, PRIMARY KEY(kind,id))")
+            db.execute("CREATE TABLE IF NOT EXISTS disabled_connections (id TEXT PRIMARY KEY, at REAL NOT NULL, reason TEXT NOT NULL)")
 
     def _db(self):
         db=sqlite3.connect(self.path,timeout=10)
@@ -43,6 +44,8 @@ class CustomerConfig:
 
     def save(self, kind, identifier, body):
         label(identifier)
+        if kind=="connection" and self.connection_disabled(identifier):
+            raise ValueError("Disabled connection IDs cannot be reused")
         if kind not in {"machine","connection","agent","resource","link"} or not isinstance(body,dict):
             raise ValueError("Unsupported configuration")
         if kind=="connection":
@@ -105,6 +108,21 @@ class CustomerConfig:
             version=row[0]
             db.execute("INSERT INTO versions VALUES (?,?,?,?,?,?)",(kind,identifier,version,digest,raw,time.time()))
         return self.latest(kind,identifier)
+
+    def disable_connection(self, identifier, reason="Operator removed model connection"):
+        label(identifier)
+        _text(reason, 300)
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if not db.execute("SELECT 1 FROM versions WHERE kind='connection' AND id=?", (identifier,)).fetchone():
+                raise ValueError("Unknown connection")
+            db.execute("INSERT OR IGNORE INTO disabled_connections VALUES (?,?,?)", (identifier, time.time(), reason))
+        return self.connection_disabled(identifier)
+
+    def connection_disabled(self, identifier):
+        with self._db() as db:
+            row = db.execute("SELECT at,reason FROM disabled_connections WHERE id=?", (identifier,)).fetchone()
+        return dict(row) if row else None
 
     def latest(self,kind,identifier):
         with self._db() as db:

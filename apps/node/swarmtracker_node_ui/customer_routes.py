@@ -19,7 +19,8 @@ def install(app,render,base_ctx):
     def page(request:Request):
         decision_routes.local_request(request)
         db=database();ctx=base_ctx(request,"configuration")
-        ctx.update(configurations=db.all(),observations=db.observations(),operator_token=decision_routes.TOKEN,
+        ctx.update(configurations=db.all(),observations=db.observations(),
+                   disabled_connections={item["id"]:db.connection_disabled(item["id"]) for item in db.all() if item["kind"]=="connection"},operator_token=decision_routes.TOKEN,
                    inference_runs=LocalInference(store.DB_PATH.with_name("local-inference.db"),db).recent())
         response=render("customer_configuration.html",ctx)
         response.headers["Cache-Control"]="no-store"
@@ -69,11 +70,21 @@ def install(app,render,base_ctx):
             raise HTTPException(422,"Inference configuration invalid") from None
         return JSONResponse(run,headers={"Cache-Control":"no-store"})
 
+    @app.post("/configuration/connections/{identifier}/disable")
+    async def disable(request:Request, identifier:str):
+        await decision_routes.operator_form(request)
+        try:
+            database().disable_connection(identifier)
+        except ValueError:
+            raise HTTPException(422, "Connection removal refused") from None
+        return RedirectResponse("/configuration",status_code=303)
+
     @app.post("/configuration/connections/{identifier}/check")
     async def check(request:Request,identifier:str):
         await decision_routes.operator_form(request)
         db=database();entry=db.latest("connection",identifier)
         if not entry:raise HTTPException(404,"Unknown connection")
+        if db.connection_disabled(identifier):raise HTTPException(409,"Connection was disabled")
         if entry["body"]["scope"]=="external":
             db.observe("connection",identifier,"unknown","External endpoint was not contacted; per-job data-sharing authorization and protected credentials are required")
         else:

@@ -7,7 +7,9 @@
 {% for item in configurations if item.kind == 'connection' %}
 <article class="card"><strong>{{ item.id }} v{{ item.version }}</strong> · {{ item.body.provider }} / {{ item.body.model }} · revision {{ item.body.revision or 'unknown' }} · {{ item.body.scope }}<br><code>{{ item.body.endpoint }}</code><br>Configuration SHA-256 <code>{{ item.digest }}</code>
 {% set observation=observations.get(('connection',item.id)) %}
+<p>Routing: {{ 'disabled permanently' if disabled_connections.get(item.id) else 'eligible for policy checks' }}</p>
 <p>Connection: {{ observation.state if observation else 'unknown' }} · {{ observation.detail if observation else 'Not checked' }}{% if observation %} · observed {{ observation.at }}{% endif %}</p>
+{% if not disabled_connections.get(item.id) %}<form method="post" action="/configuration/connections/{{ item.id }}/disable"><input type="hidden" name="operator_token" value="{{ operator_token }}"><button>Disable connection</button></form>{% endif %}
 <form method="post" action="/configuration/connections/{{ item.id }}/check"><input type="hidden" name="operator_token" value="{{ operator_token }}"><button>Check connection</button></form></article>
 {% endfor %}
 <form method="post" action="/configuration"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="kind" value="connection">

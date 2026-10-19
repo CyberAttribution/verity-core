@@ -88,3 +88,48 @@ def test_native_endpoint_records_denial_without_runtime(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json()["state"] == "denied"
     assert "denied-ui" in client.get("/configuration").text
+
+
+def test_disabled_connection_denies_before_dispatch_and_preserves_history(tmp_path):
+    config, runs = setup(tmp_path)
+    old = config.latest("connection", "openclaw")
+    disabled = config.disable_connection("openclaw")
+    assert disabled["reason"] == "Operator removed model connection"
+    assert config.latest("connection", "openclaw") == old
+    seen = []
+    result = runs.run(agent_id="existingOpenClaw", task_id="disabled-01", resource_id="report",
+                      purpose="generate_text", prompt="Bounded", dispatch=lambda *_: seen.append(1))
+    assert result["state"] == "denied" and result["decision"] == "denied" and not seen
+    assert LocalInference(tmp_path / "runs.db", config).recent()[0]["state"] == "denied"
+    with pytest.raises(ValueError):
+        config.save("connection", "openclaw", old["body"])
+
+
+def test_connection_disabled_after_reservation_fails_without_dispatch(tmp_path, monkeypatch):
+    config, runs = setup(tmp_path)
+    original = config.connection_disabled
+    checks = []
+    def disabled(identifier):
+        checks.append(identifier)
+        if len(checks) == 2:
+            config.disable_connection(identifier)
+        return original(identifier)
+    monkeypatch.setattr(config, "connection_disabled", disabled)
+    seen = []
+    result = runs.run(agent_id="existingOpenClaw", task_id="disabled-race-01", resource_id="report",
+                      purpose="generate_text", prompt="Bounded", dispatch=lambda *_: seen.append(1))
+    assert result["state"] == "failed" and not seen
+
+
+def test_operator_can_disable_connection_in_configuration_page(tmp_path, monkeypatch):
+    from swarmtracker_node_ui import app as ui, decision_routes, store
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "profile.db")
+    config, _ = setup(tmp_path)
+    client = TestClient(ui.app, base_url="http://127.0.0.1")
+    response = client.post("/configuration/connections/openclaw/disable",
+                           data={"operator_token": decision_routes.TOKEN}, follow_redirects=False)
+    assert response.status_code == 303
+    assert config.connection_disabled("openclaw")
+    assert "disabled permanently" in client.get("/configuration").text
+    assert client.post("/configuration/connections/openclaw/check",
+                       data={"operator_token": decision_routes.TOKEN}).status_code == 409

@@ -49,7 +49,9 @@ class LocalInference:
         cfg = self.configuration.effective(agent_id, resource_id)
         connection = self.configuration.latest("connection", cfg["connection_id"])
         reason = None
-        if purpose not in cfg["allowed_tools"]:
+        if self.configuration.connection_disabled(cfg["connection_id"]):
+            reason = "Primary model connection was disabled by the operator"
+        elif purpose not in cfg["allowed_tools"]:
             reason = "Purpose denied by agent configuration"
         elif requested_model and requested_model != cfg["model"]:
             reason = "Requested model differs from primary model; fallback is not enabled"
@@ -76,6 +78,8 @@ class LocalInference:
         # The reservation is durable before dispatch. A crash leaves it visibly
         # reserved; the same task ID cannot be dispatched again silently.
         try:
+            if self.configuration.connection_disabled(cfg["connection_id"]):
+                raise ValueError("Primary model connection disabled before dispatch")
             if self.configuration.effective(agent_id, resource_id) != cfg:
                 raise ValueError("Effective configuration changed before dispatch")
             result = (dispatch or self._dispatch)(cfg, prompt, purpose)

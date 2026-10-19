@@ -1,6 +1,6 @@
 # B08 bounded research trace — Docker Hub credential ownership
 
-Status: source-linked research and governed local agent demonstration; the company work view is not yet integrated. No operator decision to build a feature has been recorded.
+Status: source-linked research and governed local agent demonstration. Company Research, Agents, Governance and Sessions now show the same staged record. No operator decision to build a feature has been recorded.
 
 | Stage | Record |
 | --- | --- |
@@ -9,7 +9,7 @@ Status: source-linked research and governed local agent demonstration; the compa
 | Review decision | Assistant source review accepted the two Docker claims as consistent with Docker's advisory. The earlier Lambda Qwen proposal to add personal-token ownership verification was rejected as unsupported product scope. The operator's company decision is pending. |
 | Assigned research check | Inspect the current Verity model connection schema for a credential ownership-transfer path. This is a read-only development check, not approval of a product feature. |
 | Observed work | `customer_config.py` stores only `credential_ref` values `none` or `separately-managed`. A source search found no model-connection credential ownership-transfer operation in that module or the new enrollment module. |
-| Verified result | No credential transfer is implemented in this slice. Further design would require an actual identity/credential adapter and explicit owner consent, revocation and usage evidence. B08's Agents, Governance, Sessions and company-record alignment remains open. |
+| Read-only source check | No credential transfer was found in the inspected modules. This check does not count as an assigned company task or verified product result. Further design requires an actual identity/credential adapter and explicit owner consent, revocation and usage evidence. |
 
 The private request and complete result records are `b08-governed-brief.json` SHA-256 `ef14a53330c895909d772afd51b8068aab9afa9f99ccf58e63c3e74a30ec03bd` and `b08-governed-implication.json` SHA-256 `b7c5442f7bfc60e3a4f35f7e55e3190642d220e136155fd86bf8ecea804938d0` in the Mac mini disposable profile and the MacBook private-evidence directory. Runtime event IDs `61f786b5-d2c3-491d-9223-94b4b8634df5` and `4d96e17d-21cb-4892-83ad-d49dae2ec783` each matched one OpenClaw log event by model, response hash, allowed decision, `done=True`, and `generate_text` purpose. These are independently checked local records, not authenticated runtime identity or a provider-side audit.
 
@@ -18,3 +18,9 @@ The private request and complete result records are `b08-governed-brief.json` SH
 Commit `0e8b2f866cebb8c509d88fafc62b25ff41587707` adds a local Company Research record with source claim, completed governed interpretation and separate pending decision/task/work/result fields. It appears on Company Research and as a consistent summary in Agents, Governance and Sessions; it does not assert that a model completion is a decision. Import is internal and read-only UI, with no decision mutation route. It stores a reduced effective-configuration identity, not the request prompt or credentials.
 
 A real `b08-docker-brief-01` Verity run was imported into `/Users/swarmtracker/swarmtracker-pilot-tests/2026-10-18-inference/company-work.db` in a disposable Mac mini profile. `company-work-acceptance.json` SHA-256 `f1b958cb63edbeed9a2f89328357a664602eef96aa3beae1709d276ed2f6aeea` matches the MacBook private copy. The Mac mini HTTP checks returned 200 and the record ID on `/company-work`, `/agents`, `/governance`, and `/sessions`. The full source suite passed **811 tests, 2 skipped**. Source verification still relies on independent review of Docker's advisory; the runtime event ID is reported by OpenClaw, with independent acceptance log comparison. Operator decision, assigned task, observed work and verified result remain pending; B08 is partial.
+
+## Extra-hour staged workflow
+
+Commits `c13a7d1`, `1600ef9` and `ca9fea0` add explicit local operator decision, assignment and observed Git commit stages, each gated on the preceding stage. The verified-result stage remains empty because Git object existence does not establish task relevance or passing acceptance. The original Docker record is still pending. A disposable **copy** was approved, assigned and linked to a real local source commit as a UI fixture; it is not a company decision. All four views showed the fixture commit after `ca9fea0`. `company-commit-acceptance.json` SHA-256 `0736fa200cf3c2eab6d609d7be1a4c72e6a450d6e135bb1e96016666ec86fe58` was independently hash-matched between Macs.
+
+Next: an actual operator decision on the Docker research proposal, then an assigned task with observed work related to that decision and independent test/result evidence. B02's same-user bypass remains open and prevents a non-bypass governance claim.

@@ -68,10 +68,12 @@ class CustomerConfig:
                 raise ValueError("Secrets cannot be entered in configuration")
         elif kind=="agent":
             required={"connection_id","instructions","allowed_tools","resources","external_sharing","fallback_id"}
-            if set(body) not in (required,required|{"daily_request_limit"}):
+            if not required <= set(body) or set(body)-required-{"daily_request_limit","session_request_limit"}:
                 raise ValueError("Invalid agent fields")
             if "daily_request_limit" in body and (type(body["daily_request_limit"]) is not int or not 0<=body["daily_request_limit"]<=10000):
                 raise ValueError("Daily request limit must be 0 to 10000; zero is unlimited")
+            if "session_request_limit" in body and (type(body["session_request_limit"]) is not int or not 0<=body["session_request_limit"]<=10000):
+                raise ValueError("Session request limit must be 0 to 10000; zero is unlimited")
             label(body["connection_id"])
             _text(body["instructions"],2000)
             if body["fallback_id"]:label(body["fallback_id"])
@@ -179,6 +181,7 @@ class CustomerConfig:
                 "executor_id":"verity-report-broker",
                 "resource_id":resource_id,"resource_version":resource["version"],"resource_hash":resource["digest"],
                 "provenance":"operator-entered; capabilities and host identity unconfirmed"}
-        if "daily_request_limit" in agent["body"]:
-            result["daily_request_limit"]=agent["body"]["daily_request_limit"]
+        for key in ("daily_request_limit","session_request_limit"):
+            if key in agent["body"]:
+                result[key]=agent["body"][key]
         return result

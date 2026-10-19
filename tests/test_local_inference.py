@@ -83,7 +83,7 @@ def test_native_endpoint_records_denial_without_runtime(tmp_path, monkeypatch):
     client = TestClient(ui.app, base_url="http://127.0.0.1")
     form = dict(operator_token=decision_routes.TOKEN, agent_id="existingOpenClaw",
                 task_id="denied-ui", resource_id="report", purpose="draft_text",
-                prompt="Please draft", requested_model="")
+                prompt="Please draft", requested_model="", session_id="")
     response = client.post("/configuration/inference", data=form)
     assert response.status_code == 200
     assert response.json()["state"] == "denied"
@@ -161,3 +161,32 @@ def test_daily_agent_cap_is_atomic_durable_and_versioned(tmp_path):
     assert config.latest("agent","existingOpenClaw")["version"]==2
     with pytest.raises(ValueError):
         config.save("agent","existingOpenClaw",dict(agent,daily_request_limit=-1))
+
+
+def test_session_cap_survives_restart_and_serializes_concurrent_reservations(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    config,runs=setup(tmp_path)
+    agent=config.latest("agent","existingOpenClaw")["body"]
+    config.save("agent","existingOpenClaw",dict(agent,session_request_limit=1))
+    seen=[]
+    def dispatch(cfg,prompt,purpose):
+        seen.append(prompt)
+        return dict(model=cfg["model"],response="Complete",id="evt-"+prompt,decision="allowed",done=True)
+    def run(i,session):
+        return runs.run(agent_id="existingOpenClaw",task_id="session-"+str(i),resource_id="report",
+                        purpose="generate_text",prompt=str(i),session_id=session,dispatch=dispatch)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes=list(pool.map(lambda i:run(i,"bounded-01"),(1,2)))
+    assert sorted(x["state"] for x in outcomes)==["completed","denied"]
+    assert len(seen)==1
+    assert "Session agent request cap" in next(x["reason"] for x in outcomes if x["state"]=="denied")
+    restarted=LocalInference(tmp_path/"runs.db",config)
+    assert restarted.run(agent_id="existingOpenClaw",task_id="session-3",resource_id="report",
+                         purpose="generate_text",prompt="3",session_id="bounded-01",dispatch=dispatch)["state"]=="denied"
+    assert restarted.run(agent_id="existingOpenClaw",task_id="session-4",resource_id="report",
+                         purpose="generate_text",prompt="4",dispatch=dispatch)["state"]=="denied"
+    assert run(5,"bounded-02")["state"]=="completed"
+    assert len(seen)==2
+    assert config.effective("existingOpenClaw","report")["session_request_limit"]==1
+    with pytest.raises(ValueError):
+        config.save("agent","existingOpenClaw",dict(agent,session_request_limit=-1))

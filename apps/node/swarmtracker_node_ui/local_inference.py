@@ -38,8 +38,10 @@ class LocalInference:
                 "SELECT record FROM runs ORDER BY at DESC LIMIT 30")]
 
     def run(self, *, agent_id, task_id, resource_id, purpose, prompt,
-            requested_model="", dispatch=None):
+            requested_model="", session_id="", dispatch=None):
         label(agent_id); label(task_id); label(resource_id)
+        if session_id:
+            label(session_id)
         if purpose not in {"generate_text", "draft_text"}:
             raise ValueError("Unsupported purpose")
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 4000:
@@ -63,7 +65,7 @@ class LocalInference:
             reason = "OpenClaw endpoint must be loopback"
         rid = str(uuid.uuid4())
         record = dict(id=rid, task_id=task_id, at=time.time(), agent_id=agent_id,
-                      purpose=purpose, resource_id=resource_id, decision="denied" if reason else "allowed",
+                      purpose=purpose, resource_id=resource_id, session_id=session_id or None, decision="denied" if reason else "allowed",
                       state="denied" if reason else "reserved", reason=reason,
                       prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest(),
                       model=cfg["model"], model_revision=cfg["model_revision"],
@@ -77,6 +79,19 @@ class LocalInference:
                                    (agent_id,day_start,day_start+86400)).fetchone()[0]
                 if count >= limit:
                     reason = "Daily agent request cap reached before dispatch"
+                    record.update(decision="denied",state="denied",reason=reason)
+            session_limit = cfg.get("session_request_limit",0)
+            if not reason and session_limit:
+                if not session_id:
+                    reason = "Session ID required by agent request cap"
+                else:
+                    # Count old and new records through JSON to preserve the
+                    # existing on-disk schema. The transaction serializes reservations.
+                    rows = db.execute("SELECT record FROM runs WHERE agent_id=? AND decision='allowed'",(agent_id,))
+                    count = sum(json.loads(row[0]).get("session_id")==session_id for row in rows)
+                    if count >= session_limit:
+                        reason = "Session agent request cap reached before dispatch"
+                if reason:
                     record.update(decision="denied",state="denied",reason=reason)
             db.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?)",
                        (rid, task_id, record["at"], agent_id, purpose, record["decision"],

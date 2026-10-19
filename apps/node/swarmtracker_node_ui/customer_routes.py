@@ -39,7 +39,8 @@ def install(app,render,base_ctx):
                           allowed_tools=[x.strip() for x in form.get("allowed_tools","").split(",") if x.strip()],
                           resources=[x.strip() for x in form.get("resources","").split(",") if x.strip()],
                           external_sharing=form.get("external_sharing","none"),fallback_id=form.get("fallback_id","").strip(),
-                          daily_request_limit=int(form.get("daily_request_limit","20")))
+                          daily_request_limit=int(form.get("daily_request_limit","20")),
+                          session_request_limit=int(form.get("session_request_limit","0")))
             elif kind in ("machine","resource"):
                 body=dict(description=form.get("description",""),provenance="operator-entered",status="unknown")
             elif kind=="link":
@@ -58,13 +59,14 @@ def install(app,render,base_ctx):
         if not request.client or request.client.host not in ("127.0.0.1","::1","testclient"):
             raise HTTPException(403,"Loopback peer required")
         form=await decision_routes.operator_form(request)
-        if set(form)!={"operator_token","agent_id","task_id","resource_id","purpose","prompt","requested_model"}:
+        required={"operator_token","agent_id","task_id","resource_id","purpose","prompt","requested_model"}
+        if set(form) not in (required,required|{"session_id"}):
             raise HTTPException(422,"Exact inference fields required")
         try:
             run=LocalInference(store.DB_PATH.with_name("local-inference.db"),database()).run(
                 agent_id=form["agent_id"],task_id=form["task_id"],
                 resource_id=form["resource_id"],purpose=form["purpose"],
-                prompt=form["prompt"],requested_model=form["requested_model"])
+                prompt=form["prompt"],requested_model=form["requested_model"],session_id=form.get("session_id", ""))
         except sqlite3.IntegrityError:
             raise HTTPException(409,"Task ID already recorded") from None
         except (ValueError,KeyError):

@@ -64,10 +64,12 @@ def validate(manifest):
                   "external_sharing","fallback_id","fallback_version","resource_id","resource_version",
                   "resource_hash","provenance","machine_id","machine_version","machine_hash","executor_id"}
         expanded={"instructions","resources","fallback_model","fallback_revision"}
-        if not isinstance(cfg,dict) or set(cfg) not in (required,required|expanded,required|{"daily_request_limit"},required|expanded|{"daily_request_limit"}) or cfg["agent_id"]!=manifest["agent_id"] or cfg["model"]!=manifest["model"] or cfg["provider"]!=manifest["provider"] or cfg["resource_id"]!=TARGET or cfg["executor_id"]!="verity-report-broker":
+        if not isinstance(cfg,dict) or not required <= set(cfg) or set(cfg)-required-expanded-{"daily_request_limit","session_request_limit"} or cfg["agent_id"]!=manifest["agent_id"] or cfg["model"]!=manifest["model"] or cfg["provider"]!=manifest["provider"] or cfg["resource_id"]!=TARGET or cfg["executor_id"]!="verity-report-broker":
             raise ValueError("Action configuration mismatch")
         if "daily_request_limit" in cfg and (type(cfg["daily_request_limit"]) is not int or not 0<=cfg["daily_request_limit"]<=10000):
             raise ValueError("Invalid daily request cap")
+        if "session_request_limit" in cfg and (type(cfg["session_request_limit"]) is not int or not 0<=cfg["session_request_limit"]<=10000):
+            raise ValueError("Invalid session request cap")
         if any(type(cfg[k]) is not int or cfg[k]<1 for k in ("agent_version","connection_version","resource_version")):
             raise ValueError("Invalid configuration version")
         for k in ("agent_hash","connection_hash","resource_hash","instructions_sha256"):

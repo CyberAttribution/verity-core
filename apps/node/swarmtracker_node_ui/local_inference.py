@@ -126,8 +126,7 @@ class LocalInference:
                 raise ValueError("Runtime model identity missing or mismatched")
             if result.get("decision") not in ("allowed", "allow") or result.get("governance_failures"):
                 raise ValueError("Runtime did not report an allowed decision")
-            if not isinstance(result.get("event_id") or result.get("id"), str):
-                raise ValueError("Runtime event identity missing")
+            label(result.get("event_id") or result.get("id"))
             body = result.get("response")
             if not isinstance(body, str) or not body.strip() or len(body) > 20000:
                 raise ValueError("Runtime result empty, incomplete, or oversized")

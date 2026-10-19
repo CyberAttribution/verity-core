@@ -408,3 +408,11 @@ def test_runtime_http_envelope_is_bounded_before_completion(tmp_path,case):
         if case!="valid":assert observed["result"] is None
     finally:
         server.shutdown();server.server_close();thread.join(timeout=2)
+
+
+@pytest.mark.parametrize("event_id", ["", "   ", "bad\nid", "x"*161])
+def test_runtime_event_identity_must_be_a_bounded_identifier(tmp_path,event_id):
+    config,runs=setup(tmp_path)
+    result=runs.run(agent_id="existingOpenClaw",task_id="bad-runtime-event",resource_id="report",purpose="generate_text",prompt="Bounded",dispatch=lambda cfg,*_:dict(model=cfg["model"],response="Complete",id=event_id,decision="allowed",done=True))
+    assert result["state"]=="failed" and result["result"] is None
+    assert LocalInference(tmp_path/"runs.db",config).recent()[0]["state"]=="failed"

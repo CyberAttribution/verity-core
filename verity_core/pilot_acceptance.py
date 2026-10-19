@@ -45,7 +45,7 @@ def validate_acceptance(*, invitation, user, expected_invitation_id, expected_em
     accepted = _timestamp(invitation.get("accepted_at"))
     expires = _timestamp(invitation.get("expires_at"))
     current = datetime.now(timezone.utc) if now is None else now
-    if current.tzinfo is None or accepted > expires or accepted > current or current > expires:
+    if current.tzinfo is None or accepted >= expires or accepted > current or current >= expires:
         raise ValueError("Invitation acceptance expired or inconsistent")
     if not isinstance(name, str) or not name.strip() or len(name) > 160 or "\x00" in name:
         raise ValueError("Name is required")

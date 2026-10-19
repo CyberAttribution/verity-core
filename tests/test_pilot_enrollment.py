@@ -274,3 +274,12 @@ def test_old_revocation_store_migrates_uncertainty_column(tmp_path):
         db.execute("INSERT INTO invitation_revocations VALUES ('old-invite',1,'Old reason',0)")
     migrated=EnrollmentStore(path).revocation('old-invite')
     assert migrated['reason']=='Old reason' and migrated['export_status_uncertain']==0
+
+
+def test_enrollment_acceptance_expiry_does_not_mutate_pending_state(tmp_path):
+    store=EnrollmentStore(tmp_path/"enroll.db");invite,user=records()
+    store.prepare("invite-test","pilot@example.com",invite["expires_at"],now=NOW.timestamp())
+    expiry=datetime.fromisoformat(invite["expires_at"])
+    with pytest.raises(ValueError,match="expired"):
+        store.accept("invite-test",invite,user,"Pilot",now=expiry)
+    assert store.get("invite-test")["state"]=="pending"

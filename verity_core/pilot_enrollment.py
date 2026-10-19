@@ -92,7 +92,7 @@ class EnrollmentStore:
             row = db.execute("SELECT * FROM invitations WHERE id=?", (invitation_id,)).fetchone()
             if not row or row["state"] != "pending":
                 raise EnrollmentConflict("Unknown or already accepted invitation")
-            if current.timestamp() > row["expires_at"]:
+            if current.timestamp() >= row["expires_at"]:
                 raise ValueError("Pending invitation expired")
             candidate = validate_acceptance(invitation=invitation, user=user,
                 expected_invitation_id=invitation_id, expected_email=row["email"],

@@ -35,3 +35,16 @@ def test_other_recipient_unverified_reused_expired_and_missing_name_fail():
         change(invitation, user, expected)
         with pytest.raises(ValueError):
             validate_acceptance(invitation=invitation, user=user, **expected)
+
+
+@pytest.mark.parametrize("offset", [-1, 0, 1])
+def test_acceptance_is_expired_at_its_expiration_instant(offset):
+    invitation,user,expected=sample()
+    expiry=NOW+timedelta(hours=1)
+    invitation["expires_at"]=expiry.isoformat()
+    expected["now"]=expiry+timedelta(microseconds=offset)
+    if offset<0:
+        assert validate_acceptance(invitation=invitation,user=user,**expected)["email_verified"]
+    else:
+        with pytest.raises(ValueError,match="expired"):
+            validate_acceptance(invitation=invitation,user=user,**expected)

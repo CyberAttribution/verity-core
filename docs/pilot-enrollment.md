@@ -127,6 +127,13 @@ replacement of unfinished issuances are refused. Replacement does not disable
 the old code. The old code remains valid until its signed expiry or until that
 installation imports a signed revocation list covering it.
 
+The administrator registry refuses initial issuance and retry-export for an ID
+already in its latest issued cumulative revocation list. A list committed after
+reservation but before file export is rechecked under the export write lock.
+A resumed enrollment confirmation holds that registry lock through its local
+confirmation commit. Existing artifacts and historical reconciliation remain
+visible; these local gates do not push revocation to installations.
+
 ## Offline revocation boundaries
 
 Use the existing pilot_entitlement.py revoke command to produce a signed
@@ -154,3 +161,9 @@ VERITY_READONLY_RUNTIME_LEDGER can point the pilot at that existing log for
 read-only participant observation. Pilot databases and activation state stay in
 the separate data directory. Do not replace the original application or point
 the pilot's writable data home at the original installation.
+
+
+Invitation expiration is exclusive: acceptance at or after expires_at is refused,
+consistent with installation binding and entitlement issuance. An expired attempt
+leaves a pending enrollment unchanged; obtaining a fresh invitation remains a
+separate administrator action.

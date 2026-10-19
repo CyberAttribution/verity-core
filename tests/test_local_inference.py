@@ -228,3 +228,18 @@ def test_observation_becomes_unavailable_after_reservation_before_dispatch(tmp_p
     result=runs.run(agent_id="existingOpenClaw",task_id="stale-race",resource_id="report",
                     purpose="generate_text",prompt="Bounded",dispatch=lambda *_:seen.append(1))
     assert result["state"]=="failed" and not seen
+
+
+def test_remote_peer_with_spoofed_loopback_host_cannot_read_or_change_configuration(tmp_path,monkeypatch):
+    from swarmtracker_node_ui import app as ui, decision_routes, store
+    monkeypatch.setattr(store,"DB_PATH",tmp_path/"profile.db")
+    config,_=setup(tmp_path)
+    remote=TestClient(ui.app,base_url="http://127.0.0.1",client=("203.0.113.15",43700))
+    assert remote.get("/configuration").status_code==403
+    assert remote.post("/configuration/connections/openclaw/disable",
+         data=dict(operator_token=decision_routes.TOKEN)).status_code==403
+    assert remote.post("/configuration/inference",
+         data=dict(operator_token=decision_routes.TOKEN,agent_id="existingOpenClaw",
+                   task_id="remote-01",resource_id="report",purpose="generate_text",
+                   prompt="Attempt",requested_model="",session_id="")).status_code==403
+    assert not config.connection_disabled("openclaw")

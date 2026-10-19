@@ -11,10 +11,17 @@ def database():
     return CompanyWorkStore(store.DB_PATH.with_name("company-work.db"))
 
 
+def local_peer(request):
+    decision_routes.local_request(request)
+    if not request.client or request.client.host not in ("127.0.0.1","::1","testclient"):
+        raise HTTPException(403,"Loopback peer required")
+
+
+
 def install(app,render,base_ctx):
     @app.get("/company-work")
     def page(request:Request):
-        decision_routes.local_request(request)
+        local_peer(request)
         ctx=base_ctx(request,"company_work")
         ctx["company_work_records"]=database().recent()
         ctx["operator_token"]=decision_routes.TOKEN
@@ -24,6 +31,7 @@ def install(app,render,base_ctx):
 
     @app.post("/company-work/{work_id}/decision")
     async def decide(request:Request,work_id:str):
+        local_peer(request)
         form=await decision_routes.operator_form(request)
         if set(form)!={"operator_token","state","detail"}:
             raise HTTPException(422,"Exact decision fields required")
@@ -39,6 +47,7 @@ def install(app,render,base_ctx):
 
     @app.post("/company-work/{work_id}/assignment")
     async def assign(request:Request,work_id:str):
+        local_peer(request)
         form=await decision_routes.operator_form(request)
         if set(form)!={"operator_token","task_id","assignee"}:
             raise HTTPException(422,"Exact assignment fields required")
@@ -54,6 +63,7 @@ def install(app,render,base_ctx):
 
     @app.post("/company-work/{work_id}/commit")
     async def observe_commit(request:Request,work_id:str):
+        local_peer(request)
         form=await decision_routes.operator_form(request)
         if set(form)!={"operator_token","commit_sha"}:
             raise HTTPException(422,"Exact commit observation fields required")

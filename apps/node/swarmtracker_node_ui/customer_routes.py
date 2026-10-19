@@ -14,10 +14,16 @@ def database():
     return CustomerConfig(store.DB_PATH.with_name("customer-config.db"))
 
 
+def local_peer(request):
+    decision_routes.local_request(request)
+    if not request.client or request.client.host not in ("127.0.0.1","::1","testclient"):
+        raise HTTPException(403,"Loopback peer required")
+
+
 def install(app,render,base_ctx):
     @app.get("/configuration")
     def page(request:Request):
-        decision_routes.local_request(request)
+        local_peer(request)
         db=database();ctx=base_ctx(request,"configuration")
         ctx.update(configurations=db.all(),observations=db.observations(),
                    disabled_connections={item["id"]:db.connection_disabled(item["id"]) for item in db.all() if item["kind"]=="connection"},operator_token=decision_routes.TOKEN,
@@ -28,6 +34,7 @@ def install(app,render,base_ctx):
 
     @app.post("/configuration")
     async def save(request:Request):
+        local_peer(request)
         form=await decision_routes.operator_form(request)
         kind=form.get("kind","");identifier=form.get("id","")
         try:
@@ -55,9 +62,7 @@ def install(app,render,base_ctx):
 
     @app.post("/configuration/inference")
     async def inference(request:Request):
-        decision_routes.local_request(request)
-        if not request.client or request.client.host not in ("127.0.0.1","::1","testclient"):
-            raise HTTPException(403,"Loopback peer required")
+        local_peer(request)
         form=await decision_routes.operator_form(request)
         required={"operator_token","agent_id","task_id","resource_id","purpose","prompt","requested_model"}
         if set(form) not in (required,required|{"session_id"}):
@@ -75,6 +80,7 @@ def install(app,render,base_ctx):
 
     @app.post("/configuration/connections/{identifier}/disable")
     async def disable(request:Request, identifier:str):
+        local_peer(request)
         await decision_routes.operator_form(request)
         try:
             database().disable_connection(identifier)
@@ -84,6 +90,7 @@ def install(app,render,base_ctx):
 
     @app.post("/configuration/connections/{identifier}/check")
     async def check(request:Request,identifier:str):
+        local_peer(request)
         await decision_routes.operator_form(request)
         db=database();entry=db.latest("connection",identifier)
         if not entry:raise HTTPException(404,"Unknown connection")

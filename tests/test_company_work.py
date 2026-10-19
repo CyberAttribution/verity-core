@@ -112,3 +112,16 @@ def test_observed_commit_requires_assignment_and_keeps_result_pending(tmp_path):
     with pytest.raises(ValueError):work.observe_commit('docker-brief',commit,root)
     assert [x['action'] for x in work.events('docker-brief')]==[
         'operator_decision','task_assigned','commit_observed']
+
+
+def test_remote_peer_cannot_read_form_token_or_submit_with_loopback_host(tmp_path,monkeypatch):
+    from swarmtracker_node_ui import app as ui, decision_routes, store
+    monkeypatch.setattr(store,'DB_PATH',tmp_path/'profile.db')
+    CompanyWorkStore(tmp_path/'company-work.db').create('docker-brief',
+        'https://www.docker.com/blog/docker-hub-security-advisory-cve-2026-105445/',
+        'Docker reported token owner reassignment.',completed_run())
+    remote=TestClient(ui.app,base_url='http://127.0.0.1',client=('203.0.113.15',43700))
+    assert remote.get('/company-work').status_code==403
+    assert remote.post('/company-work/docker-brief/decision',
+        data=dict(operator_token=decision_routes.TOKEN,state='accepted',detail='Spoofed host')).status_code==403
+    assert CompanyWorkStore(tmp_path/'company-work.db').get('docker-brief')['operator_decision']['state']=='pending'

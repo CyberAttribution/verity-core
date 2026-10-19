@@ -43,7 +43,10 @@ class EnrollmentStore:
                 state TEXT NOT NULL)""")
             db.execute("""CREATE TABLE IF NOT EXISTS invitation_revocations (
                 invitation_id TEXT PRIMARY KEY, at REAL NOT NULL, reason TEXT NOT NULL,
-                exported_code_at_revocation INTEGER NOT NULL)""")
+                exported_code_at_revocation INTEGER NOT NULL,
+                export_status_uncertain INTEGER NOT NULL DEFAULT 0)""")
+            if "export_status_uncertain" not in {r[1] for r in db.execute("PRAGMA table_info(invitation_revocations)")}:
+                db.execute("ALTER TABLE invitation_revocations ADD COLUMN export_status_uncertain INTEGER NOT NULL DEFAULT 0")
 
     def _db(self):
         db = sqlite3.connect(self.path, timeout=10)
@@ -208,8 +211,8 @@ class EnrollmentStore:
             exported=bool(link and link["state"]=="exported")
             uncertain=bool(link and link["state"]=="pending")
             db.execute("UPDATE invitations SET state='revoked' WHERE id=?",(invitation_id,))
-            db.execute("INSERT INTO invitation_revocations VALUES (?,?,?,?)",
-                       (invitation_id,current,reason.strip(),int(exported)))
+            db.execute("INSERT INTO invitation_revocations VALUES (?,?,?,?,?)",
+                       (invitation_id,current,reason.strip(),int(exported),int(uncertain)))
         return dict(invitation_id=invitation_id,state="revoked",
                     exported_code_at_revocation=exported,
                     offline_revocation_pending=exported or uncertain,

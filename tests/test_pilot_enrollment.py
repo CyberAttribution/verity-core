@@ -242,3 +242,16 @@ def test_revocation_after_uncertain_export_reservation_flags_offline_risk(tmp_pa
     state=store.revoke('invite-uncertain','Unknown export status')
     assert state['export_status_uncertain'] and state['offline_revocation_pending']
     assert not state['exported_code_at_revocation']
+    assert EnrollmentStore(tmp_path/'private/enroll.db').revocation('invite-uncertain')['export_status_uncertain']==1
+
+
+def test_old_revocation_store_migrates_uncertainty_column(tmp_path):
+    import sqlite3
+    path=tmp_path/'private/enroll.db'
+    EnrollmentStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute('DROP TABLE invitation_revocations')
+        db.execute('CREATE TABLE invitation_revocations (invitation_id TEXT PRIMARY KEY, at REAL NOT NULL, reason TEXT NOT NULL, exported_code_at_revocation INTEGER NOT NULL)')
+        db.execute("INSERT INTO invitation_revocations VALUES ('old-invite',1,'Old reason',0)")
+    migrated=EnrollmentStore(path).revocation('old-invite')
+    assert migrated['reason']=='Old reason' and migrated['export_status_uncertain']==0

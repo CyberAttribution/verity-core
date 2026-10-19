@@ -101,5 +101,16 @@ def test_fake_staging_to_signed_code_and_explicit_offline_revocation_gap(tmp_pat
     revoked=enrollment.revoke(sent['id'],'Disposable revocation')
     assert revoked['offline_revocation_pending']
     assert activation.entitlement(code,public,'install_test',time.time())['license_id']=='license_test'
+    # An administrator-signed cumulative list is a separate artifact. The
+    # installation must import and verify it before local offline denial.
+    revoked_claims=dict(schema='verity_pilot_revocations/v1',revision=1,
+                        issued_at=int(time.time()),license_ids=['license_test'])
+    revoked_payload=activation.canonical(revoked_claims)
+    signed_list=activation.encode(revoked_payload)+'.'+activation.encode(key.sign(revoked_payload))
+    list_path=tmp_path/'private/revocations.code';list_path.write_text(signed_list)
+    registry.record_revocations(signed_list,public,list_path)
+    assert registry.status('license_test')['licenses'][0]['revocation_list_issued']
+    assert registry.status()['events'][-1]['data']['installation_import']=='not observed'
+    imported=activation.revocations(signed_list,public,time.time())['license_ids']
     with pytest.raises(ValueError):
-        activation.entitlement(code,public,'install_test',time.time(),['license_test'])
+        activation.entitlement(code,public,'install_test',time.time(),imported)

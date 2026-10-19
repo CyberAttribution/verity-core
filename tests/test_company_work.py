@@ -76,8 +76,14 @@ def test_operator_decision_and_assignment_require_explicit_local_forms(tmp_path,
     assert after['assigned_task']['task_id']=='fix-01'
     assert after['observed_work'] is after['verified_result'] is None
     assert [x['action'] for x in work.events('docker-brief')]==['operator_decision','task_assigned']
+    import subprocess
+    from pathlib import Path
+    sha=subprocess.check_output(['git','-C',str(Path(__file__).resolve().parents[1]),'rev-parse','HEAD'],text=True).strip()
+    assert client.post('/company-work/docker-brief/commit',data=dict(operator_token=token,commit_sha=sha),follow_redirects=False).status_code==303
+    assert work.get('docker-brief')['verified_result'] is None
     for path in ('/company-work','/agents','/governance','/sessions'):
-        assert 'fix-01' in client.get(path).text
+        detail=client.get(path).text
+        assert 'fix-01' in detail and sha in detail
 
 def test_rejected_proposal_cannot_be_assigned(tmp_path):
     work=CompanyWorkStore(tmp_path/'company-work.db')

@@ -1,4 +1,4 @@
 <section class="panel"><div class="panel-head"><h2>Company research</h2><a href="/company-work">Open source-linked records</a></div>
 {% if company_work_error %}<p>Research records are unavailable; no decision inferred.</p>{% endif %}
-{% for work in company_work_summaries %}<p><a href="/company-work">{{ work.id }}</a> · {{ work.agent_interpretation.agent_id }} / {{ work.agent_interpretation.model }} · operator decision {{ work.operator_decision.state }} · assigned task {{ work.assigned_task or 'none' }} · verified result {{ work.verified_result or 'none' }}</p>
+{% for work in company_work_summaries %}<p><a href="/company-work">{{ work.id }}</a> · {{ work.agent_interpretation.agent_id }} / {{ work.agent_interpretation.model }} · operator decision {{ work.operator_decision.state }} · assigned task {{ work.assigned_task or 'none' }} · observed commit {{ work.observed_work.commit_sha if work.observed_work else 'none' }} · verified result {{ work.verified_result or 'none' }}</p>
 {% else %}<p>No governed research has been recorded.</p>{% endfor %}</section>

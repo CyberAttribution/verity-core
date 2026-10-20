@@ -9,7 +9,7 @@
 <article class="card"><strong>{{ item.id }} v{{ item.version }}</strong> · {{ item.body.provider }} / {{ item.body.model }} · revision {{ item.body.revision or 'unknown' }} · {{ item.body.scope }}<br><code>{{ item.body.endpoint }}</code><br>Configuration SHA-256 <code>{{ item.digest }}</code>
 {% set observation=observations.get(('connection',item.id)) %}
 <p>Routing: {{ 'disabled permanently' if disabled_connections.get(item.id) else 'eligible for policy checks' }}</p>
-<p>Connection: {{ observation.state if observation else 'unknown' }} · {{ observation.detail if observation else 'Not checked' }}{% if observation %} · observed {{ observation.at }}{% endif %}</p>
+<p>Connection: {{ observation.state if observation else 'unknown' }} · {{ observation.detail if observation else 'Not checked' }}{% if observation %} · observed {{ observation.at }} · checked configuration v{{ observation.config_version if observation.config_version is not none else 'unknown' }}{% endif %}</p>
 {% set last=last_connection_requests.get(item.id) %}
 {% if last %}<p>Last recorded routed request in the recent 30-request window: <strong>{{ last.task_id }}</strong> · {{ last.state }} · {{ last.model }} / {{ last.model_revision or 'unknown revision' }} · connection v{{ last.configuration.connection_version }}.
 {% if last.configuration.connection_version != item.version %}<strong>Historical connection version; this does not establish current readiness.</strong>{% endif %}

@@ -37,6 +37,13 @@ class CustomerConfig:
             db.execute("CREATE TABLE IF NOT EXISTS versions (kind TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, digest TEXT NOT NULL, body TEXT NOT NULL, at REAL NOT NULL, PRIMARY KEY(kind,id,version))")
             db.execute("CREATE TABLE IF NOT EXISTS observations (kind TEXT NOT NULL, id TEXT NOT NULL, at REAL NOT NULL, state TEXT NOT NULL, detail TEXT NOT NULL, PRIMARY KEY(kind,id))")
             db.execute("CREATE TABLE IF NOT EXISTS disabled_connections (id TEXT PRIMARY KEY, at REAL NOT NULL, reason TEXT NOT NULL)")
+            columns={row[1] for row in db.execute("PRAGMA table_info(observations)")}
+            if not {"config_version", "config_digest"} <= columns:
+                db.execute("BEGIN IMMEDIATE")
+                columns={row[1] for row in db.execute("PRAGMA table_info(observations)")}
+                for name, sql_type in (("config_version", "INTEGER"), ("config_digest", "TEXT")):
+                    if name not in columns:
+                        db.execute(f"ALTER TABLE observations ADD COLUMN {name} {sql_type}")
 
     def _db(self):
         db=sqlite3.connect(self.path,timeout=10)
@@ -195,13 +202,20 @@ class CustomerConfig:
             if (not latest or (expected_digest is not None and latest["digest"] != expected_digest)
                     or (expected_version is not None and latest["version"] != expected_version)):
                 raise ValueError("Configuration changed during health observation; recheck current connection")
-            db.execute("INSERT OR REPLACE INTO observations VALUES (?,?,?,?,?)",(kind,identifier,time.time(),state,_text(detail,300)))
+            db.execute("INSERT OR REPLACE INTO observations (kind,id,at,state,detail,config_version,config_digest) VALUES (?,?,?,?,?,?,?)",
+                       (kind,identifier,time.time(),state,_text(detail,300),latest["version"],latest["digest"]))
 
     def observations(self):
         with self._db() as db:
-            result={(r["kind"],r["id"]):dict(r) for r in db.execute("SELECT * FROM observations")}
+            result={(r["kind"],r["id"]):dict(r) for r in db.execute("""SELECT o.*, v.version AS current_version, v.digest AS current_digest
+                FROM observations o LEFT JOIN versions v ON v.kind=o.kind AND v.id=o.id
+                AND v.version=(SELECT MAX(x.version) FROM versions x WHERE x.kind=o.kind AND x.id=o.id)""")}
         for item in result.values():
-            if item["state"]=="reachable" and time.time()-item["at"]>300:
+            if item["kind"] == "connection" and (item["config_version"] is None
+                    or item["config_version"] != item["current_version"] or item["config_digest"] != item["current_digest"]):
+                item["state"]="unknown"
+                item["detail"]="Health observation lacks the current connection version binding; recheck"
+            elif item["state"]=="reachable" and time.time()-item["at"]>300:
                 item["state"]="stale"
                 item["detail"]="Last health observation is stale; current reachability unknown"
         return result

@@ -169,3 +169,32 @@ def test_health_probe_cannot_commit_for_a_changed_connection(tmp_path, monkeypat
     response = client.post("/configuration/connections/m1OpenClaw/check", data=dict(operator_token=decision_routes.TOKEN))
     assert response.status_code == 409
     assert ("connection", "m1OpenClaw") not in c.observations()
+
+
+def test_legacy_health_rows_are_not_current_connection_evidence(tmp_path):
+    import sqlite3, time
+    path = tmp_path / "customer-config.db"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE observations (kind TEXT NOT NULL, id TEXT NOT NULL, at REAL NOT NULL, state TEXT NOT NULL, detail TEXT NOT NULL, PRIMARY KEY(kind,id))")
+        db.execute("INSERT INTO observations VALUES (?,?,?,?,?)", ("connection", "m1OpenClaw", time.time(), "reachable", "Unbound old-version health"))
+    c, _ = configured(tmp_path)
+    # Simulate a legacy saved observation that lacks any checked-version binding.
+    with c._db() as db:
+        db.execute("INSERT OR REPLACE INTO observations (kind,id,at,state,detail) VALUES (?,?,?,?,?)", ("connection", "m1OpenClaw", time.time(), "reachable", "Unbound old-version health"))
+    observed = CustomerConfig(path).observations()[("connection", "m1OpenClaw")]
+    assert observed["state"] == "unknown"
+    assert "version" in observed["detail"]
+
+
+def test_current_health_binding_survives_restart_without_writer_lock_for_readers(tmp_path):
+    c, _ = configured(tmp_path)
+    current = c.latest("connection", "m1OpenClaw")
+    c.observe("connection", "m1OpenClaw", "reachable", "Synthetic current health",
+              expected_version=current["version"], expected_digest=current["digest"])
+    expected = c.effective("openclawM1", "summary.md")
+    with c.dispatch_guard("openclawM1", "summary.md", expected):
+        reopened = CustomerConfig(c.path)
+        observed = reopened.observations()[("connection", "m1OpenClaw")]
+        assert observed["state"] == "reachable"
+        assert observed["config_version"] == current["version"]
+        assert observed["config_digest"] == current["digest"]

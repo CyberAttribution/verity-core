@@ -170,3 +170,40 @@ def test_overlong_history_is_rejected_before_chain_hash_work(monkeypatch):
     monkeypatch.setattr(context.trust, "chain_valid", unexpected_hash_work)
     with pytest.raises(ValueError, match="bounded context history"):
         context.inspect_record({"entries": [{}] * (context.MAX_EVENTS + 1)})
+
+
+def test_capture_preserves_exact_history_after_later_withdrawal(tmp_path):
+    from verity_core.organization_context import verify_capture
+    store=ContextStore(tmp_path/"context.db");p=store.propose("fixture-org",body());approve(store,p)
+    capture=store.capture_active("fixture-org",now=NOW,required_entries=["missing-vendor"])
+    anchor=copy.deepcopy(capture["history"]["checkpoint"])
+    assert verify_capture(capture,anchor)
+    assert capture["snapshot"]["unresolved"]
+    store.withdraw("fixture-org",1,p["sha256"],actor="fixture",reason="Withdraw after capture")
+    assert verify_capture(capture,anchor)  # Historical binding, never current permission.
+    with pytest.raises(Conflict):store.capture_active("fixture-org",now=NOW)
+    assert not verify_capture(capture,store.export_history("fixture-org")["checkpoint"])
+
+
+@pytest.mark.parametrize("field",["generation","version","sha256","approval_event_hash","body","qualifications","unresolved"])
+def test_capture_rejects_snapshot_substitution(tmp_path,field):
+    from verity_core.organization_context import verify_capture
+    store=ContextStore(tmp_path/"context.db");p=store.propose("fixture-org",body());approve(store,p)
+    capture=store.capture_active("fixture-org",now=NOW,required_entries=["missing-vendor"])
+    anchor=copy.deepcopy(capture["history"]["checkpoint"])
+    if field in ("generation","version"):capture["snapshot"][field]+=1
+    elif field in ("sha256","approval_event_hash"):capture["snapshot"][field]="0"*64
+    elif field=="body":capture["snapshot"][field]["title"]="Substituted"
+    elif field=="qualifications":capture["snapshot"][field]=[]
+    else:capture["snapshot"][field]=False
+    assert not verify_capture(capture,anchor)
+
+
+@pytest.mark.parametrize("field,value",[("generation",True),("version",True),("unresolved",0)])
+def test_capture_refuses_boolean_integer_equivalence(tmp_path,field,value):
+    from verity_core.organization_context import verify_capture
+    store=ContextStore(tmp_path/"context.db");p=store.propose("fixture-org",body());approve(store,p)
+    capture=store.capture_active("fixture-org",now=NOW)
+    anchor=copy.deepcopy(capture["history"]["checkpoint"])
+    capture["snapshot"][field]=value
+    assert not verify_capture(capture,anchor)

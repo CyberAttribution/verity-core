@@ -416,3 +416,86 @@ def test_runtime_event_identity_must_be_a_bounded_identifier(tmp_path,event_id):
     result=runs.run(agent_id="existingOpenClaw",task_id="bad-runtime-event",resource_id="report",purpose="generate_text",prompt="Bounded",dispatch=lambda cfg,*_:dict(model=cfg["model"],response="Complete",id=event_id,decision="allowed",done=True))
     assert result["state"]=="failed" and result["result"] is None
     assert LocalInference(tmp_path/"runs.db",config).recent()[0]["state"]=="failed"
+
+
+def context_fixture(tmp_path):
+    import hashlib
+    from verity_core.organization_context import ContextStore
+    context=ContextStore(tmp_path/"context.db")
+    data=dict(title="SYNTHETIC vendor",entries=[dict(id="vendor",kind="vendor",status="assumption",
+        subject="Fixture vendor",value="Previously recorded account ending1234",source_ref="Synthetic operator statement",
+        source_sha256=hashlib.sha256(b"Synthetic operator statement").hexdigest(),checked_at="2026-10-19T19:00:00Z",
+        review_before="2026-10-21T19:00:00Z",qualifications=[])])
+    proposal=context.propose("fixture-org",data)
+    context.approve("fixture-org",proposal["version"],proposal["sha256"],0,None,actor="fixture",reason="Synthetic local approval")
+    return context,proposal
+
+
+def test_context_request_binds_actual_prompt_and_stable_export(tmp_path):
+    import copy,hashlib
+    from verity_core.trust import context_analysis
+    config,runs=setup(tmp_path);context,proposal=context_fixture(tmp_path);seen=[]
+    def dispatch(cfg,prompt,purpose):
+        seen.append(prompt)
+        return dict(model=cfg["model"],response="SYNTHETIC discrepancy: request differs from the recorded account.",event_id="context-event",decision="allow",done=True,done_reason="stop")
+    run=runs.run(agent_id="existingOpenClaw",task_id="context-bound",resource_id="report",purpose="generate_text",
+        prompt="Vendor asks to use account5678",context_profile_id="fixture-org",context_store=context,dispatch=dispatch)
+    assert run["state"]=="completed" and "account ending1234" in seen[0] and "account5678" in seen[0]
+    assert run["prompt_sha256"]==hashlib.sha256(seen[0].encode()).hexdigest()
+    assert run["context_analysis"]["capture"]["snapshot"]["generation"]==1
+    assert run["context_analysis"]["capture"]["snapshot"]["unresolved"]  # Assumption is visible.
+    bundle=runs.context_export(run["id"]);anchor=copy.deepcopy(bundle["checkpoint"])
+    assert context_analysis.verify(bundle,anchor)
+    assert LocalInference(runs.path,config).context_export(run["id"])==bundle
+    changed=copy.deepcopy(bundle);changed["record"]["entries"][0]["payload"]["input"]["specimen"]="Substituted request"
+    assert not context_analysis.verify(changed,anchor)
+
+
+def test_context_withdrawal_during_inference_preserves_old_history_but_denies_next(tmp_path):
+    from verity_core.organization_context import Conflict
+    from verity_core.trust import context_analysis
+    config,runs=setup(tmp_path);context,proposal=context_fixture(tmp_path);calls=[]
+    def dispatch(cfg,prompt,purpose):
+        calls.append(prompt)
+        context.withdraw("fixture-org",1,proposal["sha256"],actor="fixture",reason="Withdraw after reservation")
+        return dict(model=cfg["model"],response="Historical-context response",event_id="after-withdrawal",decision="allow",done=True)
+    args=dict(agent_id="existingOpenClaw",resource_id="report",purpose="generate_text",prompt="Check fixture request",context_profile_id="fixture-org",context_store=context,dispatch=dispatch)
+    run=runs.run(task_id="before-withdraw",**args)
+    assert run["state"]=="completed"
+    bundle=runs.context_export(run["id"]);assert context_analysis.verify(bundle,bundle["checkpoint"])
+    with pytest.raises(Conflict):runs.run(task_id="after-withdraw",**args)
+    assert len(calls)==1 and len(runs.recent())==1
+
+
+def test_context_required_without_store_or_with_oversized_prompt_never_dispatches(tmp_path):
+    config,runs=setup(tmp_path);context,_=context_fixture(tmp_path);calls=[]
+    args=dict(agent_id="existingOpenClaw",resource_id="report",purpose="generate_text",prompt="Fixture",context_profile_id="fixture-org",dispatch=lambda *_:calls.append(True))
+    with pytest.raises(ValueError):runs.run(task_id="no-store",**args)
+    with pytest.raises(ValueError):runs.run(task_id="oversize",context_store=context,**dict(args,prompt="x"*3900))
+    assert not calls and not runs.recent()
+
+
+def test_context_capture_lock_spans_durable_run_reservation(tmp_path,monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    config,runs=setup(tmp_path);context,proposal=context_fixture(tmp_path)
+    start=threading.Event();done=threading.Event();reserved=[];original=config.effective;first=[True]
+    def withdraw():
+        assert start.wait(2)
+        context.withdraw("fixture-org",1,proposal["sha256"],actor="fixture",reason="Concurrent withdrawal")
+        with sqlite3.connect(runs.path) as con:reserved.append(con.execute("SELECT task_id FROM runs").fetchall())
+        done.set()
+    def effective(*args):
+        if first[0]:
+            first[0]=False;start.set();assert not done.wait(.05)
+        return original(*args)
+    monkeypatch.setattr(config,"effective",effective)
+    def dispatch(cfg,*_):
+        assert done.wait(3)  # Context lock released before inference, not held across model call.
+        return dict(model=cfg["model"],response="Synthetic response",event_id="serialized-context",decision="allow",done=True)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future=pool.submit(withdraw)
+        run=runs.run(agent_id="existingOpenClaw",task_id="reserved-first",resource_id="report",purpose="generate_text",prompt="Fixture",
+            context_profile_id="fixture-org",context_store=context,dispatch=dispatch)
+        future.result(timeout=3)
+    assert reserved==[[("reserved-first",)]] and run["state"]=="completed"

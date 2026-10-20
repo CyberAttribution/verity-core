@@ -8,11 +8,13 @@ import json
 import sqlite3
 import time
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 
 import requests
 
 from verity_core.json_safety import bounded_json_loads
+from verity_core.trust import context_analysis
 
 MAX_RUNTIME_RESPONSE_BYTES = 128 * 1024
 
@@ -30,6 +32,7 @@ class LocalInference:
                 id TEXT PRIMARY KEY, task_id TEXT NOT NULL UNIQUE, at REAL NOT NULL,
                 agent_id TEXT NOT NULL, purpose TEXT NOT NULL, decision TEXT NOT NULL,
                 state TEXT NOT NULL, record TEXT NOT NULL)""")
+            db.execute("CREATE TABLE IF NOT EXISTS context_exports (run_id TEXT PRIMARY KEY, bundle TEXT NOT NULL)")
 
     def _db(self):
         db = sqlite3.connect(self.path, timeout=10)
@@ -42,7 +45,8 @@ class LocalInference:
                 "SELECT record FROM runs ORDER BY at DESC LIMIT 30")]
 
     def run(self, *, agent_id, task_id, resource_id, purpose, prompt,
-            requested_model="", session_id="", dispatch=None):
+            requested_model="", session_id="", dispatch=None,
+            context_profile_id="", context_store=None):
         label(agent_id); label(task_id); label(resource_id)
         if session_id:
             label(session_id)
@@ -52,61 +56,77 @@ class LocalInference:
             raise ValueError("Prompt must contain 1 to 4000 characters")
         if not isinstance(requested_model, str) or len(requested_model) > 160:
             raise ValueError("Invalid requested model")
-        cfg = self.configuration.effective(agent_id, resource_id)
-        connection = self.configuration.latest("connection", cfg["connection_id"])
-        observation = self.configuration.observations().get(("connection",cfg["connection_id"]))
-        reason = None
-        if cfg.get("adapter_kind") == "custom_unverified":
-            reason = "Custom agent is unverified; no dispatch adapter is enabled"
-        elif observation and observation["state"] != "reachable":
-            reason = "Local connection observation is unavailable or stale; recheck before dispatch"
-        elif self.configuration.connection_disabled(cfg["connection_id"]):
-            reason = "Primary model connection was disabled by the operator"
-        elif purpose not in cfg["allowed_tools"]:
-            reason = "Purpose denied by agent configuration"
-        elif requested_model and requested_model != cfg["model"]:
-            reason = "Requested model differs from primary model; fallback is not enabled"
-        elif connection["body"]["scope"] != "local":
-            reason = "External inference adapter is not enabled"
-        elif connection["body"]["provider"] not in {"openclaw", "ollama_local"}:
-            reason = "Only the local OpenClaw adapter is supported"
-        elif not cfg["endpoint"].startswith(("http://127.0.0.1:", "http://[::1]:", "http://localhost:")):
-            reason = "OpenClaw endpoint must be loopback"
-        rid = str(uuid.uuid4())
-        record = dict(id=rid, task_id=task_id, at=time.time(), agent_id=agent_id,
-                      purpose=purpose, resource_id=resource_id, session_id=session_id or None, decision="denied" if reason else "allowed",
-                      state="denied" if reason else "reserved", reason=reason,
-                      prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest(),
-                      model=cfg["model"], model_revision=cfg["model_revision"],
-                      configuration=cfg, result=None)
-        with self._db() as db:
-            db.execute("BEGIN IMMEDIATE")
-            limit = cfg.get("daily_request_limit",0)
-            if not reason and limit:
-                day_start = int(record["at"] // 86400) * 86400  # UTC calendar day
-                count = db.execute("SELECT COUNT(*) FROM runs WHERE agent_id=? AND decision='allowed' AND at>=? AND at<?",
-                                   (agent_id,day_start,day_start+86400)).fetchone()[0]
-                if count >= limit:
-                    reason = "Daily agent request cap reached before dispatch"
-                    record.update(decision="denied",state="denied",reason=reason)
-            session_limit = cfg.get("session_request_limit",0)
-            if not reason and session_limit:
-                if not session_id:
-                    reason = "Session ID required by agent request cap"
-                else:
-                    # Count old and new records through JSON to preserve the
-                    # existing on-disk schema. The transaction serializes reservations.
-                    rows = db.execute("SELECT record FROM runs WHERE agent_id=? AND decision='allowed'",(agent_id,))
-                    count = sum(json.loads(row[0]).get("session_id")==session_id for row in rows)
-                    if count >= session_limit:
-                        reason = "Session agent request cap reached before dispatch"
-                if reason:
-                    record.update(decision="denied",state="denied",reason=reason)
-            db.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?)",
-                       (rid, task_id, record["at"], agent_id, purpose, record["decision"],
-                        record["state"], canonical(record)))
-        if reason:
-            return record
+        if context_profile_id:
+            from verity_core.organization_context import ContextStore, identifier
+            identifier(context_profile_id)
+            if not isinstance(context_store, ContextStore):
+                raise ValueError("Authoritative local context store required")
+        guard = context_store.capture_guard(context_profile_id) if context_profile_id else nullcontext(None)
+        specimen = prompt
+        with guard as capture:
+            if capture is not None:
+                prompt = context_analysis.compose_prompt(capture, specimen)
+            cfg = self.configuration.effective(agent_id, resource_id)
+            connection = self.configuration.latest("connection", cfg["connection_id"])
+            observation = self.configuration.observations().get(("connection",cfg["connection_id"]))
+            reason = None
+            if cfg.get("adapter_kind") == "custom_unverified":
+                reason = "Custom agent is unverified; no dispatch adapter is enabled"
+            elif observation and observation["state"] != "reachable":
+                reason = "Local connection observation is unavailable or stale; recheck before dispatch"
+            elif self.configuration.connection_disabled(cfg["connection_id"]):
+                reason = "Primary model connection was disabled by the operator"
+            elif purpose not in cfg["allowed_tools"]:
+                reason = "Purpose denied by agent configuration"
+            elif requested_model and requested_model != cfg["model"]:
+                reason = "Requested model differs from primary model; fallback is not enabled"
+            elif connection["body"]["scope"] != "local":
+                reason = "External inference adapter is not enabled"
+            elif connection["body"]["provider"] not in {"openclaw", "ollama_local"}:
+                reason = "Only the local OpenClaw adapter is supported"
+            elif not cfg["endpoint"].startswith(("http://127.0.0.1:", "http://[::1]:", "http://localhost:")):
+                reason = "OpenClaw endpoint must be loopback"
+            rid = str(uuid.uuid4())
+            record = dict(id=rid, task_id=task_id, at=time.time(), agent_id=agent_id,
+                          purpose=purpose, resource_id=resource_id, session_id=session_id or None, decision="denied" if reason else "allowed",
+                          state="denied" if reason else "reserved", reason=reason,
+                          prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest(),
+                          model=cfg["model"], model_revision=cfg["model_revision"],
+                          configuration=cfg, result=None)
+            if capture is not None:
+                record["context_analysis"] = dict(schema="context_analysis_input/v0.1",
+                    capture=capture, specimen=specimen,
+                    runtime_prompt_sha256=hashlib.sha256((cfg["instructions"]+"\n\n"+prompt).encode()).hexdigest())
+            with self._db() as db:
+                db.execute("BEGIN IMMEDIATE")
+                limit = cfg.get("daily_request_limit",0)
+                if not reason and limit:
+                    day_start = int(record["at"] // 86400) * 86400  # UTC calendar day
+                    count = db.execute("SELECT COUNT(*) FROM runs WHERE agent_id=? AND decision='allowed' AND at>=? AND at<?",
+                                       (agent_id,day_start,day_start+86400)).fetchone()[0]
+                    if count >= limit:
+                        reason = "Daily agent request cap reached before dispatch"
+                        record.update(decision="denied",state="denied",reason=reason)
+                session_limit = cfg.get("session_request_limit",0)
+                if not reason and session_limit:
+                    if not session_id:
+                        reason = "Session ID required by agent request cap"
+                    else:
+                        # Count old and new records through JSON to preserve the
+                        # existing on-disk schema. The transaction serializes reservations.
+                        rows = db.execute("SELECT record FROM runs WHERE agent_id=? AND decision='allowed'",(agent_id,))
+                        count = sum(json.loads(row[0]).get("session_id")==session_id for row in rows)
+                        if count >= session_limit:
+                            reason = "Session agent request cap reached before dispatch"
+                    if reason:
+                        record.update(decision="denied",state="denied",reason=reason)
+                db.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?)",
+                           (rid, task_id, record["at"], agent_id, purpose, record["decision"],
+                            record["state"], canonical(record)))
+                if capture is not None and reason:
+                    db.execute("INSERT INTO context_exports VALUES (?,?)", (rid, canonical(context_analysis.export(record))))
+            if reason:
+                return record
         # The reservation is durable before dispatch. A crash leaves it visibly
         # reserved; the same task ID cannot be dispatched again silently.
         try:
@@ -144,7 +164,19 @@ class LocalInference:
         with self._db() as db:
             db.execute("UPDATE runs SET state=?,record=? WHERE id=?",
                        (record["state"], canonical(record), rid))
+            if capture is not None:
+                db.execute("INSERT INTO context_exports VALUES (?,?)", (rid, canonical(context_analysis.export(record))))
         return record
+
+    def context_export(self, run_id):
+        with self._db() as db:
+            row = db.execute("SELECT bundle FROM context_exports WHERE run_id=?", (run_id,)).fetchone()
+        if row is None:
+            raise KeyError(run_id)
+        bundle = json.loads(row[0])
+        if not context_analysis.verify(bundle, bundle["checkpoint"]):
+            raise ValueError("Stored context analysis integrity failed")
+        return bundle
 
     @staticmethod
     def _dispatch(cfg, prompt, purpose):

@@ -14,7 +14,7 @@ import re
 import sqlite3
 import stat
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 from .json_safety import bounded_json_loads
 from .trust import record as trust
@@ -168,6 +168,27 @@ def _unique(pairs):
     return result
 
 
+def snapshot_fields(profile_id, state, proposal, current, required_entries):
+    flags = []
+    entries = {item["id"]: item for item in proposal["body"]["entries"]}
+    for entry in entries.values():
+        qualifications = list(entry["qualifications"])
+        deadline = datetime.datetime.strptime(entry["review_before"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
+        if current >= deadline:
+            qualifications.append("stale")
+        if entry["status"] != "fact":
+            qualifications.append(entry["status"])
+        if qualifications:
+            flags.append(dict(id=entry["id"], qualifications=qualifications))
+    flags.extend(dict(id=item, qualifications=["missing"]) for item in required_entries if item not in entries)
+    snapshot = dict(profile_id=profile_id, version=proposal["version"], sha256=proposal["sha256"],
+        generation=state["generation"], approval_event_hash=proposal["approval_event_hash"],
+        body=proposal["body"], qualifications=flags, unresolved=bool(flags),
+        identity_provenance=IDENTITY,
+        limitations="Local review and source hashes do not prove factual truth or authorize actions.")
+    return snapshot
+
+
 class ContextStore:
     def __init__(self, path):
         self.path = Path(path)
@@ -284,7 +305,7 @@ class ContextStore:
             state = self._save(con, record)
             return dict(profile_id=profile_id, generation=state["generation"], active_version=None)
 
-    def active_snapshot(self, profile_id, *, now=None, required_entries=()):
+    def _capture_active(self, profile_id, *, now=None, required_entries=(), _connection=None):
         if not isinstance(required_entries, (list, tuple)) or len(required_entries) > 20:
             raise ValueError("Bounded required context identifiers expected")
         for item in required_entries:
@@ -292,28 +313,44 @@ class ContextStore:
         current = time.time() if now is None else now
         if type(current) not in (int, float) or not 0 <= current < 4102444800:
             raise ValueError("Invalid context observation time")
-        with self.connection() as con:
-            _, state = self._load(con, profile_id)
+        with (self.connection() if _connection is None else nullcontext(_connection)) as con:
+            record, state = self._load(con, profile_id)
             if state["active_version"] is None:
                 raise Conflict("No active locally approved context; no implicit fallback")
             proposal = copy.deepcopy(state["versions"][state["active_version"]])
-        flags = []
-        entries = {item["id"]: item for item in proposal["body"]["entries"]}
-        for entry in entries.values():
-            qualifications = list(entry["qualifications"])
-            deadline = datetime.datetime.strptime(entry["review_before"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
-            if current >= deadline:
-                qualifications.append("stale")
-            if entry["status"] != "fact":
-                qualifications.append(entry["status"])
-            if qualifications:
-                flags.append(dict(id=entry["id"], qualifications=qualifications))
-        flags.extend(dict(id=item, qualifications=["missing"]) for item in required_entries if item not in entries)
-        return dict(profile_id=profile_id, version=proposal["version"], sha256=proposal["sha256"],
-            generation=state["generation"], approval_event_hash=proposal["approval_event_hash"],
-            body=proposal["body"], qualifications=flags, unresolved=bool(flags),
-            identity_provenance=IDENTITY,
-            limitations="Local review and source hashes do not prove factual truth or authorize actions.")
+            anchor = dict(record_id=record["record_id"], entry_count=len(record["entries"]),
+                          head_hash=record["entries"][-1]["entry_hash"])
+            history = dict(schema=SCHEMA, record=record, checkpoint=anchor)
+        snapshot = snapshot_fields(profile_id, state, proposal, current, required_entries)
+        return dict(schema="organization_context_capture/v0.1", snapshot=snapshot,
+                    history=history, observed_at=current, required_entries=list(required_entries))
+
+    def active_snapshot(self, profile_id, *, now=None, required_entries=()):
+        return self._capture_active(profile_id, now=now, required_entries=required_entries)["snapshot"]
+
+    def capture_active(self, profile_id, *, now=None, required_entries=()):
+        """Capture a locally approved body and its history in one transaction.
+
+        Approval is local unauthenticated intent. A retained capture proves no
+        current permission after later withdrawal and grants no action authority.
+        """
+        return self._capture_active(profile_id, now=now, required_entries=required_entries)
+
+    @contextmanager
+    def capture_guard(self, profile_id, *, now=None, required_entries=()):
+        """Hold local context serialization until the caller persists reservation.
+
+        Release before inference; later withdrawal does not rewrite old runs.
+        """
+        with self.connection() as con:
+            yield self._capture_active(profile_id, now=now,
+                                       required_entries=required_entries, _connection=con)
+
+    def profiles(self):
+        """At most twenty profiles for the local review UI; never approval."""
+        with self.connection() as con:
+            rows = con.execute("SELECT id FROM context_profiles ORDER BY id LIMIT 20").fetchall()
+            return [dict(profile_id=row[0], state=self._load(con, row[0])[1]) for row in rows]
 
     def export_history(self, profile_id):
         with self.connection() as con:
@@ -336,5 +373,40 @@ def verify_history(bundle, retained_checkpoint):
                       head_hash=record["entries"][-1]["entry_hash"])
         return (type(retained_checkpoint["entry_count"]) is int
                 and actual == bundle["checkpoint"] == retained_checkpoint)
+    except (ValueError, TypeError, KeyError, IndexError, AttributeError, RecursionError):
+        return False
+
+
+def verify_capture(capture, retained_checkpoint):
+    """Validate exact recorded snapshot/history binding; not current authority.
+
+    The caller retains the checkpoint separately. Observation time and local
+    operator labels are assertions, not authenticated identity or freshness.
+    """
+    try:
+        evidence.fields(capture, "schema snapshot history observed_at required_entries")
+        if capture["schema"] != "organization_context_capture/v0.1":
+            return False
+        if not verify_history(capture["history"], retained_checkpoint):
+            return False
+        current = capture["observed_at"]
+        if type(current) not in (int, float) or not 0 <= current < 4102444800:
+            return False
+        required = capture["required_entries"]
+        if not isinstance(required, list) or len(required) > 20:
+            return False
+        for item in required:
+            identifier(item)
+        state = inspect_record(capture["history"]["record"])
+        if state["active_version"] is None:
+            return False
+        proposal = state["versions"][state["active_version"]]
+        expected = snapshot_fields(state["profile_id"], state, proposal, current, required)
+        snapshot = capture["snapshot"]
+        if (not isinstance(snapshot, dict) or type(snapshot.get("version")) is not int
+                or type(snapshot.get("generation")) is not int
+                or type(snapshot.get("unresolved")) is not bool):
+            return False
+        return snapshot == expected
     except (ValueError, TypeError, KeyError, IndexError, AttributeError, RecursionError):
         return False

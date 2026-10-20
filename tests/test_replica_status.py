@@ -56,3 +56,10 @@ def test_malformed_identity_and_phase_fields_are_not_live_reports(tmp_path):
         write(tmp_path,altered)
         result=summarize(tmp_path,0,now=1010)
         assert result['telemetry']=='unknown' and result['current_task'] is None
+
+
+def test_rejected_report_does_not_retain_its_model_or_audit_claims(tmp_path):
+    write(tmp_path,dict(state(low_fields_audited=True,template_low_verified=True),queue_depth=-1))
+    result=summarize(tmp_path,0,now=1010)
+    assert result['telemetry']=='unknown' and result['actual_model'] is None and result['last_progress'] is None
+    assert result['low_fields_audited'] is None and result['last_result'] is None

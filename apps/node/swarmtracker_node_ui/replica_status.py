@@ -54,7 +54,7 @@ def summarize(root,replica,*,now=None,stale_after=120):
             raise ValueError('Inference marker lacks task identity')
         else:result['telemetry']='observed worker report'
     except (OSError,ValueError,TypeError,KeyError):
-        result.update(phase='unknown',current_task=None,queue_depth=None,telemetry='unknown')
+        result.update(phase='unknown',actual_model=None,current_task=None,last_progress=None,last_result=None,queue_depth=None,telemetry='unknown',low_fields_audited=None,template_low_verified=None)
     result['service']=service_view(root,replica,now=now,stale_after=stale_after)
     return result
 

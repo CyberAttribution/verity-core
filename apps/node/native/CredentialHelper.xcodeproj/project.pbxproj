@@ -1,0 +1,208 @@
+// !$*UTF8*$!
+{
+"archiveVersion" = 1;
+"classes" = {
+
+};
+"objectVersion" = 56;
+"objects" = {
+"A00000000000000000000001" = {
+"isa" = "PBXBuildFile";
+"fileRef" = "A0000000000000000000000B";
+};
+"A00000000000000000000002" = {
+"isa" = "PBXBuildFile";
+"fileRef" = "A0000000000000000000000C";
+};
+"A00000000000000000000003" = {
+"isa" = "PBXBuildFile";
+"fileRef" = "A0000000000000000000000D";
+};
+"A00000000000000000000004" = {
+"isa" = "PBXBuildFile";
+"fileRef" = "A0000000000000000000000E";
+};
+"A0000000000000000000000B" = {
+"isa" = "PBXFileReference";
+"lastKnownFileType" = "sourcecode.c.objc";
+"path" = "CredentialHelper.m";
+"sourceTree" = "<group>";
+};
+"A0000000000000000000000C" = {
+"isa" = "PBXFileReference";
+"lastKnownFileType" = "wrapper.framework";
+"name" = "Foundation.framework";
+"path" = "System/Library/Frameworks/Foundation.framework";
+"sourceTree" = "SDKROOT";
+};
+"A0000000000000000000000D" = {
+"isa" = "PBXFileReference";
+"lastKnownFileType" = "wrapper.framework";
+"name" = "Security.framework";
+"path" = "System/Library/Frameworks/Security.framework";
+"sourceTree" = "SDKROOT";
+};
+"A0000000000000000000000E" = {
+"isa" = "PBXFileReference";
+"lastKnownFileType" = "wrapper.framework";
+"name" = "LocalAuthentication.framework";
+"path" = "System/Library/Frameworks/LocalAuthentication.framework";
+"sourceTree" = "SDKROOT";
+};
+"A0000000000000000000000F" = {
+"isa" = "PBXFileReference";
+"explicitFileType" = "wrapper.application";
+"path" = "VerityCredentialHelper.app";
+"sourceTree" = "BUILT_PRODUCTS_DIR";
+};
+"A00000000000000000000010" = {
+"isa" = "PBXFileReference";
+"lastKnownFileType" = "text.plist.xml";
+"path" = "CredentialHelper-Info.plist";
+"sourceTree" = "<group>";
+};
+"A00000000000000000000011" = {
+"isa" = "PBXFileReference";
+"lastKnownFileType" = "text.plist.entitlements";
+"path" = "CredentialHelper.entitlements";
+"sourceTree" = "<group>";
+};
+"A00000000000000000000014" = {
+"isa" = "PBXGroup";
+"children" = ("A0000000000000000000000B","A00000000000000000000010","A00000000000000000000011","A0000000000000000000000C","A0000000000000000000000D","A0000000000000000000000E","A00000000000000000000015",);
+"sourceTree" = "<group>";
+};
+"A00000000000000000000015" = {
+"isa" = "PBXGroup";
+"children" = ("A0000000000000000000000F",);
+"name" = "Products";
+"sourceTree" = "<group>";
+};
+"A0000000000000000000001E" = {
+"isa" = "PBXSourcesBuildPhase";
+"buildActionMask" = 2147483647;
+"files" = ("A00000000000000000000001",);
+"runOnlyForDeploymentPostprocessing" = 0;
+};
+"A0000000000000000000001F" = {
+"isa" = "PBXFrameworksBuildPhase";
+"buildActionMask" = 2147483647;
+"files" = ("A00000000000000000000002","A00000000000000000000003","A00000000000000000000004",);
+"runOnlyForDeploymentPostprocessing" = 0;
+};
+"A00000000000000000000020" = {
+"isa" = "PBXResourcesBuildPhase";
+"buildActionMask" = 2147483647;
+"files" = ();
+"runOnlyForDeploymentPostprocessing" = 0;
+};
+"A00000000000000000000028" = {
+"isa" = "PBXNativeTarget";
+"buildConfigurationList" = "A0000000000000000000003D";
+"buildPhases" = ("A0000000000000000000001E","A0000000000000000000001F","A00000000000000000000020",);
+"buildRules" = ();
+"dependencies" = ();
+"name" = "VerityCredentialHelper";
+"productName" = "VerityCredentialHelper";
+"productReference" = "A0000000000000000000000F";
+"productType" = "com.apple.product-type.application";
+};
+"A00000000000000000000032" = {
+"isa" = "PBXProject";
+"attributes" = {
+"LastUpgradeCheck" = "1600";
+"TargetAttributes" = {
+"A00000000000000000000028" = {
+"CreatedOnToolsVersion" = "16.0";
+"ProvisioningStyle" = "Automatic";
+"SystemCapabilities" = {
+"com.apple.Keychain" = {
+"enabled" = 1;
+};
+};
+};
+};
+};
+"buildConfigurationList" = "A0000000000000000000003C";
+"compatibilityVersion" = "Xcode 14.0";
+"developmentRegion" = "en";
+"hasScannedForEncodings" = 0;
+"knownRegions" = ("en","Base",);
+"mainGroup" = "A00000000000000000000014";
+"productRefGroup" = "A00000000000000000000015";
+"projectDirPath" = "";
+"projectRoot" = "";
+"targets" = ("A00000000000000000000028",);
+};
+"A0000000000000000000003C" = {
+"isa" = "XCConfigurationList";
+"buildConfigurations" = ("A00000000000000000000046","A00000000000000000000047",);
+"defaultConfigurationIsVisible" = 0;
+"defaultConfigurationName" = "Release";
+};
+"A0000000000000000000003D" = {
+"isa" = "XCConfigurationList";
+"buildConfigurations" = ("A00000000000000000000048","A00000000000000000000049",);
+"defaultConfigurationIsVisible" = 0;
+"defaultConfigurationName" = "Release";
+};
+"A00000000000000000000046" = {
+"isa" = "XCBuildConfiguration";
+"name" = "Debug";
+"buildSettings" = {
+"CLANG_ENABLE_MODULES" = "YES";
+"CLANG_ENABLE_OBJC_ARC" = "YES";
+"MACOSX_DEPLOYMENT_TARGET" = "13.0";
+"SDKROOT" = "macosx";
+};
+};
+"A00000000000000000000047" = {
+"isa" = "XCBuildConfiguration";
+"name" = "Release";
+"buildSettings" = {
+"CLANG_ENABLE_MODULES" = "YES";
+"CLANG_ENABLE_OBJC_ARC" = "YES";
+"MACOSX_DEPLOYMENT_TARGET" = "13.0";
+"SDKROOT" = "macosx";
+};
+};
+"A00000000000000000000048" = {
+"isa" = "XCBuildConfiguration";
+"name" = "Debug";
+"buildSettings" = {
+"CODE_SIGN_ENTITLEMENTS" = "CredentialHelper.entitlements";
+"CODE_SIGN_IDENTITY" = "Apple Development";
+"CODE_SIGN_STYLE" = "Automatic";
+"CURRENT_PROJECT_VERSION" = "1";
+"DEVELOPMENT_TEAM" = "";
+"ENABLE_HARDENED_RUNTIME" = "YES";
+"GENERATE_INFOPLIST_FILE" = "NO";
+"INFOPLIST_FILE" = "CredentialHelper-Info.plist";
+"MARKETING_VERSION" = "0.1";
+"PRODUCT_BUNDLE_IDENTIFIER" = "ai.swarmtracker.verity.credentials";
+"PRODUCT_NAME" = "$(TARGET_NAME)";
+"SUPPORTED_PLATFORMS" = "macosx";
+"ONLY_ACTIVE_ARCH" = "YES";
+};
+};
+"A00000000000000000000049" = {
+"isa" = "XCBuildConfiguration";
+"name" = "Release";
+"buildSettings" = {
+"CODE_SIGN_ENTITLEMENTS" = "CredentialHelper.entitlements";
+"CODE_SIGN_IDENTITY" = "Apple Development";
+"CODE_SIGN_STYLE" = "Automatic";
+"CURRENT_PROJECT_VERSION" = "1";
+"DEVELOPMENT_TEAM" = "";
+"ENABLE_HARDENED_RUNTIME" = "YES";
+"GENERATE_INFOPLIST_FILE" = "NO";
+"INFOPLIST_FILE" = "CredentialHelper-Info.plist";
+"MARKETING_VERSION" = "0.1";
+"PRODUCT_BUNDLE_IDENTIFIER" = "ai.swarmtracker.verity.credentials";
+"PRODUCT_NAME" = "$(TARGET_NAME)";
+"SUPPORTED_PLATFORMS" = "macosx";
+};
+};
+};
+"rootObject" = "A00000000000000000000032";
+}

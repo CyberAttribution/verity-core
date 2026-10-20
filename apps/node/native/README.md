@@ -52,3 +52,27 @@ executable path. Without it, entry is disabled and POST fails closed. Merely
 setting that path is not native acceptance, signing verification, provider-key
 validation, or authorization for external inference. The unsigned helper remains
 blocked by -34018 until the signed/provisioned native acceptance succeeds.
+
+## Prepared Xcode signing target
+
+Open CredentialHelper.xcodeproj with full Xcode. Select the VerityCredentialHelper
+target and its Signing & Capabilities tab, then select the actual developer team.
+Automatic signing and a default application-specific Keychain group are prepared.
+No team identity or provisioning profile is invented or embedded in source.
+Use Product > Build. The executable is inside VerityCredentialHelper.app at
+Contents/MacOS/VerityCredentialHelper; the package's trusted helper setting must
+point to that executable. The application wrapper is required for the profile.
+
+Project, Info.plist and entitlement syntax have passed plutil. This does not
+establish successful Xcode provisioning/build or native Keychain access. Team
+capability availability must be checked in Xcode for the actual account. Full
+Xcode, an authorized signing identity/profile and successful native acceptance
+remain prerequisites; command-line clang compilation is a separate check.
+
+validate_keychain_helper.py takes the built helper executable path. It generates
+one disposable secret in memory, checks create/read, wrong-origin and profile
+binding, delete and missing reads, then attempts cleanup in finally. It prints
+only status and recovery IDs and returns nonzero on failure. It does not contact
+a provider, print the generated credential, or automatically retry creation.
+Retain its JSON if cleanup or completion is unknown. This test does not establish
+OS-user separation, authenticated caller identity, release signing or notarization.

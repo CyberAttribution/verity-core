@@ -48,4 +48,67 @@ def summarize(root,replica,*,now=None,stale_after=120):
         else:result['telemetry']='observed worker report'
     except (OSError,ValueError,TypeError,KeyError):
         result.update(phase='unknown',current_task=None,queue_depth=None,telemetry='unknown')
+    result['service']=service_view(root,replica,now=now,stale_after=stale_after)
+    return result
+
+
+def collect_service(replica,*,opener=None,clock=time.time):
+    """Probe fixed loopback health, identity and metrics; never execute inference."""
+    import urllib.request
+    if type(replica) is not int or replica not in (0,1):raise ValueError('Unknown replica')
+    if opener is None:
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self,*args,**kwargs):return None
+        opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+    base='http://127.0.0.1:'+str(8000+replica)
+    result=dict(replica=replica,at=clock(),state='unknown',models=[],running_requests=None,waiting_requests=None,activity='unknown')
+    def read(path,limit):
+        with opener.open(urllib.request.Request(base+path),timeout=2) as response:
+            if response.status!=200:raise ValueError('Unhealthy service response')
+            raw=response.read(limit+1)
+            if len(raw)>limit:raise ValueError('Service observation exceeds bound')
+            return raw
+    try:
+        read('/health',4096)
+        models=json.loads(read('/v1/models',65536))
+        entries=models.get('data') if isinstance(models,dict) else None
+        if (not isinstance(entries,list) or not entries or len(entries)>20
+                or any(not isinstance(x,dict) or not isinstance(x.get('id'),str) or not 0<len(x['id'])<=160 for x in entries)):
+            raise ValueError('Model identity not observed')
+        result.update(state='ready',models=[x['id'] for x in entries])
+        try:
+            metrics=read('/metrics',262144).decode('utf-8')
+            for key in ('running','waiting'):
+                samples=[]
+                for line in metrics.splitlines():
+                    name=line.split(' ',1)[0]
+                    if name.split('{',1)[0]=='vllm:num_requests_'+key:
+                        value=float(line.split()[-1])
+                        if not value.is_integer() or not 0<=value<=10000:raise ValueError('Invalid request count')
+                        samples.append(int(value))
+                if samples:result[key+'_requests']=sum(samples)
+            if result['running_requests'] is not None:
+                result['activity']='inference reported by server' if result['running_requests'] else 'no inference reported by server'
+        except (OSError,ValueError,UnicodeError):pass  # Missing metrics never implies zero requests.
+    except (OSError,ValueError,TypeError,KeyError):pass
+    return result
+
+
+def service_view(root,replica,*,now=None,stale_after=120):
+    now=time.time() if now is None else now
+    result=dict(state='unknown',activity='unknown',models=[],running_requests=None,waiting_requests=None)
+    try:
+        sample=_read(Path(root)/('replica'+str(replica)+'-service.json'))
+        if (not isinstance(sample,dict) or sample.get('replica')!=replica or type(sample.get('at')) not in (int,float)
+                or not 0<sample['at']<=now+5 or now-sample['at']>stale_after):return result
+        models=sample.get('models')
+        if (sample.get('state')!='ready' or not isinstance(models,list) or not 1<=len(models)<=20
+                or any(not isinstance(x,str) or not 0<len(x)<=160 for x in models)):return result
+        for key in ('running_requests','waiting_requests'):
+            value=sample.get(key)
+            if value is not None and (type(value) is not int or not 0<=value<=10000):return result
+        result.update(state='ready',models=models,running_requests=sample.get('running_requests'),waiting_requests=sample.get('waiting_requests'))
+        running=result['running_requests']
+        result['activity']=('unknown' if running is None else 'inference reported by server' if running else 'no inference reported by server')
+    except (OSError,ValueError,TypeError,KeyError):pass
     return result

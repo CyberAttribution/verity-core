@@ -211,7 +211,13 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
     outcomes = {}
     resources = {}
     gpu = {}
-    for e in record["events"]:
+    requests = {}
+    results = {}
+    def observed_at(entry):
+        # A late import is not a fresh service observation. Receipt time also
+        # bounds freshness when a source clock is ahead of the collector.
+        return min(entry["at"], entry["received"])
+    for position, e in enumerate(record["events"]):
         kind, data = e["kind"], e["data"]
         latest[kind] = e
         accumulated.setdefault(kind, {}).update(data)
@@ -223,6 +229,10 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
             resources[data["name"]] = e
         if kind == "gpu":
             gpu[data["index"]] = e
+        if kind == "request":
+            requests[data["task_id"]] = (position, e)
+        if kind == "result":
+            results[data["task_id"]] = (position, e)
     def data(kind):
         return accumulated.get(kind, {})
     state_report = next((e for e in reversed(record["events"]) if e["kind"] == "provider" and "state" in e["data"]), None)
@@ -237,24 +247,28 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
         provider = "unknown"
     if confirmed:
         provider = "terminated"
-    contact_at = max((e["received"] for e in record["events"] if e["kind"] in {"contact", "provider", "connection", "inventory", "model", "request"}), default=None)
+    contact_at = max((observed_at(e) for e in record["events"] if e["kind"] in {"contact", "provider", "connection", "inventory", "model", "request"}), default=None)
     stale = contact_at is None or now - contact_at > stale_after
-    if stale and not confirmed:
+    if not confirmed and (stale or state_report is None or now - observed_at(state_report) > stale_after):
         provider = "unknown"
     inventory = data("inventory")
     model = data("model").get("state", "unknown")
     if inventory.get("checked") and not inventory.get("models") and ("model" not in latest or latest["inventory"]["received"] > latest["model"]["received"]):
         model = "absent"
-    if stale and not confirmed:
+    model_observation = latest.get("inventory") if model == "absent" else latest.get("model")
+    if stale or model_observation is None or now - observed_at(model_observation) > stale_after:
         model = "unknown"
     if data("connection").get("state") == "blocked" and ("inventory" not in latest or latest["connection"]["received"] > latest["inventory"]["received"]):
         model = "unknown"
     running_gpu = [e for e in tasks.values() if e["data"].get("scope") == "gpu" and e["data"]["state"] == "running"]
     last_request = latest.get("request")
-    latest_result = latest.get("result")
-    activity = bool(last_request and any(e["data"]["task_id"] == last_request["data"].get("task_id") for e in running_gpu) and
-                    now - last_request["received"] <= idle_after and last_request["data"].get("state") == "running" and
-                    not (latest_result and latest_result["received"] > last_request["received"] and latest_result["data"].get("task_id") == last_request["data"].get("task_id")))
+    running_ids = {e["data"]["task_id"] for e in running_gpu}
+    activity = not stale and not confirmed and any(
+        task_id in running_ids
+        and request["data"].get("state") == "running"
+        and now - observed_at(request) <= min(idle_after, stale_after)
+        and (task_id not in results or results[task_id][0] < position)
+        for task_id, (position, request) in requests.items())
     bill = data("billing")
     rate_event = next((e for e in reversed(record["events"]) if e["kind"] == "billing" and "rate" in e["data"]), None)
     charge_event = next((e for e in reversed(record["events"]) if e["kind"] == "billing" and "reported_charge" in e["data"]), None)
@@ -269,7 +283,7 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
         alerts.append("Paid instance: successful inventory found no model")
     if provider == "running" and not activity:
         alerts.append("Paid instance: no recent GPU request activity")
-        idle_since = max((e["received"] for e in record["events"] if e["kind"] in {"request", "result"} and e["data"].get("state") in {"running", "completed", "failed"}), default=None)
+        idle_since = max((observed_at(e) for e in record["events"] if e["kind"] in {"request", "result"} and e["data"].get("state") in {"running", "completed", "failed"}), default=None)
         idle_start = idle_since or (start if isinstance(start, (int, float)) else latest.get("provider", {}).get("received"))
         if idle_start and now - idle_start >= idle_after:
             alerts.append("Prolonged paid idle interval")
@@ -298,7 +312,7 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
             item["verification"] = "Model output reached length limit; review incomplete"
         task_views.append(item)
     gpu_samples = [dict(e["data"], observed_at=e["at"], received=e["received"],
-                        state="stale" if now-e["received"] > stale_after else "observed") for e in sorted(gpu.values(),key=lambda x:x["data"]["index"])]
+                        state="stale" if now-observed_at(e) > stale_after else "observed") for e in sorted(gpu.values(),key=lambda x:x["data"]["index"])]
     return {"provider": provider, "last_provider_state": observed_provider, "connection": "unknown" if stale else data("connection").get("state", "unknown"), "model": model,
             "activity": "active" if activity else "unknown" if stale else "no recent request", "stale": stale,
             "last_contact": datetime.fromtimestamp(contact_at, timezone.utc).isoformat() if contact_at else None,

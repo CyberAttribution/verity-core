@@ -107,3 +107,58 @@ are unverified; existing offline issuance is not that flow. No live invitation
 sent. External provider consent/credentials/billing and original Docker company
 record's human decision remain blocked. Same-user/direct-runtime access remains
 outside this local routing boundary. Existing installed pilots preserved.
+
+## Customer journey checkpoint, 23:29EDT
+
+Canonical backlog18 reread; restored parent capabilities remain open. Implemented
+f9b8e4c: separate activation/runtime pages, configured agent/resource/primary-model
+request selection, reviewed-config fingerprint, durable result detail and stable
+inference_receipt/v0.1 export with separate checkpoint/offline CLI. Request
+terminal state and receipt share one transaction. Unfinished reservation has no
+receipt or silent retry. Prompt/instruction fields omitted; output may quote inputs.
+
+55920ac links the same run/task/model/event through Agents, Governance, Sessions
+and Environment Map. Map distinguishes declared host/service/resource links from
+observed request paths, with no discovery scan or OS enforcement claim. 766ca38
+adds guided local OpenClaw model registration and preselected agent setup; it does
+not install/download a model, establish health or enable frontier-provider login.
+7896ff8 makes an older fixed-date enrollment test use its explicit fixture clock;
+production expiry remains exclusive and unchanged.
+
+Current full suite993passed/2skipped,41.82seconds, existing deprecation warning.
+Mini independently18focused tests at766ca38; preceding cross-view31focused checks.
+Real disposable Mini public-form guided path completed in3.6149seconds, task
+B24GuidedJourney20261019B, event0b9430d3-ecc8-4cdd-b43f-8e7d570d4368,
+response SHA256d6058a5a8df3f97ef5f363fb3b1369d75dca0464bd1955b8d068eebf30c1c068.
+Offline signed activation, relaunch, public resource/model/agent forms, health,
+actual response, cross-view links, duplicate refusal, purpose denial and imported
+revocation were exercised. Success/denial receipts independently reconstructed
+on MacBook with retained checkpoints. Existing Mini Qwen7 remains separate from
+rental GLM review models. Finish reason omitted by runtime stays null; usage unknown.
+Synthetic specimen only; no payment, file action, live WorkOS or OS isolation.
+
+Fresh ad-hoc native package built from clean55920ac and its headless frozen worker
+passed19checks, including public forms, purpose denial, receipt and duplicate
+refusal. Worker exited afterward. No native-window visual/pristine-account/
+DeveloperID/notarization/Gatekeeper acceptance. The later766ca38 guided connection
+page is source-tested separately and is not claimed included in that build.
+
+GLM totals22completed final review answers,2token-limited,0timeouts; readiness
+excluded. One independently accepted new GLM defect remains alternate-registration
+strict-default omission. Accepted scoped guard checks/advice and rejected findings
+remain distinct in private adjudication. RequestFormGate length/partial claim is
+not a completed review; actual final guard and a no-dispatch race test contradict
+its premise. No automatic acceptance or chat wakeup capability is established.
+
+Both replicas ran parallel independent journey and guided-connection batches,
+with both low-reasoning fields audited. Queues drain during local work. The
+packaged check ended23:00:25EDT and next inspection was23:22:56EDT; no further
+implementation ran in that gap. GPU review idle began earlier22:58:31EDT. Those
+billable intervals are included in total estimate, not presented as useful work.
+Estimated exposure at23:25 was38.87USD; provider bill/start remain unverified.
+Warn at45USD, aim50USD total, ceiling60USD; no automatic provider shutdown.
+
+Initial0220 archive remains valid but older; an updated source/private checkpoint
+is being prepared. New test app binary remains on MacBook; reproducible source,
+build metadata/logs and private evidence are included in checkpoint scope, not a
+claim that a notarized distributable is backed up or ready for customer release.

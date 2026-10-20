@@ -132,3 +132,24 @@ def test_metadata_failure_after_native_creation_preserves_recovery(env,monkeypat
     assert row['state']=='pending' and row['reference'] in n.values
     with pytest.raises(CredentialConflict):reopened.resolve('external',expected_digest=e['digest'])
     reopened.remove(row['reference'],expected_digest=e['digest']);assert not n.values
+
+
+def test_concurrent_removal_rereads_state_under_shared_lock(env,monkeypatch):
+    c,e,n,m=env;ref=m.create('external',expected_digest=e['digest'],secret='synthetic')
+    barrier=threading.Barrier(2);other=CredentialManager(m.path,CustomerConfig(c.path),n)
+    for instance in (m,other):
+        original=instance.records
+        def stale_read(original=original):
+            rows=original();barrier.wait(timeout=3);return rows
+        monkeypatch.setattr(instance,'records',stale_read)
+    errors=[]
+    def remove(instance):
+        try:instance.remove(ref,expected_digest=e['digest'])
+        except Exception as error:errors.append(type(error).__name__)
+    ts=[threading.Thread(target=remove,args=(instance,)) for instance in (m,other)]
+    for t in ts:t.start()
+    for t in ts:t.join(5)
+    assert not errors and len([call for call in n.calls if call[0]=='delete'])==1
+    reopened=CredentialManager(m.path,c,n)
+    assert reopened.records()[0]['state']=='removed'
+    reopened.create('external',expected_digest=e['digest'],secret='replacement')

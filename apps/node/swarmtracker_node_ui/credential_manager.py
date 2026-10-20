@@ -85,6 +85,10 @@ class CredentialManager:
         row=next((row for row in self.records() if row['reference']==reference),None)
         if not row:raise CredentialConflict('Unknown credential reference')
         with self.connection(row['connection_id'],expected_digest,cleanup=True):
+            # The initial routing lookup may precede another completed removal.
+            # Re-read after the shared configuration lock serializes operations.
+            with self.db() as db:
+                row=dict(db.execute('SELECT * FROM credential_records WHERE reference=?',(reference,)).fetchone())
             if row['profile']!=self.native.profile:raise CredentialConflict('Credential belongs to a different local profile')
             if row['state']=='removed':return
             self._transition(reference,'removing')

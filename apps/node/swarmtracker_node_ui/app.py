@@ -2390,3 +2390,6 @@ company_routes.install(app, render, base_ctx)
 
 from . import context_routes
 context_routes.install(app, render, base_ctx)
+
+from . import workbench_routes
+workbench_routes.install(app, render, base_ctx)

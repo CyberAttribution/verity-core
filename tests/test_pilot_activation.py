@@ -122,3 +122,26 @@ def test_corrupt_state_is_not_silently_replaced(setup):
     s.path().write_text('bad-json')
     assert client.get('/setup').status_code==503
     assert s.path().read_text()=='bad-json'
+
+
+def test_activation_and_runtime_pages_are_separate_and_relaunch_keeps_activation(setup):
+    client, s, sign, post = setup
+    page = client.get('/setup').text
+    assert 'Activation code' in page and 'name="openclaw_url"' not in page
+    assert 'kevin@swarmtracker.ai' in page
+    assert client.get('/setup/runtime', follow_redirects=False).headers['location'] == '/setup'
+    now = int(time.time())
+    code = sign(dict(schema='verity_pilot_entitlement/v1',installation_id=s.state()['installation_id'],license_id='split-pilot',issued_at=now,expires_at=now+3600))
+    assert post('activate',code=code).status_code == 303
+    assert 'Choose an agent' in client.get('/setup').text
+    runtime = client.get('/setup/runtime')
+    assert runtime.status_code == 200 and 'name="openclaw_url"' in runtime.text
+    assert 'name="code"' not in runtime.text
+    from swarmtracker_node_ui import decision_routes as d
+    assert client.post('/setup/runtime',data=dict(operator_token=d.TOKEN,action='activate',code=code)).status_code == 422
+    before = s.path().read_bytes()
+    from fastapi.testclient import TestClient
+    from swarmtracker_node_ui import app as ui
+    relaunched = TestClient(ui.app,base_url='http://127.0.0.1')
+    assert relaunched.get('/setup/runtime').status_code == 200
+    assert s.state()['activation'] == code and s.path().read_bytes() == before

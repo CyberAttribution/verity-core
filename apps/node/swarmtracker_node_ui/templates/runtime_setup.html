@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Analysis runtime{% endblock %}
+{% block content %}
+<p><a href="/setup">Installation activation</a> · <a href="/agents/add">Choose an agent</a> · <a href="/configuration">Models &amp; Connections</a></p>
+{% if setup_error %}<p class="alert" role="alert">{{ setup_error }}</p>{% endif %}
+<section class="panel"><h2>Analysis runtime settings</h2>
+<p>Choose an existing OpenClaw v0 service or a local Ollama model. Verity does not install models or start the runtime. For direct Ollama, disable cloud features in that service; only locally stored GGUF models are accepted. Model output remains untrusted and cannot execute actions.</p>
+<form method="post" action="/setup/runtime"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="action" value="configure">
+<label>Analysis runtime <select name="runtime_kind"><option value="openclaw" {% if installation.settings.get("runtime_kind","openclaw")=="openclaw" %}selected{% endif %}>OpenClaw v0</option><option value="ollama" {% if installation.settings.get("runtime_kind")=="ollama" %}selected{% endif %}>Ollama — direct local model</option></select></label>
+<label>Operator label <input name="operator" required value="{{ installation.settings.get('operator', '') }}"></label>
+<label>Model <input name="model" required value="{{ installation.settings.get('model', cfg.model) }}"></label>
+<label>OpenClaw URL <input name="openclaw_url" required value="{{ installation.settings.get('openclaw_url', cfg.openclaw_url) }}"></label>
+<label>Ollama URL <input name="ollama_url" required value="{{ installation.settings.get('ollama_url', cfg.ollama_url) }}"></label>
+<button class="btn" type="submit">Save runtime settings</button></form>
+<form method="post" action="/setup/runtime" style="margin-top:12px"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="action" value="test_connection"><button class="btn btn-ghost" type="submit">Test saved connection</button></form>
+{% if diagnostics %}<div class="card" role="status"><h3>{{ diagnostics.message }}</h3>
+<p>{{ diagnostics.next_step }}</p>{% if diagnostics.available_models %}<p>Installed model names: {% for name in diagnostics.available_models %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}<p class="hint">{{ diagnostics.scope }}</p>
+{% if diagnostics.memory_pressure %}<p>{% if diagnostics.model_weight_gib %}Selected model weights: {{ diagnostics.model_weight_gib }} GiB. {% endif %}This Mac memory pressure: <strong>{{ diagnostics.memory_pressure.state }}</strong>.</p><p>{{ diagnostics.memory_advice }}</p><p class="hint">A model served through a private tunnel may run on another host; check memory there as well.</p>{% endif %}
+<p>Runtime reachable: {{ 'yes' if diagnostics.runtime_reachable else 'no' }} · Model inventory reachable: {{ 'yes' if diagnostics.model_list_reachable else 'no' }} · Selected model listed: {{ 'yes' if diagnostics.model_listed else 'no' }}</p></div>{% endif %}
+<p>Activation permits product use. Sending evidence to a cloud provider still requires the separate authorization controls for each job.</p>
+{% if active %}<h2>Run a governed request</h2><p>Use a small, non-sensitive specimen first. Review the result, inspect Active Agents, preserve it for decision review, then export the Trust Record and retain its checkpoint separately.</p><a class="btn" href="/workbench">Open governed requests</a>{% endif %}
+</section>
+<section class="panel"><h2>Connection and recovery</h2>
+<p>If the runtime is unavailable, use <strong>Test saved connection</strong> above. Check the selected endpoint and model inventory, start or reconnect the independently operated runtime, then test again. A reachable model list only proves endpoint reachability; run a small analysis and inspect its actual response before relying on it.</p>
+<p>Application restart preserves the local profile and records. A submitted request whose outcome was not observed must be reconciled from its request ID and output before another dispatch. In Sessions, inspect worker PID, heartbeat, current task, approval and spending gates. Keep any exported history and its SHA-256 checkpoint separately; the package does not itself give a different chat access to this profile.</p>
+<p>Quitting the native shell stops only the backend process it launched. It does not stop an independently operated model, rental instance, or supervised session worker.</p>
+</section>
+{% endblock %}

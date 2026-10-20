@@ -97,7 +97,7 @@ def install(app,render,base_ctx):
                 return RedirectResponse("/setup",status_code=303)
         return await call_next(request)
 
-    def setup_page(request:Request, diagnostics=None, setup_error=None, status_code=200, release_preview=None):
+    def setup_page(request:Request, diagnostics=None, setup_error=None, status_code=200, release_preview=None, runtime=False):
         decision_routes.local_request(request)
         try:
             value=state()
@@ -107,17 +107,21 @@ def install(app,render,base_ctx):
 
             except (ValueError,TypeError,OSError):active=False;message="Pilot activation is required, expired, revoked, or not configured."
         except (ValueError,TypeError,OSError):raise HTTPException(503,"Installation state is unavailable; existing state was preserved") from None
-        ctx=base_ctx(request,"setup");ctx.update(installation={"installation_id":value["installation_id"],"settings":value["settings"]},
+        ctx=base_ctx(request,"runtime_setup" if runtime else "setup");ctx.update(installation={"installation_id":value["installation_id"],"settings":value["settings"]},
                    active=active,message=message,license_id=claims["license_id"] if active else None,
                    diagnostics=diagnostics,setup_error=setup_error,operator_token=decision_routes.TOKEN,
                    installed_version=os.environ.get("VERITY_APP_VERSION","0.2.0 (development)"),
                    registry_available=bool(os.environ.get("VERITY_PILOT_REGISTRY")),release_preview=release_preview,
                    release_available=bool(os.environ.get("VERITY_PILOT_REGISTRY") and os.environ.get("VERITY_RELEASE_PUBLIC_KEY")))
-        response=render("setup.html",ctx);response.status_code=status_code;response.headers["Cache-Control"]="no-store";return response
+        response=render("runtime_setup.html" if runtime else "setup.html",ctx);response.status_code=status_code;response.headers["Cache-Control"]="no-store";return response
 
     @app.get("/setup")
     def setup(request:Request):
         return setup_page(request)
+
+    @app.get("/setup/runtime")
+    def runtime_setup(request:Request):
+        return setup_page(request, runtime=True)
 
     @app.get("/setup/registry")
     def installation_registry(request:Request):
@@ -130,11 +134,14 @@ def install(app,render,base_ctx):
         ctx=base_ctx(request,"setup");ctx.update(installations=installations)
         response=render("installation_registry.html",ctx);response.headers["Cache-Control"]="no-store";return response
 
+    @app.post("/setup/runtime")
     @app.post("/setup")
     async def configure(request:Request):
         form=await decision_routes.operator_form(request)
+        if request.url.path == "/setup/runtime" and form.get("action") not in {"configure", "test_connection"}:
+            raise HTTPException(422,"Runtime settings cannot activate an installation")
         if form.get("action")=="test_connection":
-            return setup_page(request,diagnostics=runtime_diagnostics.check())
+            return setup_page(request,diagnostics=runtime_diagnostics.check(),runtime=True)
         if form.get("action")=="inspect_release":
             try:
                 from verity_core.pilot_registry import Registry
@@ -172,5 +179,5 @@ def install(app,render,base_ctx):
                 value["max_seen"]=max(time.time(),value["max_seen"]);write(value)
                 if action=="configure":apply_settings(settings)
         except (ValueError,TypeError,KeyError,OSError):
-            return setup_page(request,setup_error=("The change was not saved. Check the installation ID, code signature, expiry, imported revocation list and system clock. Runtime addresses must use HTTP on 127.0.0.1 or localhost."),status_code=422)
-        return RedirectResponse("/setup",status_code=303)
+            return setup_page(request,setup_error=("The change was not saved. Check the installation ID, code signature, expiry, imported revocation list and system clock. Runtime addresses must use HTTP on 127.0.0.1 or localhost."),status_code=422,runtime=form.get("action") in {"configure", "test_connection"})
+        return RedirectResponse("/setup/runtime" if form.get("action")=="configure" else "/setup",status_code=303)

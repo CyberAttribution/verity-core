@@ -5,6 +5,7 @@ accessible OpenClaw credentials, OS permissions, or direct runtime calls.
 """
 import hashlib
 import json
+import re
 import sqlite3
 import time
 import uuid
@@ -14,7 +15,7 @@ from pathlib import Path
 import requests
 
 from verity_core.json_safety import bounded_json_loads
-from verity_core.trust import context_analysis
+from verity_core.trust import context_analysis, inference_receipt
 
 MAX_RUNTIME_RESPONSE_BYTES = 128 * 1024
 
@@ -33,6 +34,7 @@ class LocalInference:
                 agent_id TEXT NOT NULL, purpose TEXT NOT NULL, decision TEXT NOT NULL,
                 state TEXT NOT NULL, record TEXT NOT NULL)""")
             db.execute("CREATE TABLE IF NOT EXISTS context_exports (run_id TEXT PRIMARY KEY, bundle TEXT NOT NULL)")
+            db.execute("CREATE TABLE IF NOT EXISTS request_exports (run_id TEXT PRIMARY KEY, bundle TEXT NOT NULL)")
 
     def _db(self):
         db = sqlite3.connect(self.path, timeout=10)
@@ -44,9 +46,24 @@ class LocalInference:
             return [json.loads(r["record"]) for r in db.execute(
                 "SELECT record FROM runs ORDER BY at DESC LIMIT 30")]
 
+    def get(self, run_id):
+        with self._db() as db:
+            row=db.execute("SELECT record FROM runs WHERE id=?", (run_id,)).fetchone()
+        if row is None:raise KeyError(run_id)
+        return json.loads(row[0])
+
+    def request_export(self, run_id):
+        with self._db() as db:
+            row=db.execute("SELECT bundle FROM request_exports WHERE run_id=?", (run_id,)).fetchone()
+        if row is None:raise KeyError(run_id)
+        bundle=json.loads(row[0])
+        if not inference_receipt.verify(bundle,bundle["checkpoint"]):
+            raise ValueError("Stored request receipt is inconsistent")
+        return bundle
+
     def run(self, *, agent_id, task_id, resource_id, purpose, prompt,
             requested_model="", session_id="", dispatch=None,
-            context_profile_id="", context_store=None):
+            context_profile_id="", context_store=None, expected_configuration_sha256=""):
         label(agent_id); label(task_id); label(resource_id)
         if session_id:
             label(session_id)
@@ -56,6 +73,8 @@ class LocalInference:
             raise ValueError("Prompt must contain 1 to 4000 characters")
         if not isinstance(requested_model, str) or len(requested_model) > 160:
             raise ValueError("Invalid requested model")
+        if expected_configuration_sha256 and (not isinstance(expected_configuration_sha256,str) or not re.fullmatch("[0-9a-f]{64}",expected_configuration_sha256)):
+            raise ValueError("Invalid expected configuration fingerprint")
         if context_profile_id:
             from verity_core.organization_context import ContextStore, identifier
             identifier(context_profile_id)
@@ -72,6 +91,8 @@ class LocalInference:
             reason = None
             if cfg.get("adapter_kind") == "custom_unverified":
                 reason = "Custom agent is unverified; no dispatch adapter is enabled"
+            elif expected_configuration_sha256 and hashlib.sha256(canonical(cfg).encode()).hexdigest() != expected_configuration_sha256:
+                reason = "Configuration changed since request review; reload and review current settings"
             elif cfg.get("require_fresh_connection_observation", False) and not observation:
                 reason = "Fresh local connection observation required; check health before dispatch"
             elif observation and observation["state"] != "reachable":
@@ -94,7 +115,8 @@ class LocalInference:
                           state="denied" if reason else "reserved", reason=reason,
                           prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest(),
                           model=cfg["model"], model_revision=cfg["model_revision"],
-                          configuration=cfg, result=None)
+                          configuration=cfg, result=None,
+                          requested_configuration_sha256=expected_configuration_sha256 or None)
             if capture is not None:
                 record["context_analysis"] = dict(schema="context_analysis_input/v0.1",
                     capture=capture, specimen=specimen,
@@ -125,6 +147,8 @@ class LocalInference:
                 db.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?)",
                            (rid, task_id, record["at"], agent_id, purpose, record["decision"],
                             record["state"], canonical(record)))
+                if reason:
+                    db.execute("INSERT INTO request_exports VALUES (?,?)", (rid,canonical(inference_receipt.export(record))))
                 if capture is not None and reason:
                     db.execute("INSERT INTO context_exports VALUES (?,?)", (rid, canonical(context_analysis.export(record))))
             if reason:
@@ -168,6 +192,7 @@ class LocalInference:
         with self._db() as db:
             db.execute("UPDATE runs SET state=?,record=? WHERE id=?",
                        (record["state"], canonical(record), rid))
+            db.execute("INSERT INTO request_exports VALUES (?,?)", (rid,canonical(inference_receipt.export(record))))
             if capture is not None:
                 db.execute("INSERT INTO context_exports VALUES (?,?)", (rid, canonical(context_analysis.export(record))))
         return record

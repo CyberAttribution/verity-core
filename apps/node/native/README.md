@@ -39,3 +39,16 @@ Apple TN3137 states data protection Keychain access-group entitlements require
 authorization by a provisioning profile embedded in an app-like bundle:
 https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains
 No invented team identity, system security changes, or legacy fallback applied.
+
+The Configuration credential page now records version-bound create/removal
+operations without secret values. A pending record is committed before native
+creation; pending/unknown records block another save and remain recoverable after
+restart. Changed configurations block use of old credentials; disabled connections
+still permit cleanup of retained old references. Removal is idempotent when the
+native helper reports not_found. No route returns a stored credential.
+
+The application packager supplies VERITY_CREDENTIAL_HELPER as an absolute trusted
+executable path. Without it, entry is disabled and POST fails closed. Merely
+setting that path is not native acceptance, signing verification, provider-key
+validation, or authorization for external inference. The unsigned helper remains
+blocked by -34018 until the signed/provisioned native acceptance succeeds.

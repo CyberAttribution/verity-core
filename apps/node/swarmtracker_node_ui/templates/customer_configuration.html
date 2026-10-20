@@ -3,7 +3,7 @@
 {% block content %}
 <h1>Models, agents &amp; environment</h1>
 <p>These are versioned operator assertions. A health response proves only that an endpoint answered. Agent tool and resource settings describe intended scope; the runtime and OS must separately enforce it. No credential or model prompt body is exported here.</p>
-<section class="panel"><h2>Connections</h2><p><a class="btn" href="/models/connect">Connect an existing local model</a> · <a href="/agents/add">Choose an agent</a> · <a href="/workbench">Run a governed request</a></p>
+<section class="panel"><h2>Connections</h2><p><a href="/configuration/credentials">Manage protected API credentials</a></p><p><a class="btn" href="/models/connect">Connect an existing local model</a> · <a href="/agents/add">Choose an agent</a> · <a href="/workbench">Run a governed request</a></p>
 <p>Disabling prevents future routed requests. An already-started request finishes first; removal is confirmed only after the page shows disabled. If a request is still running, retry an unconfirmed change after it finishes.</p>
 {% for item in configurations if item.kind == 'connection' %}
 <article class="card"><strong>{{ item.id }} v{{ item.version }}</strong> · {{ item.body.provider }} / {{ item.body.model }} · revision {{ item.body.revision or 'unknown' }} · {{ item.body.scope }}<br><code>{{ item.body.endpoint }}</code><br>Configuration SHA-256 <code>{{ item.digest }}</code>

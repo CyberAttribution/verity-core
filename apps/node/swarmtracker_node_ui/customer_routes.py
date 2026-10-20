@@ -14,6 +14,19 @@ def database():
     return CustomerConfig(store.DB_PATH.with_name("customer-config.db"))
 
 
+def credential_database():
+    from pathlib import Path
+    from .credential_manager import CredentialManager
+    from .credentials import CredentialStore
+    manager=CredentialManager(store.DB_PATH.with_name("credentials.db"),database())
+    helper=os.environ.get("VERITY_CREDENTIAL_HELPER","")
+    if helper:
+        path=Path(helper)
+        if path.is_absolute() and path.is_file() and not path.is_symlink() and os.access(path,os.X_OK):
+            manager.native=CredentialStore(path,manager.profile)
+    return manager
+
+
 def local_peer(request):
     decision_routes.local_request(request)
     if not request.client or request.client.host not in ("127.0.0.1","::1","testclient"):
@@ -68,6 +81,62 @@ def install(app,render,base_ctx):
         response=render("customer_configuration.html",ctx)
         response.headers["Cache-Control"]="no-store"
         return response
+
+    @app.get("/configuration/credentials")
+    def credentials_page(request:Request):
+        local_peer(request)
+        manager=credential_database();entries={x["id"]:x for x in database().all() if x["kind"]=="connection"}
+        ctx=base_ctx(request,"configuration")
+        ctx.update(operator_token=decision_routes.TOKEN,credential_entries=entries,
+                   credential_records=manager.records(),credential_helper_configured=manager.native is not None,
+                   credential_disabled={identifier:database().connection_disabled(identifier) for identifier in entries})
+        response=render("customer_credentials.html",ctx)
+        response.headers["Cache-Control"]="no-store"
+        return response
+
+    @app.post("/configuration/credentials/{identifier}/save")
+    async def save_credential(request:Request,identifier:str):
+        from starlette.concurrency import run_in_threadpool
+        from .credentials import CredentialUnavailable
+        from .credential_manager import CredentialConflict
+        local_peer(request)
+        form=await decision_routes.operator_form(request,max_fields=3)
+        if set(form)!={"operator_token","expected_digest","secret"}:
+            raise HTTPException(422,"Exact credential fields required",headers={"Cache-Control":"no-store"})
+        try:
+            manager=credential_database()
+            await run_in_threadpool(manager.create,identifier,expected_digest=form["expected_digest"],secret=form["secret"])
+        except CredentialUnavailable:
+            raise HTTPException(503,"Credential save is not confirmed. Review recovery status before trying another save.",headers={"Cache-Control":"no-store"}) from None
+        except CredentialConflict:
+            raise HTTPException(409,"Connection or credential state changed; reload the credential page.",headers={"Cache-Control":"no-store"}) from None
+        except (sqlite3.Error,OSError):
+            raise HTTPException(503,"Credential save is not confirmed. Review recovery status before trying another save.",headers={"Cache-Control":"no-store"}) from None
+        except ValueError:
+            raise HTTPException(422,"Credential save refused; check connection and credential format.",headers={"Cache-Control":"no-store"}) from None
+        return RedirectResponse("/configuration/credentials",status_code=303,headers={"Cache-Control":"no-store"})
+
+    @app.post("/configuration/credentials/{reference}/remove")
+    async def remove_credential(request:Request,reference:str):
+        from starlette.concurrency import run_in_threadpool
+        from .credentials import CredentialUnavailable
+        from .credential_manager import CredentialConflict
+        local_peer(request)
+        form=await decision_routes.operator_form(request,max_fields=2)
+        if set(form)!={"operator_token","expected_digest"}:
+            raise HTTPException(422,"Exact credential removal fields required",headers={"Cache-Control":"no-store"})
+        try:
+            manager=credential_database()
+            await run_in_threadpool(manager.remove,reference,expected_digest=form["expected_digest"])
+        except CredentialUnavailable:
+            raise HTTPException(503,"Credential removal is not confirmed. The recovery reference is retained.",headers={"Cache-Control":"no-store"}) from None
+        except CredentialConflict:
+            raise HTTPException(409,"Connection or credential state changed; reload the credential page.",headers={"Cache-Control":"no-store"}) from None
+        except (sqlite3.Error,OSError):
+            raise HTTPException(503,"Credential removal is not confirmed. The recovery reference is retained.",headers={"Cache-Control":"no-store"}) from None
+        except ValueError:
+            raise HTTPException(422,"Credential removal refused.",headers={"Cache-Control":"no-store"}) from None
+        return RedirectResponse("/configuration/credentials",status_code=303,headers={"Cache-Control":"no-store"})
 
     @app.post("/configuration")
     async def save(request:Request):

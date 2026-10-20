@@ -78,3 +78,8 @@ def test_malformed_host_rejected_before_secret_enters_pipe(host):
     native=NativeDouble();store=CredentialStore('/trusted/helper',PROFILE,runner=native)
     with pytest.raises(ValueError):store.create(provider='openai',endpoint='https://'+host,secret='synthetic')
     assert not native.calls
+
+
+def test_delete_missing_item_is_idempotent_recovery():
+    store=CredentialStore('/trusted/helper',PROFILE,runner=lambda *a,**k:SimpleNamespace(returncode=0,stdout=b'{"ok":false,"error":"not_found"}'))
+    store.delete('33333333-3333-4333-8333-333333333333')

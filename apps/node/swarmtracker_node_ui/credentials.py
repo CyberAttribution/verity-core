@@ -14,10 +14,11 @@ from urllib.parse import urlsplit
 
 class CredentialUnavailable(ValueError):
     """Safe error metadata; a reference is not a secret or an authorization."""
-    def __init__(self,message,*,reference=None,outcome_unknown=False):
+    def __init__(self,message,*,reference=None,outcome_unknown=False,code=None):
         super().__init__(message)
         self.reference=reference
         self.outcome_unknown=outcome_unknown
+        self.code=code
 
 
 def identity(value):
@@ -59,8 +60,14 @@ class CredentialStore:
             result=self.runner([self.helper],input=json.dumps(request).encode(),stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=10,check=False)
             if result.returncode!=0 or len(result.stdout)>65536:raise CredentialUnavailable('Credential storage unavailable')
             response=json.loads(result.stdout)
-            if not isinstance(response,dict) or response.get('ok') is not True:raise CredentialUnavailable('Credential storage unavailable')
+            if not isinstance(response,dict):raise CredentialUnavailable('Credential storage unavailable')
+            if response.get('ok') is not True:
+                code=response.get('error')
+                if code not in {'not_found','already_exists','access_unavailable','missing_entitlement','invalid_keychain_query','keychain_unavailable','invalid_request','invalid_stored_value'}:code=None
+                raise CredentialUnavailable('Credential storage unavailable',code=code)
             return response
+        except CredentialUnavailable:
+            raise
         except subprocess.TimeoutExpired:
             raise CredentialUnavailable('Credential operation outcome unknown',reference=reference,outcome_unknown=True) from None
         except (OSError,subprocess.SubprocessError,ValueError,TypeError):
@@ -89,4 +96,6 @@ class CredentialStore:
         except (KeyError,ValueError,TypeError):raise CredentialUnavailable('Credential binding unavailable') from None
 
     def delete(self,reference):
-        self._call('delete',reference)
+        try:self._call('delete',reference)
+        except CredentialUnavailable as error:
+            if error.code!='not_found':raise

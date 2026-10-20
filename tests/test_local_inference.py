@@ -522,3 +522,56 @@ def test_rehashed_substituted_context_bundle_fails_retained_outer_anchor(tmp_pat
     assert context_analysis.verify(forged,forged["checkpoint"])  # Self-consistency, not authenticated origin.
     assert not context_analysis.verify(forged,retained)
     assert runs.context_export(run["id"])==original
+
+
+@pytest.mark.parametrize("state", [None, "unavailable", "unknown", "stale", "reachable"])
+def test_strict_connection_health_is_persisted_and_gates_dispatch(tmp_path, state):
+    import time
+    config, _ = setup(tmp_path)
+    body = config.latest("agent", "existingOpenClaw")["body"]
+    config.save("agent", "existingOpenClaw", dict(body, require_fresh_connection_observation=True))
+    if state:
+        config.observe("connection", "openclaw", "reachable" if state == "stale" else state, "Synthetic health observation")
+        if state == "stale":
+            with config._db() as db:
+                db.execute("UPDATE observations SET at=?", (time.time() - 301,))
+    reopened = CustomerConfig(config.path)
+    runs = LocalInference(tmp_path / "runs.db", reopened)
+    assert reopened.effective("existingOpenClaw", "report")["require_fresh_connection_observation"] is True
+    seen = []
+    def dispatch(cfg, *_):
+        seen.append(1)
+        return dict(model=cfg["model"], response="Bounded result", event_id="health-1", decision="allow", done=True, done_reason="stop")
+    result = runs.run(agent_id="existingOpenClaw", task_id="strict-health", resource_id="report",
+                      purpose="generate_text", prompt="Synthetic specimen", dispatch=dispatch)
+    assert result["state"] == ("completed" if state == "reachable" else "denied")
+    assert len(seen) == (1 if state == "reachable" else 0)
+
+
+def test_strict_health_removed_at_final_serialized_guard_never_dispatches(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    config, runs = setup(tmp_path)
+    body = config.latest("agent", "existingOpenClaw")["body"]
+    config.save("agent", "existingOpenClaw", dict(body, require_fresh_connection_observation=True))
+    config.observe("connection", "openclaw", "reachable", "Synthetic health observation")
+    original = config.dispatch_guard
+    @contextmanager
+    def remove_then_guard(*args):
+        with config._db() as db:
+            db.execute("DELETE FROM observations")
+        with original(*args):
+            yield
+    monkeypatch.setattr(config, "dispatch_guard", remove_then_guard)
+    seen = []
+    result = runs.run(agent_id="existingOpenClaw", task_id="health-race", resource_id="report",
+                      purpose="generate_text", prompt="Synthetic specimen", dispatch=lambda *_: seen.append(1))
+    assert result["state"] == "failed" and not seen
+    assert "ValueError" in result["reason"]
+
+
+@pytest.mark.parametrize("value", [1, 0, "true", None, []])
+def test_health_requirement_rejects_non_boolean_configuration(tmp_path, value):
+    config, _ = setup(tmp_path)
+    body = config.latest("agent", "existingOpenClaw")["body"]
+    with pytest.raises(ValueError, match="boolean"):
+        config.save("agent", "existingOpenClaw", dict(body, require_fresh_connection_observation=value))

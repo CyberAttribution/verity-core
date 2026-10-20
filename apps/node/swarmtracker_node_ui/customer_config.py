@@ -56,6 +56,8 @@ class CustomerConfig:
             if self.connection_disabled(expected["connection_id"]):
                 raise ValueError("Primary model connection disabled before dispatch")
             observation = self.observations().get(("connection", expected["connection_id"]))
+            if expected.get("require_fresh_connection_observation", False) and not observation:
+                raise ValueError("Fresh local connection observation required before dispatch")
             if observation and observation["state"] != "reachable":
                 raise ValueError("Local connection observation changed before dispatch")
             if self.effective(agent_id, resource_id) != expected:
@@ -88,12 +90,14 @@ class CustomerConfig:
                 raise ValueError("Secrets cannot be entered in configuration")
         elif kind=="agent":
             required={"connection_id","instructions","allowed_tools","resources","external_sharing","fallback_id"}
-            if not required <= set(body) or set(body)-required-{"daily_request_limit","session_request_limit","adapter_kind","runtime_version","service_identity"}:
+            if not required <= set(body) or set(body)-required-{"daily_request_limit","session_request_limit","adapter_kind","runtime_version","service_identity","require_fresh_connection_observation"}:
                 raise ValueError("Invalid agent fields")
             if "daily_request_limit" in body and (type(body["daily_request_limit"]) is not int or not 0<=body["daily_request_limit"]<=10000):
                 raise ValueError("Daily request limit must be 0 to 10000; zero is unlimited")
             if "session_request_limit" in body and (type(body["session_request_limit"]) is not int or not 0<=body["session_request_limit"]<=10000):
                 raise ValueError("Session request limit must be 0 to 10000; zero is unlimited")
+            if "require_fresh_connection_observation" in body and type(body["require_fresh_connection_observation"]) is not bool:
+                raise ValueError("Fresh connection observation requirement must be boolean")
             if "adapter_kind" in body:
                 if body["adapter_kind"] not in {"openclaw_v0", "custom_unverified"}:
                     raise ValueError("Unsupported agent adapter")
@@ -226,7 +230,7 @@ class CustomerConfig:
                           identity_status="unverified; operator-declared",
                           runtime_version=agent["body"].get("runtime_version", ""),
                           service_identity=agent["body"].get("service_identity", ""))
-        for key in ("daily_request_limit","session_request_limit"):
+        for key in ("daily_request_limit","session_request_limit","require_fresh_connection_observation"):
             if key in agent["body"]:
                 result[key]=agent["body"][key]
         return result

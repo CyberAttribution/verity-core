@@ -45,7 +45,12 @@ def test_guided_registration_records_policy_and_real_adapter_identity(tmp_path, 
     assert cfg["service_identity"] == "standardAgent"
     assert cfg["daily_request_limit"] == 20 and cfg["allowed_tools"] == ["generate_text"]
     assert cfg["external_sharing"] == "none"
+    assert cfg["require_fresh_connection_observation"] is True
     runs = LocalInference(tmp_path / "runs.db", c)
+    denied = runs.run(agent_id="newOpenClaw", task_id="unchecked-task", resource_id="report",
+        purpose="generate_text", prompt="Bounded specimen", dispatch=lambda *_: pytest.fail("Unchecked route dispatched"))
+    assert denied["state"] == "denied"
+    c.observe("connection", "localOpenClaw", "reachable", "Synthetic health fixture")
     result = runs.run(agent_id="newOpenClaw", task_id="registered-task", resource_id="report",
         purpose="generate_text", prompt="Bounded specimen",
         dispatch=lambda cfg, *_: dict(model=cfg["model"], response="Complete", id="fixture-event", decision="allowed", done=True))

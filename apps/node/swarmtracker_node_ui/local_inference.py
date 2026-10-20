@@ -72,6 +72,8 @@ class LocalInference:
             reason = None
             if cfg.get("adapter_kind") == "custom_unverified":
                 reason = "Custom agent is unverified; no dispatch adapter is enabled"
+            elif cfg.get("require_fresh_connection_observation", False) and not observation:
+                reason = "Fresh local connection observation required; check health before dispatch"
             elif observation and observation["state"] != "reachable":
                 reason = "Local connection observation is unavailable or stale; recheck before dispatch"
             elif self.configuration.connection_disabled(cfg["connection_id"]):
@@ -131,6 +133,8 @@ class LocalInference:
         # reserved; the same task ID cannot be dispatched again silently.
         try:
             current_observation = self.configuration.observations().get(("connection",cfg["connection_id"]))
+            if cfg.get("require_fresh_connection_observation", False) and not current_observation:
+                raise ValueError("Fresh local connection observation required before dispatch")
             if current_observation and current_observation["state"] != "reachable":
                 raise ValueError("Local connection observation changed before dispatch")
             if self.configuration.connection_disabled(cfg["connection_id"]):

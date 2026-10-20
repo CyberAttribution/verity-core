@@ -45,7 +45,7 @@ def install(app,render,base_ctx):
             body=dict(connection_id=form["connection_id"], instructions=form["instructions"],
                       allowed_tools=["generate_text"], resources=[form["resource_id"]],
                       external_sharing="none", fallback_id="", daily_request_limit=20,
-                      session_request_limit=0, adapter_kind=form["adapter_kind"],
+                      session_request_limit=0, require_fresh_connection_observation=True, adapter_kind=form["adapter_kind"],
                       runtime_version=form["runtime_version"].strip(), service_identity=form["service_identity"].strip())
             database().save("agent",form["agent_id"],body,new_only=True)
         except sqlite3.OperationalError:
@@ -81,7 +81,13 @@ def install(app,render,base_ctx):
                           external_sharing=form.get("external_sharing","none"),fallback_id=form.get("fallback_id","").strip(),
                           daily_request_limit=int(form.get("daily_request_limit","20")),
                           session_request_limit=int(form.get("session_request_limit","0")))
+                if form.get("require_fresh_connection_observation", "false") not in {"true", "false"}:
+                    raise ValueError("Invalid health observation requirement")
                 previous=database().latest("agent",identifier)
+                if "require_fresh_connection_observation" in form:
+                    body["require_fresh_connection_observation"] = form["require_fresh_connection_observation"] == "true"
+                elif previous and "require_fresh_connection_observation" in previous["body"]:
+                    body["require_fresh_connection_observation"] = previous["body"]["require_fresh_connection_observation"]
                 if previous and "adapter_kind" in previous["body"]:
                     body.update({k:previous["body"][k] for k in ("adapter_kind","runtime_version","service_identity") if k in previous["body"]})
             elif kind in ("machine","resource"):

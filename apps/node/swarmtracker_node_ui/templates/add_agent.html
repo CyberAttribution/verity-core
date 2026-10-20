@@ -16,7 +16,7 @@
 <label>Instructions <textarea name="instructions" required maxlength="2000">Summarize the supplied specimen concisely. Do not attempt tools.</textarea></label>
 <label>Runtime version, if known <input name="runtime_version" maxlength="160" placeholder="Operator-declared; not verified"></label>
 <label>macOS service account, if known <input name="service_identity" maxlength="160" placeholder="Account name only; never a password"></label>
-<p>Starts with text generation only, no external sharing, no fallback and a daily cap of 20 routed requests. Review these settings under Models &amp; Environment before submitting work. A custom agent cannot dispatch through this adapter.</p>
+<p>Requires connection health checked within five minutes before each request. Starts with text generation only, no external sharing, no fallback and a daily cap of 20 routed requests. Review these settings under Models &amp; Environment before submitting work. A custom agent cannot dispatch through this adapter.</p>
 <button type="submit">Register agent</button>
 </form>
 {% endif %}

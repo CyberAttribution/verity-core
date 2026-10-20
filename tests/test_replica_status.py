@@ -49,3 +49,10 @@ def test_sessions_only_reads_replica_root_for_exact_configured_session(tmp_path,
     view=configured_view(dict(identity=dict(id='target'),events=[]))
     assert len(view['replicas'])==2
     assert view['replicas'][0]['telemetry']=='stale' and view['replicas'][1]['telemetry']=='unknown'
+
+
+def test_malformed_identity_and_phase_fields_are_not_live_reports(tmp_path):
+    for altered in [dict(state(),phase=123),dict(state(),phase=True),dict(state(),current_task={'injected':'task'}),dict(state(),current_task=123),dict(state(),actual_model=['model']),dict(state(),replica=False)]:
+        write(tmp_path,altered)
+        result=summarize(tmp_path,0,now=1010)
+        assert result['telemetry']=='unknown' and result['current_task'] is None

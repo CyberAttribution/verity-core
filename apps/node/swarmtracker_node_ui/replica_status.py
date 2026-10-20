@@ -25,7 +25,14 @@ def summarize(root,replica,*,now=None,stale_after=120):
                 last_result=None,queue_depth=None,telemetry='unknown',automatic_acceptance=False)
     try:
         state=_read(root/('replica'+str(replica)+'-status.json'))
-        if not isinstance(state,dict) or state.get('replica')!=replica:raise ValueError('Mismatched replica')
+        if not isinstance(state,dict) or type(state.get('replica')) is not int or state.get('replica')!=replica:raise ValueError('Mismatched replica')
+        for key,limit,optional in [('phase',240,False),('current_task',80,True),('actual_model',160,True)]:
+            value=state.get(key)
+            if value is None and optional:continue
+            if not isinstance(value,str) or not 0<len(value)<=limit or any(ord(c)<32 for c in value):
+                raise ValueError('Invalid worker identity or phase')
+        for key in ('low_fields_audited','template_low_verified'):
+            if state.get(key) is not None and type(state[key]) is not bool:raise ValueError('Invalid audit marker')
         at=state.get('last_progress')
         if type(at) not in (int,float) or not 0<at<=now+5:raise ValueError('Invalid progress time')
         result.update({k:state.get(k) for k in ('actual_model','current_task','last_progress','queue_depth','phase','low_fields_audited','template_low_verified')})
@@ -99,7 +106,7 @@ def service_view(root,replica,*,now=None,stale_after=120):
     result=dict(state='unknown',activity='unknown',models=[],running_requests=None,waiting_requests=None)
     try:
         sample=_read(Path(root)/('replica'+str(replica)+'-service.json'))
-        if (not isinstance(sample,dict) or sample.get('replica')!=replica or type(sample.get('at')) not in (int,float)
+        if (not isinstance(sample,dict) or type(sample.get('replica')) is not int or sample.get('replica')!=replica or type(sample.get('at')) not in (int,float)
                 or not 0<sample['at']<=now+5 or now-sample['at']>stale_after):return result
         models=sample.get('models')
         if (sample.get('state')!='ready' or not isinstance(models,list) or not 1<=len(models)<=20

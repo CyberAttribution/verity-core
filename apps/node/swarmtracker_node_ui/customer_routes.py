@@ -94,6 +94,8 @@ def install(app,render,base_ctx):
                     body["require_fresh_connection_observation"] = previous["body"]["require_fresh_connection_observation"]
                 elif previous is None:
                     body["require_fresh_connection_observation"] = True
+                if previous and "permitted_connection_ids" in previous["body"]:
+                    body["permitted_connection_ids"]=previous["body"]["permitted_connection_ids"]
                 if previous and "adapter_kind" in previous["body"]:
                     body.update({k:previous["body"][k] for k in ("adapter_kind","runtime_version","service_identity") if k in previous["body"]})
             elif kind in ("machine","resource"):
@@ -108,6 +110,21 @@ def install(app,render,base_ctx):
             raise HTTPException(409,"Configuration is busy with an in-flight request; change was not confirmed. Retry after it finishes.") from None
         except (ValueError,TypeError,sqlite3.Error):
             raise HTTPException(422,"Configuration refused; check fields and referenced versions. Credentials cannot be entered here.") from None
+        return RedirectResponse("/configuration",status_code=303)
+
+    @app.post("/configuration/agents/{identifier}/models")
+    async def additional_models(request:Request,identifier:str):
+        local_peer(request)
+        form=await decision_routes.operator_form(request,max_fields=3)
+        if set(form)!={"operator_token","permitted_connection_ids","expected_agent_digest"}:
+            raise HTTPException(422,"Exact additional-model permission fields required")
+        db=database()
+        try:
+            db.set_permitted_connections(identifier,[x.strip() for x in form["permitted_connection_ids"].split(",") if x.strip()],form["expected_agent_digest"])
+        except sqlite3.OperationalError:
+            raise HTTPException(409,"Configuration busy; model permissions were not confirmed") from None
+        except (ValueError,TypeError,sqlite3.Error):
+            raise HTTPException(422,"Model permissions refused; choose existing local OpenClaw connections distinct from primary") from None
         return RedirectResponse("/configuration",status_code=303)
 
     @app.post("/configuration/inference")

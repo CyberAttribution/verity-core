@@ -67,11 +67,13 @@ class CustomerConfig:
                 raise ValueError("Fresh local connection observation required before dispatch")
             if observation and observation["state"] != "reachable":
                 raise ValueError("Local connection observation changed before dispatch")
-            if self.effective(agent_id, resource_id) != expected:
+            selected=expected.get("selected_connection_id", "")
+            actual=self.effective(agent_id,resource_id,selected) if selected else self.effective(agent_id,resource_id)
+            if actual != expected:
                 raise ValueError("Effective configuration changed before dispatch")
             yield
 
-    def save(self, kind, identifier, body, *, new_only=False):
+    def save(self, kind, identifier, body, *, new_only=False, expected_digest=None):
         label(identifier)
         if kind=="connection" and self.connection_disabled(identifier):
             raise ValueError("Disabled connection IDs cannot be reused")
@@ -97,7 +99,7 @@ class CustomerConfig:
                 raise ValueError("Secrets cannot be entered in configuration")
         elif kind=="agent":
             required={"connection_id","instructions","allowed_tools","resources","external_sharing","fallback_id"}
-            if not required <= set(body) or set(body)-required-{"daily_request_limit","session_request_limit","adapter_kind","runtime_version","service_identity","require_fresh_connection_observation"}:
+            if not required <= set(body) or set(body)-required-{"daily_request_limit","session_request_limit","adapter_kind","runtime_version","service_identity","require_fresh_connection_observation","permitted_connection_ids"}:
                 raise ValueError("Invalid agent fields")
             if "daily_request_limit" in body and (type(body["daily_request_limit"]) is not int or not 0<=body["daily_request_limit"]<=10000):
                 raise ValueError("Daily request limit must be 0 to 10000; zero is unlimited")
@@ -111,6 +113,15 @@ class CustomerConfig:
             for key in ("runtime_version", "service_identity"):
                 if key in body and (not isinstance(body[key], str) or len(body[key]) > 160 or "\x00" in body[key]):
                     raise ValueError("Invalid declared runtime identity")
+            additional=body.get("permitted_connection_ids",[])
+            if (not isinstance(additional,list) or len(additional)>8 or any(not isinstance(x,str) for x in additional)
+                    or len(set(additional))!=len(additional) or body["connection_id"] in additional):
+                raise ValueError("At most eight distinct additional connections required")
+            for additional_id in additional:
+                label(additional_id)
+                entry=self.latest("connection",additional_id)
+                if not entry or entry["body"]["scope"]!="local" or entry["body"]["provider"]!="openclaw":
+                    raise ValueError("Additional connections require a registered local OpenClaw model")
             label(body["connection_id"])
             _text(body["instructions"],2000)
             if body["fallback_id"]:label(body["fallback_id"])
@@ -150,6 +161,10 @@ class CustomerConfig:
         digest=hashlib.sha256(raw.encode()).hexdigest()
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
+            if expected_digest is not None:
+                previous=db.execute("SELECT digest FROM versions WHERE kind=? AND id=? ORDER BY version DESC LIMIT 1",(kind,identifier)).fetchone()
+                if previous is None or previous["digest"]!=expected_digest:
+                    raise ValueError("Configuration changed before permission update")
             if new_only and db.execute("SELECT 1 FROM versions WHERE kind=? AND id=?", (kind,identifier)).fetchone():
                 raise ValueError("Configuration identifier already exists")
             if kind == "agent":
@@ -168,6 +183,12 @@ class CustomerConfig:
                 # about the newly saved connection, even when the ID is reused.
                 db.execute("DELETE FROM observations WHERE kind=? AND id=?", (kind,identifier))
         return self.latest(kind,identifier)
+
+    def set_permitted_connections(self,identifier,connections,expected_digest):
+        previous=self.latest("agent",identifier)
+        if not previous:raise ValueError("Unknown agent")
+        body=dict(previous["body"],permitted_connection_ids=connections)
+        return self.save("agent",identifier,body,expected_digest=expected_digest)
 
     def disable_connection(self, identifier, reason="Operator removed model connection"):
         label(identifier)
@@ -220,11 +241,18 @@ class CustomerConfig:
                 item["detail"]="Last health observation is stale; current reachability unknown"
         return result
 
-    def effective(self,agent_id,resource_id):
+    def effective(self,agent_id,resource_id,requested_connection_id=""):
         agent=self.latest("agent",agent_id)
         if not agent or resource_id not in agent["body"]["resources"]:raise ValueError("Agent resource not configured")
         resource=self.latest("resource",resource_id)
-        conn=self.latest("connection",agent["body"]["connection_id"])
+        primary_id=agent["body"]["connection_id"]
+        selected=requested_connection_id or primary_id
+        label(selected)
+        if selected!=primary_id and selected not in agent["body"].get("permitted_connection_ids",[]):
+            raise ValueError("Requested connection is not permitted for this agent")
+        conn=self.latest("connection",selected)
+        if selected!=primary_id and (not conn or conn["body"]["scope"]!="local" or conn["body"]["provider"]!="openclaw"):
+            raise ValueError("Additional connection is no longer a supported local OpenClaw model")
         fallback=self.latest("connection",agent["body"]["fallback_id"]) if agent["body"]["fallback_id"] else None
         hosted=[x for x in self.all() if x["kind"]=="link" and x["body"]["to_kind"]=="connection"
                 and x["body"]["to_id"]==conn["id"] and x["body"]["permission"]=="hosts"]
@@ -256,4 +284,7 @@ class CustomerConfig:
         for key in ("daily_request_limit","session_request_limit","require_fresh_connection_observation"):
             if key in agent["body"]:
                 result[key]=agent["body"][key]
+        if selected!=primary_id:
+            result.update(primary_connection_id=primary_id,selected_connection_id=selected,
+                          selection_reason="operator_explicit",require_fresh_connection_observation=True)
         return result

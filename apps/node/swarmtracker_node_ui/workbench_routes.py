@@ -20,9 +20,13 @@ def install(app,render,base_ctx):
         cfg=customer_routes.database();all_items=cfg.all();choices=[]
         for agent in [x for x in all_items if x['kind']=='agent'][:20]:
             for resource in agent['body']['resources'][:20]:
-                effective=cfg.effective(agent['id'],resource)
-                choices.append(dict(configuration=effective,sha256=hashlib.sha256(canonical(effective).encode()).hexdigest(),
-                    registered_only=effective.get('adapter_kind')=='custom_unverified'))
+                for connection_id in [agent['body']['connection_id']]+agent['body'].get('permitted_connection_ids',[]):
+                    try:effective=cfg.effective(agent['id'],resource,connection_id)
+                    except ValueError:continue  # A changed unsupported alternate is not selectable.
+                    choices.append(dict(configuration=effective,sha256=hashlib.sha256(canonical(effective).encode()).hexdigest(),
+                        registered_only=effective.get('adapter_kind')=='custom_unverified',
+                        connection_role='additional' if effective.get('selected_connection_id') else 'primary'))
+                    if len(choices)>=50:break
                 if len(choices)>=50:break
             if len(choices)>=50:break
         ctx=base_ctx(request,'workbench');ctx.update(choices=choices,inference_runs=runs().recent(),operator_token=decision_routes.TOKEN)
@@ -33,11 +37,12 @@ def install(app,render,base_ctx):
         customer_routes.local_peer(request)
         form=await decision_routes.operator_form(request,max_fields=10)
         required={'operator_token','agent_id','resource_id','task_id','session_id','purpose','prompt','expected_configuration_sha256'}
-        if set(form)!=required or not form['expected_configuration_sha256']:
+        if set(form) not in (required,required|{'requested_connection_id'}) or not form['expected_configuration_sha256']:
             raise HTTPException(422,'Exact reviewed request fields required')
         try:
             run=runs().run(agent_id=form['agent_id'],resource_id=form['resource_id'],task_id=form['task_id'],session_id=form['session_id'],
-                purpose=form['purpose'],prompt=form['prompt'],expected_configuration_sha256=form['expected_configuration_sha256'])
+                purpose=form['purpose'],prompt=form['prompt'],requested_connection_id=form.get('requested_connection_id',''),
+                expected_configuration_sha256=form['expected_configuration_sha256'])
         except sqlite3.IntegrityError:
             raise HTTPException(409,'Task ID already recorded; inspect its outcome before any new request') from None
         except (ValueError,KeyError,TypeError):

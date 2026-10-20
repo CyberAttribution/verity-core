@@ -56,8 +56,10 @@ Session {{ run.session_id or 'unspecified' }} · request SHA-256 <code>{{ run.pr
 <section class="panel"><h2>Per-agent configuration</h2>
 {% for item in configurations if item.kind == 'agent' %}
 <article class="card"><strong>{{ item.id }} v{{ item.version }}</strong> · model connection {{ item.body.connection_id }} · fallback {{ item.body.fallback_id or 'none' }}<br>
+Additional permitted local connections {{ item.body.permitted_connection_ids|default([])|join(', ') or 'none' }}. These are explicit choices, not automatic fallback.<br>
 Allowed tool assertions {{ item.body.allowed_tools | join(', ') or 'none' }} · resource access {{ item.body.resources | join(', ') or 'none' }} · external sharing {{ item.body.external_sharing }} · daily request cap {{ item.body.daily_request_limit if item.body.daily_request_limit is defined and item.body.daily_request_limit else 'unlimited (legacy)' }} · fresh health required {{ item.body.require_fresh_connection_observation | default(false) }} · session request cap {{ item.body.session_request_limit if item.body.session_request_limit is defined and item.body.session_request_limit else 'unlimited' }}<br>
-Instructions: {{ item.body.instructions }}<br>Configuration SHA-256 <code>{{ item.digest }}</code> · operator-entered</article>
+Instructions: {{ item.body.instructions }}<br>Configuration SHA-256 <code>{{ item.digest }}</code> · operator-entered
+<form method="post" action="/configuration/agents/{{ item.id }}/models"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="expected_agent_digest" value="{{ item.digest }}"><label>Additional permitted local OpenClaw connection IDs (comma-separated, at most eight; blank revokes all additional choices) <input name="permitted_connection_ids" value="{{ item.body.permitted_connection_ids|default([])|join(', ') }}"></label><button>Save additional model permissions</button></form></article>
 {% endfor %}
 <form method="post" action="/configuration"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="kind" value="agent">
 <label>Agent ID <input name="id" required></label><label>Primary connection ID <input name="connection_id" required></label><label>Fallback connection ID (optional) <input name="fallback_id"></label>

@@ -62,7 +62,7 @@ class LocalInference:
         return bundle
 
     def run(self, *, agent_id, task_id, resource_id, purpose, prompt,
-            requested_model="", session_id="", dispatch=None,
+            requested_model="", requested_connection_id="", session_id="", dispatch=None,
             context_profile_id="", context_store=None, expected_configuration_sha256=""):
         label(agent_id); label(task_id); label(resource_id)
         if session_id:
@@ -75,6 +75,8 @@ class LocalInference:
             raise ValueError("Invalid requested model")
         if expected_configuration_sha256 and (not isinstance(expected_configuration_sha256,str) or not re.fullmatch("[0-9a-f]{64}",expected_configuration_sha256)):
             raise ValueError("Invalid expected configuration fingerprint")
+        if requested_connection_id:
+            label(requested_connection_id)
         if context_profile_id:
             from verity_core.organization_context import ContextStore, identifier
             identifier(context_profile_id)
@@ -86,10 +88,16 @@ class LocalInference:
             if capture is not None:
                 prompt = context_analysis.compose_prompt(capture, specimen)
             cfg = self.configuration.effective(agent_id, resource_id)
+            selection_denial=None
+            if requested_connection_id and requested_connection_id!=cfg["connection_id"]:
+                try:cfg=self.configuration.effective(agent_id,resource_id,requested_connection_id)
+                except ValueError:selection_denial="Requested additional connection is not permitted or supported"
             connection = self.configuration.latest("connection", cfg["connection_id"])
             observation = self.configuration.observations().get(("connection",cfg["connection_id"]))
             reason = None
-            if cfg.get("adapter_kind") == "custom_unverified":
+            if selection_denial:
+                reason=selection_denial
+            elif cfg.get("adapter_kind") == "custom_unverified":
                 reason = "Custom agent is unverified; no dispatch adapter is enabled"
             elif expected_configuration_sha256 and hashlib.sha256(canonical(cfg).encode()).hexdigest() != expected_configuration_sha256:
                 reason = "Configuration changed since request review; reload and review current settings"
@@ -102,7 +110,7 @@ class LocalInference:
             elif purpose not in cfg["allowed_tools"]:
                 reason = "Purpose denied by agent configuration"
             elif requested_model and requested_model != cfg["model"]:
-                reason = "Requested model differs from primary model; fallback is not enabled"
+                reason = "Requested model differs from selected connection; fallback is not enabled"
             elif connection["body"]["scope"] != "local":
                 reason = "External inference adapter is not enabled"
             elif connection["body"]["provider"] not in {"openclaw", "ollama_local"}:
@@ -117,6 +125,8 @@ class LocalInference:
                           model=cfg["model"], model_revision=cfg["model_revision"],
                           configuration=cfg, result=None,
                           requested_configuration_sha256=expected_configuration_sha256 or None)
+            if requested_connection_id:
+                record["requested_connection_id"]=requested_connection_id
             if capture is not None:
                 record["context_analysis"] = dict(schema="context_analysis_input/v0.1",
                     capture=capture, specimen=specimen,
@@ -163,7 +173,10 @@ class LocalInference:
                 raise ValueError("Local connection observation changed before dispatch")
             if self.configuration.connection_disabled(cfg["connection_id"]):
                 raise ValueError("Primary model connection disabled before dispatch")
-            if self.configuration.effective(agent_id, resource_id) != cfg:
+            selected=cfg.get("selected_connection_id", "")
+            current_cfg=(self.configuration.effective(agent_id,resource_id,selected) if selected
+                         else self.configuration.effective(agent_id,resource_id))
+            if current_cfg != cfg:
                 raise ValueError("Effective configuration changed before dispatch")
             # Hold the configuration write reservation across the last checks
             # and bounded runtime call. Independent config instances/processes

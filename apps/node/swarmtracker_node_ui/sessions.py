@@ -363,9 +363,15 @@ def configured_view(record):
             return value if 0 < value < 86400 else default
         except ValueError:
             return default
-    return derive(record, stale_after=threshold("NODE_UI_SESSION_STALE_SECONDS", 300),
-                  idle_after=threshold("NODE_UI_SESSION_IDLE_SECONDS", 600),
-                  budget_margin=threshold("NODE_UI_SESSION_BUDGET_MARGIN", 20))
+    view=derive(record, stale_after=threshold("NODE_UI_SESSION_STALE_SECONDS", 300),
+                idle_after=threshold("NODE_UI_SESSION_IDLE_SECONDS", 600),
+                budget_margin=threshold("NODE_UI_SESSION_BUDGET_MARGIN", 20))
+    view["replicas"]=[]
+    root=os.environ.get("NODE_UI_REPLICA_STATUS_ROOT")
+    if root and os.environ.get("NODE_UI_REPLICA_STATUS_SESSION_ID")==record["identity"]["id"]:
+        from .replica_status import summarize
+        view["replicas"]=[summarize(root,n,stale_after=threshold("NODE_UI_SESSION_STALE_SECONDS",300)) for n in (0,1)]
+    return view
 
 
 def coordinator_view(session_id):

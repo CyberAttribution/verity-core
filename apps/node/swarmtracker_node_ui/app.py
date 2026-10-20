@@ -2398,3 +2398,6 @@ workbench_routes.install(app, render, base_ctx)
 
 from . import environment_routes
 environment_routes.install(app, render, base_ctx)
+
+from . import model_connection_routes
+model_connection_routes.install(app, render, base_ctx)

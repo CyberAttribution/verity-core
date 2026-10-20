@@ -4,6 +4,7 @@
 <section class="panel">
 <h1>Add an agent</h1>
 <p>Choose the agent you already run, then select its model connection and a resource. Registration does not verify its identity or grant access to your Mac.</p>
+<p>Existing OpenClaw v0: <a href="/models/connect">connect its local model</a>, then register below. Custom agents remain registration only; other adapters and installation support are not yet available.</p>
 {% if not connections or not resources %}
 <p>First <a href="/configuration">add a model connection and a resource</a>. No runtime will be installed or downloaded by this form.</p>
 {% else %}
@@ -11,7 +12,7 @@
 <input type="hidden" name="operator_token" value="{{ operator_token }}">
 <label>Agent ID <input name="agent_id" required maxlength="160" placeholder="myOpenClaw"></label>
 <label>Agent type <select name="adapter_kind"><option value="openclaw_v0">Existing OpenClaw v0 — local text requests</option><option value="custom_unverified">Custom agent — registration only</option></select></label>
-<label>Primary model connection <select name="connection_id">{% for item in connections %}<option value="{{ item.id }}">{{ item.id }} — {{ item.body.provider }} / {{ item.body.model }}</option>{% endfor %}</select></label>
+<label>Primary model connection <select name="connection_id">{% for item in connections %}<option value="{{ item.id }}" {% if item.id == selected_connection %}selected{% endif %}>{{ item.id }} — {{ item.body.provider }} / {{ item.body.model }}</option>{% endfor %}</select></label>
 <label>Resource <select name="resource_id">{% for item in resources %}<option value="{{ item.id }}">{{ item.id }} — {{ item.body.description }}</option>{% endfor %}</select></label>
 <label>Instructions <textarea name="instructions" required maxlength="2000">Summarize the supplied specimen concisely. Do not attempt tools.</textarea></label>
 <label>Runtime version, if known <input name="runtime_version" maxlength="160" placeholder="Operator-declared; not verified"></label>

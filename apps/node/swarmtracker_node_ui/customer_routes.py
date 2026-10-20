@@ -26,7 +26,7 @@ def install(app,render,base_ctx):
         local_peer(request)
         db=database();ctx=base_ctx(request,"agents")
         entries=db.all()
-        ctx.update(operator_token=decision_routes.TOKEN,
+        ctx.update(operator_token=decision_routes.TOKEN,selected_connection=request.query_params.get("connection_id",""),
                    connections=[x for x in entries if x["kind"]=="connection" and not db.connection_disabled(x["id"])],
                    resources=[x for x in entries if x["kind"]=="resource"])
         response=render("add_agent.html",ctx)

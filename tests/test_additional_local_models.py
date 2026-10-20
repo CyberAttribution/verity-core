@@ -158,3 +158,18 @@ def test_workbench_selected_hash_and_permission_route_are_bound(tmp_path,monkeyp
     success=client.post('/workbench/requests',data=form,follow_redirects=False)
     assert success.status_code==303 and calls==['alternate']
     bundle=client.get(success.headers['location']+'/export').json();assert inference_receipt.verify(bundle,bundle['checkpoint'])
+
+
+def test_concurrent_same_task_id_cannot_dispatch_twice(env):
+    c,r=env;other=LocalInference(r.path,CustomerConfig(c.path));entered=threading.Event();release=threading.Event();seen=[];errors=[]
+    def dispatch(cfg,*_):
+        seen.append(cfg['connection_id']);entered.set();assert release.wait(5);return response(cfg)
+    def first():
+        try:request(r,'same-task',requested_connection_id='alternate',dispatch=dispatch)
+        except BaseException as exc:errors.append(exc)
+    thread=threading.Thread(target=first);thread.start();assert entered.wait(5)
+    try:
+        with pytest.raises(sqlite3.IntegrityError):request(other,'same-task',requested_connection_id='alternate',dispatch=dispatch)
+    finally:release.set();thread.join(5)
+    assert not errors and seen==['alternate']
+    assert len(r.recent())==1 and r.recent()[0]['state']=='completed'

@@ -49,7 +49,9 @@ int main(void) { @autoreleasepool {
     } else { status=SecItemDelete((__bridge CFDictionaryRef)query); }
     if (status==errSecSuccess) { reply(@{@"ok":@YES}); return 0; }
     NSString *error=@"keychain_unavailable";
-    if (status==errSecItemNotFound) error=@"not_found";
+    if (status==errSecMissingEntitlement) error=@"missing_entitlement";
+    else if (status==errSecParam) error=@"invalid_keychain_query";
+    else if (status==errSecItemNotFound) error=@"not_found";
     else if (status==errSecDuplicateItem) error=@"already_exists";
     else if (status==errSecInteractionNotAllowed || status==errSecAuthFailed || status==errSecUserCanceled) error=@"access_unavailable";
     reply(@{@"ok":@NO,@"error":error,@"status":@(status)});

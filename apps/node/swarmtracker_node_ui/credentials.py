@@ -7,11 +7,17 @@ isolate malicious code running as the same OS user or erase Python memory.
 import json
 import subprocess
 import uuid
+import ipaddress
+import re
 from urllib.parse import urlsplit
 
 
 class CredentialUnavailable(ValueError):
-    pass
+    """Safe error metadata; a reference is not a secret or an authorization."""
+    def __init__(self,message,*,reference=None,outcome_unknown=False):
+        super().__init__(message)
+        self.reference=reference
+        self.outcome_unknown=outcome_unknown
 
 
 def identity(value):
@@ -31,7 +37,16 @@ def binding(provider,endpoint):
         valid=u.scheme=='https' and u.hostname and not u.username and not u.password and not u.query and not u.fragment and u.path in ('','/') and u.port in (None,443)
     except ValueError:valid=False
     if not valid:raise ValueError('HTTPS origin required')
-    return dict(provider=provider,endpoint='https://'+u.hostname.lower())
+    host=u.hostname.lower()
+    try:
+        address=ipaddress.ip_address(host)
+        host='['+address.compressed+']' if address.version==6 else address.compressed
+    except ValueError:
+        try:host=host.encode('idna').decode('ascii')
+        except UnicodeError:raise ValueError('HTTPS origin required') from None
+        if len(host)>253 or any(not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?',part) for part in host.split('.')):
+            raise ValueError('HTTPS origin required')
+    return dict(provider=provider,endpoint='https://'+host)
 
 
 class CredentialStore:
@@ -46,15 +61,20 @@ class CredentialStore:
             response=json.loads(result.stdout)
             if not isinstance(response,dict) or response.get('ok') is not True:raise CredentialUnavailable('Credential storage unavailable')
             return response
+        except subprocess.TimeoutExpired:
+            raise CredentialUnavailable('Credential operation outcome unknown',reference=reference,outcome_unknown=True) from None
         except (OSError,subprocess.SubprocessError,ValueError,TypeError):
             raise CredentialUnavailable('Credential storage unavailable') from None
 
-    def create(self,*,provider,endpoint,secret):
+    def create(self,*,provider,endpoint,secret,reference=None):
         bound=binding(provider,endpoint)
         if not isinstance(secret,str) or not 1<=len(secret.encode())<=8192 or any(ord(c)<33 or ord(c)>126 for c in secret):
             raise ValueError('Bounded nonempty ASCII API credential required')
-        reference=str(uuid.uuid4())
-        self._call('create',reference,value=json.dumps(dict(bound,secret=secret),sort_keys=True))
+        reference=identity(reference) if reference is not None else str(uuid.uuid4())
+        try:self._call('create',reference,value=json.dumps(dict(bound,secret=secret),sort_keys=True))
+        except CredentialUnavailable as error:
+            error.reference=reference
+            raise
         return reference
 
     def read(self,reference,*,provider,endpoint):

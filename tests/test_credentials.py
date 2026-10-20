@@ -52,3 +52,29 @@ def test_timeout_does_not_echo_secret_or_retry():
     store=CredentialStore('/trusted/helper',PROFILE,runner=timeout)
     with pytest.raises(CredentialUnavailable) as error:store.create(provider='openai',endpoint='https://api.openai.com',secret='synthetic-secret')
     assert len(calls)==1 and 'synthetic' not in str(error.value)
+
+
+def test_create_timeout_retains_reference_for_explicit_recovery():
+    calls=[]
+    def timeout(*a,**k):
+        calls.append(json.loads(k['input']));raise subprocess.TimeoutExpired(a,10)
+    store=CredentialStore('/trusted/helper',PROFILE,runner=timeout)
+    with pytest.raises(CredentialUnavailable) as error:store.create(provider='openai',endpoint='https://api.openai.com',secret='synthetic')
+    assert error.value.outcome_unknown is True
+    assert error.value.reference==calls[0]['reference']
+    assert len(calls)==1
+
+
+def test_preallocated_reference_and_ipv6_origin_round_trip():
+    native=NativeDouble();store=CredentialStore('/trusted/helper',PROFILE,runner=native)
+    reference='33333333-3333-4333-8333-333333333333'
+    assert store.create(provider='openai',endpoint='https://[::1]:443',secret='synthetic',reference=reference)==reference
+    assert store.read(reference,provider='openai',endpoint='https://[0:0:0:0:0:0:0:1]')=='synthetic'
+    assert json.loads(next(iter(native.items.values())))['endpoint']=='https://[::1]'
+
+
+@pytest.mark.parametrize('host',['bad host.example','bad_host.example','-bad.example','host..example','host.example.'])
+def test_malformed_host_rejected_before_secret_enters_pipe(host):
+    native=NativeDouble();store=CredentialStore('/trusted/helper',PROFILE,runner=native)
+    with pytest.raises(ValueError):store.create(provider='openai',endpoint='https://'+host,secret='synthetic')
+    assert not native.calls

@@ -25,3 +25,17 @@ and the governed paid-inference adapter still need integration. Python and the
 helper necessarily handle secret plaintext in memory; no same-user malicious
 code isolation, authenticated binary identity, or guaranteed memory erasure is
 claimed. Distribution signing and helper ownership are packaging requirements.
+
+Create timeouts preserve the opaque reference as safe exception metadata and
+report an unknown outcome; they do not trigger a retry. Callers should persist
+a newly allocated reference before creation and pass it explicitly. Recovery
+must account for an item potentially created before a timeout. Provider origins
+are normalized and validated, including IPv6 brackets. This is binding validation,
+not authorization of a network destination; paid dispatch needs its own policy.
+
+Signing investigation confirmed an ad hoc linker signature without a team ID,
+zero valid code-signing identities on this MacBook, and native create -34018.
+Apple TN3137 states data protection Keychain access-group entitlements require
+authorization by a provisioning profile embedded in an app-like bundle:
+https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains
+No invented team identity, system security changes, or legacy fallback applied.

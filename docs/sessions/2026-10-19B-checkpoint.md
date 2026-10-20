@@ -162,3 +162,21 @@ Initial0220 archive remains valid but older; an updated source/private checkpoin
 is being prepared. New test app binary remains on MacBook; reproducible source,
 build metadata/logs and private evidence are included in checkpoint scope, not a
 claim that a notarized distributable is backed up or ready for customer release.
+
+### Closeout verification correction
+
+The first packaged-worker denial was specifically a connection-health denial,
+not a purpose denial; the real Mini receipt independently records the purpose
+policy denial. Latest fresh ad-hoc build at clean6df7f28 includes the766ca38 guided
+model page and passed21headless frozen-worker checks, including guided connection
+registration and accurate denial reason. No model request occurred in the frozen
+worker test; real Mini inference and cross-view tests remain separate acceptance.
+
+The2332 backup matched its file manifest and SQLite/source checks, but an added
+referential check found the copy routine had reformatted raw response JSON.
+Original24response files still matched their recorded SHA256 values. The2332
+archive is superseded as the private-evidence backup: a corrected byte-preserving
+final checkpoint will verify all raw response hashes, low-setting request payloads,
+source-packet bindings, SQLite integrity and source restore on the other Mac.
+Retain the earlier checkpoint as history; use the verified final checkpoint named
+in the session handoff for restoration. No source data was lost or modified.

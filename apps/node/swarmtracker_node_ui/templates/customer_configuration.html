@@ -10,6 +10,12 @@
 {% set observation=observations.get(('connection',item.id)) %}
 <p>Routing: {{ 'disabled permanently' if disabled_connections.get(item.id) else 'eligible for policy checks' }}</p>
 <p>Connection: {{ observation.state if observation else 'unknown' }} · {{ observation.detail if observation else 'Not checked' }}{% if observation %} · observed {{ observation.at }}{% endif %}</p>
+{% set last=last_connection_requests.get(item.id) %}
+{% if last %}<p>Last recorded routed request in the recent 30-request window: <strong>{{ last.task_id }}</strong> · {{ last.state }} · {{ last.model }} / {{ last.model_revision or 'unknown revision' }} · connection v{{ last.configuration.connection_version }}.
+{% if last.configuration.connection_version != item.version %}<strong>Historical connection version; this does not establish current readiness.</strong>{% endif %}
+{% if last.state == 'completed' and last.result %}<br>Completed response recorded · runtime event <code>{{ last.result.runtime_event_id }}</code> · response SHA-256 <code>{{ last.result.response_sha256 }}</code>. Completion is not independent review of the answer.{% else %}<br>No completed response for this recorded request.{% endif %}
+<br>Token usage and request cost are unavailable in this route.</p>
+{% else %}<p>No routed request observed in the recent 30-request window. Health alone does not establish inference readiness.</p>{% endif %}
 {% if not disabled_connections.get(item.id) %}<form method="post" action="/configuration/connections/{{ item.id }}/disable"><input type="hidden" name="operator_token" value="{{ operator_token }}"><button>Disable connection</button></form>{% endif %}
 <form method="post" action="/configuration/connections/{{ item.id }}/check"><input type="hidden" name="operator_token" value="{{ operator_token }}"><button>Check connection</button></form></article>
 {% endfor %}

@@ -575,3 +575,25 @@ def test_health_requirement_rejects_non_boolean_configuration(tmp_path, value):
     body = config.latest("agent", "existingOpenClaw")["body"]
     with pytest.raises(ValueError, match="boolean"):
         config.save("agent", "existingOpenClaw", dict(body, require_fresh_connection_observation=value))
+
+
+def test_connection_page_distinguishes_health_completion_and_historical_version(tmp_path, monkeypatch):
+    from swarmtracker_node_ui import app as ui, store
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "profile.db")
+    config, _ = setup(tmp_path)
+    runs = LocalInference(tmp_path / "local-inference.db", config)
+    client = TestClient(ui.app, base_url="http://127.0.0.1")
+    config.observe("connection", "openclaw", "reachable", "Synthetic HTTP observation only")
+    page = client.get("/configuration").text
+    assert "No routed request observed" in page and "Completed response recorded" not in page
+    runs.run(agent_id="existingOpenClaw", task_id="page-real-shape-fixture", resource_id="report",
+        purpose="generate_text", prompt="Synthetic fixture", dispatch=lambda cfg,*_: dict(
+            model=cfg["model"], response="Fixture result", event_id="page-fixture-event", decision="allowed", done=True))
+    page = client.get("/configuration").text
+    assert "Completed response recorded" in page and "page-fixture-event" in page
+    assert "Historical connection version;" not in page
+    old = config.latest("connection", "openclaw")
+    config.save("connection", "openclaw", dict(old["body"], model="new-model"))
+    page = client.get("/configuration").text
+    assert "Historical connection version; this does not establish current readiness." in page
+    assert "Token usage and request cost are unavailable" in page

@@ -58,9 +58,13 @@ def install(app,render,base_ctx):
     def page(request:Request):
         local_peer(request)
         db=database();ctx=base_ctx(request,"configuration")
+        recent=LocalInference(store.DB_PATH.with_name("local-inference.db"),db).recent()
+        last_requests={}
+        for run in recent:
+            last_requests.setdefault(run["configuration"]["connection_id"],run)
         ctx.update(configurations=db.all(),observations=db.observations(),
                    disabled_connections={item["id"]:db.connection_disabled(item["id"]) for item in db.all() if item["kind"]=="connection"},operator_token=decision_routes.TOKEN,
-                   inference_runs=LocalInference(store.DB_PATH.with_name("local-inference.db"),db).recent())
+                   inference_runs=recent,last_connection_requests=last_requests)
         response=render("customer_configuration.html",ctx)
         response.headers["Cache-Control"]="no-store"
         return response

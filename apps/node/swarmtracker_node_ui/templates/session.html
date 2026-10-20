@@ -9,6 +9,7 @@
 <div class="kv-grid">
 <div class="kv"><span>Provider / connection</span><code>{{ view.provider }} / {{ view.connection }}</code></div>
 <div class="kv"><span>Model / activity</span><code>{{ view.model }} / {{ view.activity }}</code></div>
+<div class="kv"><span>Recent GPU request or result</span><code>{{ "within the activity window" if view.recent_request_activity else "none within the activity window" }} · last observed {{ view.last_request_activity_at or "unknown" }}</code></div>
 <div class="kv"><span>Last contact</span><code>{{ view.last_contact or 'Unknown' }}</code></div>
 <div class="kv"><span>Instance / type / region</span><code>{{ view.provider_details.instance_id or 'Unknown' }} · {{ view.provider_details.instance_type or 'Unknown' }} · {{ view.provider_details.region or 'Unknown' }}</code></div>
 <div class="kv"><span>GPU / IP / selected SSH key</span><code>{{ view.provider_details.gpu or 'Unknown' }} · {{ view.provider_details.ip or 'Unknown' }} · {{ view.provider_details.ssh_key_label or 'Unknown' }}</code></div>

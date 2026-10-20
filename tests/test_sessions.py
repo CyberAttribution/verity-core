@@ -44,7 +44,7 @@ def test_empty_billing_blocked_ssh_download_local_work_and_stale():
     assert view["estimated_charge"] == pytest.approx(22.32, abs=.01)
     assert view["estimate_basis"] == "provider billing start"
     assert view["reported_charge"] is None
-    assert any("no recent GPU" in a for a in view["alerts"])
+    assert any("no running GPU" in a for a in view["alerts"])
     assert any("Prolonged paid idle" in a for a in view["alerts"])
     record["events"].append(dict(event("inv", "inventory", "ssh", {"checked": True, "models": []}, t), received=t))
     assert derive(record, now=t)["model"] == "absent"
@@ -134,7 +134,7 @@ def test_collector_crash_restart_dedupes_and_alerts(tmp_path):
     pending.write_text(json.dumps(payload))
     notices = collect_once(inbox, db)
     assert (inbox / "provider.seen").exists()
-    assert any("no recent GPU" in n for n in notices)
+    assert any("no running GPU" in n for n in notices)
     # Simulate commit followed by a crash before inbox rename.
     pending.write_text(json.dumps(payload))
     collect_once(inbox, SessionStore(tmp_path / "session.db"))

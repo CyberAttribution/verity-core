@@ -269,6 +269,13 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
         and now - observed_at(request) <= min(idle_after, stale_after)
         and (task_id not in results or results[task_id][0] < position)
         for task_id, (position, request) in requests.items())
+    recent_request_at = max((observed_at(e) for e in record["events"]
+                             if e["kind"] in {"request", "result"} and e["data"].get("task_id") in tasks
+                             and tasks[e["data"]["task_id"]]["data"].get("scope") == "gpu"), default=None)
+    recent_request_activity = recent_request_at is not None and now - recent_request_at <= idle_after
+    connection_observation = latest.get("connection")
+    connection = (data("connection").get("state", "unknown") if not stale and connection_observation
+                  and now - observed_at(connection_observation) <= stale_after else "unknown")
     bill = data("billing")
     rate_event = next((e for e in reversed(record["events"]) if e["kind"] == "billing" and "rate" in e["data"]), None)
     charge_event = next((e for e in reversed(record["events"]) if e["kind"] == "billing" and "reported_charge" in e["data"]), None)
@@ -282,7 +289,7 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
     if provider == "running" and model == "absent":
         alerts.append("Paid instance: successful inventory found no model")
     if provider == "running" and not activity:
-        alerts.append("Paid instance: no recent GPU request activity")
+        alerts.append("Paid instance: no running GPU request observed")
         idle_since = max((observed_at(e) for e in record["events"] if e["kind"] in {"request", "result"} and e["data"].get("state") in {"running", "completed", "failed"}), default=None)
         idle_start = idle_since or (start if isinstance(start, (int, float)) else latest.get("provider", {}).get("received"))
         if idle_start and now - idle_start >= idle_after:
@@ -313,8 +320,9 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
         task_views.append(item)
     gpu_samples = [dict(e["data"], observed_at=e["at"], received=e["received"],
                         state="stale" if now-observed_at(e) > stale_after else "observed") for e in sorted(gpu.values(),key=lambda x:x["data"]["index"])]
-    return {"provider": provider, "last_provider_state": observed_provider, "connection": "unknown" if stale else data("connection").get("state", "unknown"), "model": model,
-            "activity": "active" if activity else "unknown" if stale else "no recent request", "stale": stale,
+    return {"provider": provider, "last_provider_state": observed_provider, "connection": connection, "model": model,
+            "activity": "active" if activity else "unknown" if stale else "no running request", "stale": stale,
+            "recent_request_activity": recent_request_activity, "last_request_activity_at": recent_request_at,
             "last_contact": datetime.fromtimestamp(contact_at, timezone.utc).isoformat() if contact_at else None,
             "tasks": task_views, "alerts": alerts, "billing": bill, "elapsed_seconds": elapsed,
             "estimated_charge": estimate, "estimate_basis": "provider billing start" if "billing_start" in bill else "guest boot proxy" if "estimate_start_proxy" in bill else "unknown", "reported_charge": bill.get("reported_charge"),
@@ -322,7 +330,7 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
             "charge_source": charge_event["source"] if charge_event else None, "charge_observed_at": charge_event["at"] if charge_event else None,
             "model_details": data("model"), "inventory": inventory, "request": data("request"), "retained_resources": retained, "gpu_samples":gpu_samples,
             "shutdown_requested": bool(data("shutdown").get("requested")), "termination_confirmed": bool(confirmed),
-            "provider_details": data("provider"), "summary": f"Provider {provider}; connection {'unknown' if stale else data('connection').get('state', 'unknown')}; model {model}; GPU activity {'active' if activity else 'unverified'}; {len(alerts)} alert(s)."}
+            "provider_details": data("provider"), "summary": f"Provider {provider}; connection {connection}; model {model}; GPU activity {'active' if activity else 'unverified'}; {len(alerts)} alert(s)."}
 
 
 def install(app, render, base_ctx):

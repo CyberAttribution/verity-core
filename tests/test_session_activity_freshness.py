@@ -69,3 +69,17 @@ def test_provider_confirmation_and_estimate_survive_old_history():
         observation('stop','shutdown',dict(confirmed=True),at=NOW-1800,source='provider_console'))
     assert snapshot['termination_confirmed'] and snapshot['provider']=='terminated'
     assert snapshot['estimated_charge']==11.16
+
+
+def test_recent_completion_is_visible_without_claiming_running_work():
+    snapshot=view(task('a'),request('a'),result('a'))
+    assert snapshot['activity']=='no running request'
+    assert snapshot['recent_request_activity'] and snapshot['last_request_activity_at']==NOW
+    assert not view(task('a'),request('a'),result('a'),now=NOW+601)['recent_request_activity']
+    assert view()['last_request_activity_at'] is None
+
+
+def test_heartbeat_does_not_refresh_old_connection_observation():
+    snapshot=view(observation('connection','connection',dict(state='reachable'),at=NOW-3600),
+                  observation('contact','contact',dict(state='reachable')))
+    assert not snapshot['stale'] and snapshot['connection']=='unknown'

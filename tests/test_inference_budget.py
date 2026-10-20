@@ -108,3 +108,16 @@ def test_unknown_before_dispatch_cannot_attribute_an_authorized_charge(env):
     with pytest.raises(BudgetDenied):l.reconcile('request',actual_microusd=50)
     assert l.get('request')['state']=='unknown' and l.get('request')['actual'] is None
     with pytest.raises(BudgetDenied):reserve(env,'next',30)
+
+
+def test_rollover_after_reserve_day_sample_cannot_authorize_dispatch(env):
+    l,p=env
+    old=l.clock();calls=[]
+    def rollover():
+        calls.append(1)
+        return old if len(calls)==1 else old+86400
+    l.clock=rollover
+    row=reserve(env)
+    assert row['day']==int(old//86400)
+    with pytest.raises(BudgetDenied):l.mark_dispatched('request')
+    assert [e['state'] for e in l.history('request')]==['reserved']

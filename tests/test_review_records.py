@@ -55,3 +55,16 @@ def test_token_limited_response_cannot_be_adjudicated_as_accepted(tmp_path):
     p,c=fixture(tmp_path,'length');ingest(p,c,session_id='session');assert c.snapshot()['work_items'][0]['state']=='failed'
     with pytest.raises(ValueError):adjudicate(c,'ReviewTask',disposition='accepted_fix',actor='Reviewer',checkpoint=COMMIT,evidence='Partial text is not final')
     assert adjudicate(c,'ReviewTask',disposition='incomplete',actor='Reviewer',checkpoint=COMMIT,evidence='Raw finish reason length; no final answer')
+
+
+def test_fix_checkpoint_is_separate_from_immutable_review_input(tmp_path):
+    p,c=fixture(tmp_path);ingest(p,c,session_id='session')
+    fix='b'*40
+    adjudicate(c,'ReviewTask',disposition='accepted_fix',actor='Independent test reviewer',checkpoint=fix,evidence='Later fix tested against retained reviewed source')
+    with c.db() as db:
+        observation=json.loads(db.execute('SELECT observation FROM review_imports WHERE id=?',('ReviewTask',)).fetchone()[0])
+        assessment=json.loads(db.execute('SELECT assessment FROM review_assessments WHERE id=?',('ReviewTask',)).fetchone()[0])
+    assert observation['input_commit']==COMMIT
+    assert assessment['checkpoint']==fix
+    ingest(p,c,session_id='session')
+    assert c.snapshot()['work_items'][0]['checkpoint']==fix

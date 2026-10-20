@@ -80,7 +80,11 @@ def ingest(directory,coordinator,*,session_id):
 
 
 def adjudicate(coordinator,task_id,*,disposition,actor,checkpoint,evidence):
-    """Record an attributed independent review; never infer it from model prose."""
+    """Record an attributed independent review; never infer it from model prose.
+
+    checkpoint identifies the independently assessed fix/validation source. It may
+    follow the model input commit, which remains immutable in review_imports.
+    """
     if disposition not in {'accepted_fix','supported_guard','advisory','rejected','incomplete','unresolved'}:
         raise ValueError('Explicit review disposition required')
     for value,limit in ((actor,160),(evidence,2000)):

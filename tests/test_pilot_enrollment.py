@@ -21,7 +21,7 @@ def test_verified_acceptance_relaunch_installation_and_replay(tmp_path):
     assert again.get('invite-test')['state']=='accepted'
     with pytest.raises(EnrollmentConflict):again.accept('invite-test',invite,user,'Pilot Name',now=NOW)
     with pytest.raises(ValueError):again.bind_installation('invite-test','install-late',now=(NOW+timedelta(days=2)).timestamp())
-    bound=again.bind_installation('invite-test','install-test')
+    bound=again.bind_installation('invite-test','install-test',now=NOW.timestamp())
     assert bound['activation_issued'] is False
     with pytest.raises(EnrollmentConflict):again.bind_installation('invite-test','other-install')
     assert again.get('invite-test')['installation_id']=='install-test'

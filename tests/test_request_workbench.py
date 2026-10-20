@@ -109,3 +109,13 @@ def test_receipt_retained_anchor_rejects_tampering_and_rehashed_replacement(tmp_
     assert not inference_receipt.verify(replacement,anchor)
     bad=copy.deepcopy(bundle);bad['record']['entries'][0]['payload']['configuration']['agent_version']=True
     assert not inference_receipt.verify(bad,anchor)
+
+
+def test_supported_runtime_allow_word_does_not_bypass_retained_anchor(tmp_path,monkeypatch):
+    client,cfg,ledger,form,calls=environment(tmp_path,monkeypatch)
+    response=client.post('/workbench/requests',data=form,follow_redirects=False)
+    bundle=client.get(response.headers['location']+'/export').json()
+    run=ledger.recent()[0];run['result']['runtime_decision']='allow'
+    replacement=inference_receipt.export(run)
+    assert inference_receipt.verify(replacement,replacement['checkpoint'])
+    assert not inference_receipt.verify(replacement,bundle['checkpoint'])

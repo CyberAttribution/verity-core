@@ -146,6 +146,8 @@ class BudgetLedger:
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE');row=db.execute('SELECT * FROM inference_budget_entries WHERE request_id=?',(request_id,)).fetchone()
             if row is None or row['state'] not in ('dispatched','unknown','reconciled'):raise BudgetDenied('Dispatched or unknown request required')
+            if not db.execute("SELECT 1 FROM inference_budget_events WHERE request_id=? AND state='dispatched'",(request_id,)).fetchone():
+                raise BudgetDenied('Recorded dispatch authorization required before charge reconciliation')
             if row['state']=='reconciled' and row['actual']!=actual_microusd:raise BudgetDenied('Conflicting charge requires explicit correction workflow')
             if row['state']!='reconciled':
                 db.execute("UPDATE inference_budget_entries SET state='reconciled',actual=?,detail='Attributed actual charge; provider provenance must be retained by adapter' WHERE request_id=?",(actual_microusd,request_id))

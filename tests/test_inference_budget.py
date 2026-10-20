@@ -101,3 +101,10 @@ def test_budget_state_history_is_retained_and_reconciliation_is_idempotent(env):
     history=BudgetLedger(l.path,clock=l.clock).history('request')
     assert [e['state'] for e in history]==['reserved','dispatched','unknown','reconciled']
     assert history[0]['data']['estimate_microusd']==60 and history[-1]['data']['actual_microusd']==45
+
+
+def test_unknown_before_dispatch_cannot_attribute_an_authorized_charge(env):
+    l,p=env;reserve(env);l.mark_unknown('request')
+    with pytest.raises(BudgetDenied):l.reconcile('request',actual_microusd=50)
+    assert l.get('request')['state']=='unknown' and l.get('request')['actual'] is None
+    with pytest.raises(BudgetDenied):reserve(env,'next',30)

@@ -88,6 +88,8 @@ def install(app,render,base_ctx):
                     body["require_fresh_connection_observation"] = form["require_fresh_connection_observation"] == "true"
                 elif previous and "require_fresh_connection_observation" in previous["body"]:
                     body["require_fresh_connection_observation"] = previous["body"]["require_fresh_connection_observation"]
+                elif previous is None:
+                    body["require_fresh_connection_observation"] = True
                 if previous and "adapter_kind" in previous["body"]:
                     body.update({k:previous["body"][k] for k in ("adapter_kind","runtime_version","service_identity") if k in previous["body"]})
             elif kind in ("machine","resource"):

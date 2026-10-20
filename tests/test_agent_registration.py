@@ -114,3 +114,26 @@ def test_new_agent_id_is_atomic_across_independent_instances(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert sorted(pool.map(save, (1, 2))) == ["refused", "registered"]
     assert c.latest("agent", "sameAgent")["version"] == 1
+
+
+def test_configuration_health_flag_defaults_preserves_and_rejects_invalid(tmp_path, monkeypatch):
+    c = configured(tmp_path)
+    client = client_for(tmp_path, monkeypatch)
+    from swarmtracker_node_ui import decision_routes
+    form = dict(operator_token=decision_routes.TOKEN, kind="agent", id="configAgent", connection_id="localOpenClaw",
+                instructions="Synthetic text only", allowed_tools="generate_text", resources="report",
+                external_sharing="none", fallback_id="", daily_request_limit="20", session_request_limit="0")
+    assert client.post("/configuration", data=form, follow_redirects=False).status_code == 303
+    assert c.latest("agent", "configAgent")["body"]["require_fresh_connection_observation"] is True
+    assert client.post("/configuration", data=dict(form, require_fresh_connection_observation="false"), follow_redirects=False).status_code == 303
+    assert c.latest("agent", "configAgent")["body"]["require_fresh_connection_observation"] is False
+    assert client.post("/configuration", data=form, follow_redirects=False).status_code == 303
+    assert c.latest("agent", "configAgent")["body"]["require_fresh_connection_observation"] is False
+    version = c.latest("agent", "configAgent")["version"]
+    assert client.post("/configuration", data=dict(form, require_fresh_connection_observation="maybe")).status_code == 422
+    assert c.latest("agent", "configAgent")["version"] == version
+    legacy = dict(c.latest("agent", "configAgent")["body"])
+    legacy.pop("require_fresh_connection_observation")
+    c.save("agent", "legacyAgent", legacy)
+    assert client.post("/configuration", data=dict(form, id="legacyAgent"), follow_redirects=False).status_code == 303
+    assert "require_fresh_connection_observation" not in c.latest("agent", "legacyAgent")["body"]

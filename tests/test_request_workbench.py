@@ -119,3 +119,44 @@ def test_supported_runtime_allow_word_does_not_bypass_retained_anchor(tmp_path,m
     replacement=inference_receipt.export(run)
     assert inference_receipt.verify(replacement,replacement['checkpoint'])
     assert not inference_receipt.verify(replacement,bundle['checkpoint'])
+
+
+def test_same_actual_request_links_agents_governance_sessions_and_environment(tmp_path,monkeypatch):
+    client,cfg,ledger,form,calls=environment(tmp_path,monkeypatch)
+    from swarmtracker_node_ui import agents
+    monkeypatch.setattr(agents,'observe',lambda:{})
+    cfg.save('machine','declared-mini',dict(description='Synthetic declared host; identity unknown',provenance='operator-entered',status='unknown'))
+    cfg.save('link','mini-hosts',dict(from_kind='machine',from_id='declared-mini',to_kind='connection',to_id='local',permission='hosts',provenance='operator-entered',status='unknown'))
+    parser=RequestForm();parser.feed(client.get('/workbench').text);form['expected_configuration_sha256']=parser.values['expected_configuration_sha256']
+    response=client.post('/workbench/requests',data=form,follow_redirects=False);url=response.headers['location']
+    assert len(calls)==1 and ledger.recent()[0]['configuration']['machine_id']=='declared-mini'
+    for path in ('/agents','/governance','/sessions','/environment'):
+        page=client.get(path)
+        assert page.status_code==200,path
+        assert url in page.text and 'workbench-request' in page.text and 'fixture-request-event' in page.text
+        assert 'PRIVATE_SPECIMEN' not in page.text and 'unchecked model text' not in page.text
+        assert 'not current agent activity' in page.text
+    detail=client.get(url).text
+    assert 'Recorded host declaration: declared-mini' in detail
+    page=client.get('/environment')
+    assert 'No network scan' in page.text and 'operator assertions' in page.text
+    assert 'mini-hosts v1' in page.text and 'operator-entered / unknown' in page.text
+    from swarmtracker_node_ui import app as ui
+    remote=TestClient(ui.app,base_url='http://127.0.0.1',client=('203.0.113.4',1234))
+    assert remote.get('/environment').status_code==403
+
+
+def test_config_change_at_final_guard_is_not_the_claimed_toctou_bypass(tmp_path,monkeypatch):
+    from contextlib import contextmanager
+    client,cfg,ledger,form,calls=environment(tmp_path,monkeypatch)
+    from swarmtracker_node_ui.customer_config import CustomerConfig
+    original=CustomerConfig.dispatch_guard
+    @contextmanager
+    def changed_before_guard(self,*args):
+        body=self.latest('agent','fixture-agent')['body']
+        self.save('agent','fixture-agent',dict(body,instructions='Changed after outer equality check'))
+        with original(self,*args):yield
+    monkeypatch.setattr(CustomerConfig,'dispatch_guard',changed_before_guard)
+    response=client.post('/workbench/requests',data=form,follow_redirects=False)
+    assert response.status_code==303 and not calls
+    assert ledger.recent()[0]['state']=='failed'

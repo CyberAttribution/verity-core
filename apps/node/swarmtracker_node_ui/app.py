@@ -73,6 +73,8 @@ def base_ctx(request: Request, page: str) -> dict:
         },
     }
     if page in ("agents", "governance", "sessions"):
+        from .workbench_routes import summary as routed_summary
+        ctx["routed_requests"] = routed_summary(request)
         from .company_routes import database as company_database
         try:
             ctx["company_work_summaries"] = company_database().recent()
@@ -2393,3 +2395,6 @@ context_routes.install(app, render, base_ctx)
 
 from . import workbench_routes
 workbench_routes.install(app, render, base_ctx)
+
+from . import environment_routes
+environment_routes.install(app, render, base_ctx)

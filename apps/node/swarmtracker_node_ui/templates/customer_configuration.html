@@ -48,7 +48,7 @@
 <label>Bounded request <textarea name="prompt" maxlength="4000" required></textarea></label>
 <button>Run through configured local agent</button></form>
 {% for run in inference_runs %}
-<article class="card"><strong>{{ run.task_id }}</strong> · {{ run.agent_id }} · {{ run.decision }} / {{ run.state }} · {{ run.purpose }}<br>
+<article class="card"><a href="/workbench/requests/{{ run.id }}"><strong>{{ run.task_id }}</strong></a> · {{ run.agent_id }} · {{ run.decision }} / {{ run.state }} · {{ run.purpose }}<br>
 Model {{ run.model }} · revision {{ run.model_revision }} · agent config v{{ run.configuration.agent_version }} · connection v{{ run.configuration.connection_version }}<br>
 Session {{ run.session_id or 'unspecified' }} · request SHA-256 <code>{{ run.prompt_sha256 }}</code>{% if run.reason %}<p>{{ run.reason }}</p>{% endif %}
 {% if run.result %}<p>Runtime decision: {{ run.result.runtime_decision or 'unreported' }} · event {{ run.result.runtime_event_id or 'unreported' }} · result SHA-256 <code>{{ run.result.response_sha256 }}</code></p><pre>{{ run.result.response }}</pre>{% endif %}</article>

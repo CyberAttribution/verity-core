@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Development Sessions{% endblock %}
 {% block content %}
+{% include "_routed_requests.html" %}
 <h1>Sessions</h1>
 <p>Read-only records of provider rentals and associated local work. Unknown means no fresh observation was received.</p>
 {% for identity, view in sessions %}

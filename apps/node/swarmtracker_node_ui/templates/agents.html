@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Active Agents{% endblock %}
 {% block content %}
+{% include "_routed_requests.html" %}
 <section class="panel"><div class="panel-head"><h2>Your configured agents</h2><a class="btn" href="/agents/add">Add an agent</a></div>
 <p>Registration records your intended setup. Runtime contact, completed requests and identity verification are separate.</p>
 {% if configured_agents_error %}<p>Agent configuration could not be read. Current setup is unknown.</p>{% endif %}

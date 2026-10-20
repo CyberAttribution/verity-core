@@ -70,3 +70,20 @@ def install(app,render,base_ctx):
     def checkpoint(request:Request,run_id:str):
         response=export(request,run_id)
         return JSONResponse(json.loads(response.body)['checkpoint'],headers={'Cache-Control':'no-store','Content-Disposition':'attachment; filename="verity-request-checkpoint.json"'})
+
+
+def summary(request):
+    """Bounded metadata for other local views; never promote a request to live activity."""
+    try:
+        customer_routes.local_peer(request)
+        records=[]
+        for run in runs().recent():
+            cfg=run['configuration'];result=run.get('result') or {}
+            records.append(dict(id=run['id'],task_id=run['task_id'],agent_id=run['agent_id'],session_id=run.get('session_id'),
+                at=run['at'],state=run['state'],decision=run['decision'],purpose=run['purpose'],resource_id=run['resource_id'],
+                model=run['model'],model_revision=run['model_revision'],connection_id=cfg['connection_id'],
+                connection_version=cfg['connection_version'],agent_version=cfg['agent_version'],
+                machine_id=cfg.get('machine_id'),runtime_event_id=result.get('runtime_event_id')))
+        return dict(rows=records,error=False)
+    except (HTTPException,sqlite3.Error,OSError,ValueError,KeyError,TypeError,AttributeError):
+        return dict(rows=[],error=True)

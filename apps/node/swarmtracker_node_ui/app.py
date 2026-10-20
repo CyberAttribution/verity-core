@@ -2387,3 +2387,6 @@ customer_routes.install(app, render, base_ctx)
 
 from . import company_routes
 company_routes.install(app, render, base_ctx)
+
+from . import context_routes
+context_routes.install(app, render, base_ctx)

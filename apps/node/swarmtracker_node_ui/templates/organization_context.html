@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Organization context{% endblock %}
+{% block content %}
+<section class="panel"><h1>Review context before an analysis</h1>
+<p>Propose a profile, review its exact entries, then explicitly approve it for local analysis. Proposals never become active automatically. Local review labels are not authenticated identities, factual guarantees or permission to take actions.</p>
+<form method="post" action="/contexts/propose"><input type="hidden" name="operator_token" value="{{ operator_token }}">
+<h2>Propose a small profile</h2><p>This pilot form creates a version containing one entry. A new version replaces the previous active body only after approval; earlier versions remain in history.</p>
+<label>Profile ID <input name="profile_id" required maxlength="80" placeholder="example-vendor"></label>
+<label>Profile title <input name="title" required maxlength="120"></label><label>Entry ID <input name="entry_id" required maxlength="80"></label>
+<label>Entry kind <select name="kind"><option>vendor</option><option>person</option><option>domain</option><option>system</option><option>relationship</option><option>policy</option></select></label>
+<label>Statement status <select name="status"><option value="assumption">Assumption</option><option value="fact">Fact asserted by operator</option><option value="proposal">Proposal</option></select></label>
+<label>Subject <input name="subject" required maxlength="120"></label><label>Statement <textarea name="value" required maxlength="500"></textarea></label>
+<label>Source reference or operator declaration <input name="source_ref" required maxlength="1000"></label>
+<p>The statement fingerprint is preserved. Referenced sources are not fetched or independently checked by this form.</p>
+<label>Checked at (UTC, YYYY-MM-DDTHH:MM:SSZ) <input name="checked_at" required maxlength="20"></label>
+<label>Review before (UTC, YYYY-MM-DDTHH:MM:SSZ) <input name="review_before" required maxlength="20"></label>
+<label><input type="checkbox" name="missing"> Supporting context is missing</label><label><input type="checkbox" name="conflicting"> Conflicting information remains</label>
+<button>Save proposal for review</button></form></section>
+{% for profile in context_profiles %}<section class="panel"><h2>{{ profile.profile_id }}</h2>
+<p>Generation {{ profile.generation }} · {% if profile.active_version %}locally approved version {{ profile.active_version }}{% else %}no active approval{% endif %}</p>
+{% for proposal in profile.versions %}<article class="card"><h3>Version {{ proposal.version }} · {{ proposal.decision }}{% if proposal.decision == 'approved' and profile.active_version != proposal.version %} · historical, no longer active{% endif %}</h3><strong>{{ proposal.body.title }}</strong>
+{% for entry in proposal.body.entries %}<p>{{ entry.kind }} · {{ entry.status }} · {{ entry.subject }}</p><pre>{{ entry.value }}</pre><p>Source: {{ entry.source_ref }} · checked {{ entry.checked_at }} · review before {{ entry.review_before }} · {{ entry.qualifications|join(', ') }}</p>{% endfor %}
+{% if proposal.decision == 'proposed' %}<form method="post" action="/contexts/{{ profile.profile_id }}/decision"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="version" value="{{ proposal.version }}"><input type="hidden" name="sha256" value="{{ proposal.sha256 }}"><input type="hidden" name="generation" value="{{ proposal.parent_generation }}"><input type="hidden" name="parent_digest" value="{{ proposal.parent_digest or '' }}"><label>Local reviewer label <input name="actor" required maxlength="120"></label><label>Review reason <input name="reason" required maxlength="500"></label><button name="action" value="approve">Approve this exact proposal</button><button name="action" value="reject">Reject proposal</button></form>{% endif %}
+{% if profile.active_version == proposal.version %}<form method="post" action="/contexts/{{ profile.profile_id }}/withdraw"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="generation" value="{{ profile.generation }}"><input type="hidden" name="sha256" value="{{ proposal.sha256 }}"><label>Local reviewer label <input name="actor" required maxlength="120"></label><label>Withdrawal reason <input name="reason" required maxlength="500"></label><button>Withdraw active approval</button></form>{% endif %}
+</article>{% endfor %}</section>{% endfor %}
+<section class="panel"><h2>Analyze a single request using approved context</h2>
+<p>The selected profile and its approval history are captured with the analysis. Missing, stale, conflicting or assumed entries stay visible. A withdrawn profile blocks new context-required requests. This route uses an existing configured local agent; it does not execute payments or other actions.</p>
+<form method="post" action="/contexts/analyze"><input type="hidden" name="operator_token" value="{{ operator_token }}">
+<label>Approved profile <select name="profile_id" required><option value="">Choose a locally approved profile</option>{% for profile in context_profiles if profile.active_version %}<option value="{{ profile.profile_id }}">{{ profile.profile_id }} · v{{ profile.active_version }}</option>{% endfor %}</select></label>
+<label>Configured agent ID <input name="agent_id" required></label><label>Resource ID <input name="resource_id" required></label><label>Unique task ID <input name="task_id" required></label><label>Session ID (required when capped) <input name="session_id"></label>
+<label>Request or specimen <textarea name="prompt" required maxlength="2000"></textarea></label><p>Stored locally with the context and result for later inspection and export.</p><button>Analyze with this context</button></form>
+{% for run in context_runs %}<article class="card"><h3>{{ run.task_id }} · {{ run.decision }} / {{ run.state }}</h3><p>Context {{ run.context_analysis.capture.snapshot.profile_id }} · version {{ run.context_analysis.capture.snapshot.version }} · captured generation {{ run.context_analysis.capture.snapshot.generation }} · now {{ run.context_status }}</p>
+{% for flag in run.context_analysis.capture.snapshot.qualifications %}<p>{{ flag.id }}: {{ flag.qualifications|join(', ') }}</p>{% endfor %}
+<p>Model {{ run.model }} · revision {{ run.model_revision or 'unreported' }}</p><pre>{{ run.context_analysis.specimen }}</pre>{% if run.result %}<h4>Model interpretation — independently unchecked</h4><pre>{{ run.result.response }}</pre>{% endif %}{% if run.reason %}<p>{{ run.reason }}</p>{% endif %}
+{% if run.state != 'reserved' %}<p><a href="/contexts/runs/{{ run.id }}/export">Export context analysis</a> · <a href="/contexts/runs/{{ run.id }}/checkpoint">Retain checkpoint separately</a></p>{% endif %}</article>{% endfor %}</section>
+{% endblock %}

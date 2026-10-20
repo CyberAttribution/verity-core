@@ -13,6 +13,12 @@ LIMITATIONS = "Local review and runtime observations; identities, source truth a
 
 
 def compose_prompt(capture, specimen):
+    """Prepare a ContextStore-owned capture, not authorize an imported one.
+
+    The inner checkpoint checks consistency of this local input. Offline trust
+    comes from verify(bundle, separately_retained_outer_checkpoint); a newly
+    self-chosen anchor proves no origin or approval authority.
+    """
     evidence.text(specimen, 4000)
     if len(trust.canonical_json(capture).encode()) > 65536:
         raise ValueError("Context history exceeds bounded analysis allowance")

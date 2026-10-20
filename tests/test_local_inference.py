@@ -499,3 +499,26 @@ def test_context_capture_lock_spans_durable_run_reservation(tmp_path,monkeypatch
             context_profile_id="fixture-org",context_store=context,dispatch=dispatch)
         future.result(timeout=3)
     assert reserved==[[("reserved-first",)]] and run["state"]=="completed"
+
+
+def test_rehashed_substituted_context_bundle_fails_retained_outer_anchor(tmp_path):
+    import copy
+    from verity_core.trust import context_analysis,record as trust
+    config,runs=setup(tmp_path);context,_=context_fixture(tmp_path)
+    run=runs.run(agent_id="existingOpenClaw",task_id="anchored-original",resource_id="report",purpose="generate_text",prompt="Fixture request",
+        context_profile_id="fixture-org",context_store=context,dispatch=lambda cfg,*_:dict(model=cfg["model"],response="Synthetic response",event_id="anchor-original",decision="allow",done=True))
+    original=runs.context_export(run["id"]);retained=copy.deepcopy(original["checkpoint"])
+    # A caller may create a fully self-consistent local ledger. It still cannot
+    # substitute that history for an independently retained original run anchor.
+    other_dir=tmp_path/"other";other_dir.mkdir();other,proposal=context_fixture(other_dir)
+    other.withdraw("fixture-org",1,proposal["sha256"],actor="fixture",reason="New history")
+    p=other.propose("fixture-org",proposal["body"])
+    other.approve("fixture-org",p["version"],p["sha256"],2,None,actor="fixture",reason="New local approval")
+    changed=copy.deepcopy(run);changed["context_analysis"]["capture"]=other.capture_active("fixture-org")
+    prompt=context_analysis.compose_prompt(changed["context_analysis"]["capture"],changed["context_analysis"]["specimen"])
+    changed["prompt_sha256"]=trust.hashlib.sha256(prompt.encode()).hexdigest()
+    changed["context_analysis"]["runtime_prompt_sha256"]=trust.hashlib.sha256((changed["configuration"]["instructions"]+"\n\n"+prompt).encode()).hexdigest()
+    forged=context_analysis.export(changed)
+    assert context_analysis.verify(forged,forged["checkpoint"])  # Self-consistency, not authenticated origin.
+    assert not context_analysis.verify(forged,retained)
+    assert runs.context_export(run["id"])==original

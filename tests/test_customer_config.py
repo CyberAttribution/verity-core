@@ -137,3 +137,35 @@ def test_registered_adapter_identity_survives_governed_action_export(tmp_path):
     custom["agent_id"] = "customAgent"
     with pytest.raises(ValueError, match="adapter is unsupported"):
         report_actions.validate(custom)
+
+
+def test_connection_version_change_invalidates_old_health_observation(tmp_path):
+    c, _ = configured(tmp_path)
+    old = c.latest("connection", "m1OpenClaw")
+    c.observe("connection", "m1OpenClaw", "reachable", "Synthetic old endpoint answered")
+    c.save("connection", "m1OpenClaw", dict(old["body"], endpoint="http://127.0.0.1:8091"))
+    assert ("connection", "m1OpenClaw") not in c.observations()
+
+
+@pytest.mark.parametrize("change", ["endpoint", "identical_version"])
+def test_health_probe_cannot_commit_for_a_changed_connection(tmp_path, monkeypatch, change):
+    from swarmtracker_node_ui import app as ui, decision_routes, store, session_coordinator
+    from apps.node.swarmtracker_node_ui.customer_config import CustomerConfig
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "profile.db")
+    c, _ = configured(tmp_path)
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, size): return b"ok"
+    class ChangedDuringProbe:
+        def open(self, request, timeout):
+            other = CustomerConfig(c.path)
+            body = other.latest("connection", "m1OpenClaw")["body"]
+            other.save("connection", "m1OpenClaw", dict(body, endpoint="http://127.0.0.1:8091") if change == "endpoint" else body)
+            return Response()
+    monkeypatch.setattr(session_coordinator, "LOCAL_OPENER", ChangedDuringProbe())
+    client = TestClient(ui.app, base_url="http://127.0.0.1")
+    response = client.post("/configuration/connections/m1OpenClaw/check", data=dict(operator_token=decision_routes.TOKEN))
+    assert response.status_code == 409
+    assert ("connection", "m1OpenClaw") not in c.observations()

@@ -144,7 +144,8 @@ def install(app,render,base_ctx):
         if not entry:raise HTTPException(404,"Unknown connection")
         if db.connection_disabled(identifier):raise HTTPException(409,"Connection was disabled")
         if entry["body"]["scope"]=="external":
-            db.observe("connection",identifier,"unknown","External endpoint was not contacted; per-job data-sharing authorization and protected credentials are required")
+            observed_state="unknown"
+            detail="External endpoint was not contacted; per-job data-sharing authorization and protected credentials are required"
         else:
             from .session_coordinator import LOCAL_OPENER
             try:
@@ -152,7 +153,15 @@ def install(app,render,base_ctx):
                 with LOCAL_OPENER.open(urllib.request.Request(endpoint+"/healthz"),timeout=2) as response:
                     if response.status!=200:raise ValueError("Unhealthy status")
                     response.read(4096)
-                db.observe("connection",identifier,"reachable","Loopback HTTP health responded; host identity and model execution unconfirmed")
+                observed_state="reachable"
+                detail="Loopback HTTP health responded; host identity and model execution unconfirmed"
             except (OSError,ValueError):
-                db.observe("connection",identifier,"unavailable","Loopback health request failed; configuration preserved")
+                observed_state="unavailable"
+                detail="Loopback health request failed; configuration preserved"
+        try:
+            db.observe("connection",identifier,observed_state,detail,expected_digest=entry["digest"],expected_version=entry["version"])
+        except ValueError:
+            raise HTTPException(409,"Connection changed during health check; recheck the current version") from None
+        except sqlite3.OperationalError:
+            raise HTTPException(409,"Configuration is busy; health observation was not confirmed") from None
         return RedirectResponse("/configuration",status_code=303)

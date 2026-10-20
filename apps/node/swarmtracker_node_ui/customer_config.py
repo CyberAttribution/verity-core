@@ -156,6 +156,10 @@ class CustomerConfig:
             row=db.execute("SELECT COALESCE(MAX(version),0)+1 FROM versions WHERE kind=? AND id=?",(kind,identifier)).fetchone()
             version=row[0]
             db.execute("INSERT INTO versions VALUES (?,?,?,?,?,?)",(kind,identifier,version,digest,raw,time.time()))
+            if kind == "connection":
+                # Reachability of the previous endpoint/version is not evidence
+                # about the newly saved connection, even when the ID is reused.
+                db.execute("DELETE FROM observations WHERE kind=? AND id=?", (kind,identifier))
         return self.latest(kind,identifier)
 
     def disable_connection(self, identifier, reason="Operator removed model connection"):
@@ -182,10 +186,15 @@ class CustomerConfig:
         with self._db() as db:
             return [dict(row,body=json.loads(row["body"])) for row in db.execute("SELECT v.* FROM versions v JOIN (SELECT kind,id,MAX(version) version FROM versions GROUP BY kind,id) x ON (v.kind,v.id,v.version)=(x.kind,x.id,x.version) ORDER BY v.kind,v.id")]
 
-    def observe(self,kind,identifier,state,detail):
+    def observe(self,kind,identifier,state,detail, *, expected_digest=None, expected_version=None):
         if not self.latest(kind,identifier) or state not in {"reachable","unavailable","unknown"}:
             raise ValueError("Invalid observation")
         with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            latest = db.execute("SELECT digest,version FROM versions WHERE kind=? AND id=? ORDER BY version DESC LIMIT 1", (kind,identifier)).fetchone()
+            if (not latest or (expected_digest is not None and latest["digest"] != expected_digest)
+                    or (expected_version is not None and latest["version"] != expected_version)):
+                raise ValueError("Configuration changed during health observation; recheck current connection")
             db.execute("INSERT OR REPLACE INTO observations VALUES (?,?,?,?,?)",(kind,identifier,time.time(),state,_text(detail,300)))
 
     def observations(self):

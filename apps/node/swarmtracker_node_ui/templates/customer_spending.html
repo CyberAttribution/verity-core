@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Agent spending policies{% endblock %}
+{% block content %}<h1>Agent spending policies</h1><p><a href="/configuration">Back to configuration</a></p>
+<p role="status"><strong>Policy preparation only: paid provider routing is not enabled.</strong> These limits are not yet connected to a paid-inference adapter. They do not cap direct calls outside Verity or the Lambda rental.</p>
+<p>Enter USD amounts with up to six decimal places. Zero permits no positive-cost reservation; enter <code>unlimited</code> explicitly for no limit. A blank field does not mean unlimited. Daily periods use UTC. Session limits require a session ID.</p>
+{% for row in spending_agents %}<section class="panel"><h2>{{ row.entry.id }}</h2>
+{% if row.policy %}<p>Policy v{{ row.policy.version }} · <code>{{ row.policy.digest }}</code></p>{% else %}<p>No monetary policy recorded. A governed paid adapter must refuse dispatch until a policy is set.</p>{% endif %}
+<form method="post" action="/configuration/spending/{{ row.entry.id }}"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="expected_policy_digest" value="{{ row.policy.digest if row.policy else '' }}">
+<label>Daily USD limit <input name="daily_usd" value="{{ format_usd(row.policy.daily_microusd) if row.policy else '0.000000' }}" required></label>
+<label>Session USD limit <input name="session_usd" value="{{ format_usd(row.policy.session_microusd) if row.policy else '0.000000' }}" required></label><button>Save spending policy version</button></form></section>
+{% else %}<p>Register an agent before preparing its spending policy.</p>{% endfor %}
+<p>Reservations use estimates. Unknown completion retains the reservation; actual charges may exceed an estimate. Provider billing and usage evidence still require adapter integration.</p>{% endblock %}

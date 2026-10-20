@@ -48,10 +48,15 @@ class BudgetLedger:
         if type(now) not in (int,float) or not 0<now<4102444800:raise ValueError('Invalid ledger clock')
         return int(now//86400)
 
-    def set_policy(self,agent,*,daily_microusd,session_microusd):
+    def set_policy(self,agent,*,daily_microusd,session_microusd,expected_policy_digest=None):
         identifier(agent);money(daily_microusd,optional=True);money(session_microusd,optional=True)
+        if expected_policy_digest is not None and (not isinstance(expected_policy_digest,str) or (expected_policy_digest!='' and not re.fullmatch('[a-f0-9]{64}',expected_policy_digest))):
+            raise ValueError('Reviewed monetary policy digest required')
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
+            if expected_policy_digest is not None:
+                previous=db.execute('SELECT digest FROM inference_budget_policies WHERE agent=? ORDER BY version DESC LIMIT 1',(agent,)).fetchone()
+                if (previous['digest'] if previous else '')!=expected_policy_digest:raise BudgetDenied('Monetary policy changed since review')
             version=db.execute('SELECT COALESCE(MAX(version),0)+1 FROM inference_budget_policies WHERE agent=?',(agent,)).fetchone()[0]
             body=dict(agent=agent,version=version,currency='USD',unit='microUSD',daily_microusd=daily_microusd,session_microusd=session_microusd)
             raw=json.dumps(body,sort_keys=True,separators=(',',':'));digest=hashlib.sha256(raw.encode()).hexdigest()

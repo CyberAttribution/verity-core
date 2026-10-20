@@ -14,6 +14,26 @@ def database():
     return CustomerConfig(store.DB_PATH.with_name("customer-config.db"))
 
 
+def budget_database():
+    from verity_core.inference_budget import BudgetLedger
+    return BudgetLedger(store.DB_PATH.with_name("inference-budget.db"))
+
+
+def parse_usd(value):
+    import re
+    if value=="unlimited":return None
+    if not isinstance(value,str) or not re.fullmatch(r"[0-9]{1,7}(?:\.[0-9]{1,6})?",value):
+        raise ValueError("Explicit USD amount or unlimited required")
+    whole,_,fraction=value.partition(".")
+    amount=int(whole)*1000000+int(fraction.ljust(6,"0") or "0")
+    if amount>10**12:raise ValueError("USD amount too large")
+    return amount
+
+
+def format_usd(value):
+    return "unlimited" if value is None else str(value//1000000)+"."+str(value%1000000).zfill(6)
+
+
 def credential_database():
     from pathlib import Path
     from .credential_manager import CredentialManager
@@ -81,6 +101,40 @@ def install(app,render,base_ctx):
         response=render("customer_configuration.html",ctx)
         response.headers["Cache-Control"]="no-store"
         return response
+
+    @app.get("/configuration/spending")
+    def spending_page(request:Request):
+        from verity_core.inference_budget import BudgetDenied
+        local_peer(request)
+        ledger=budget_database();agents=[]
+        for item in database().all():
+            if item["kind"]!="agent":continue
+            try:policy=ledger.policy(item["id"])
+            except BudgetDenied:policy=None
+            agents.append(dict(entry=item,policy=policy))
+        ctx=base_ctx(request,"configuration")
+        ctx.update(operator_token=decision_routes.TOKEN,spending_agents=agents,format_usd=format_usd)
+        response=render("customer_spending.html",ctx);response.headers["Cache-Control"]="no-store"
+        return response
+
+    @app.post("/configuration/spending/{identifier}")
+    async def save_spending(request:Request,identifier:str):
+        from verity_core.inference_budget import BudgetDenied
+        local_peer(request)
+        form=await decision_routes.operator_form(request,max_fields=4)
+        if set(form)!={"operator_token","daily_usd","session_usd","expected_policy_digest"}:
+            raise HTTPException(422,"Exact spending policy fields required")
+        if not database().latest("agent",identifier):raise HTTPException(404,"Unknown agent")
+        try:
+            budget_database().set_policy(identifier,daily_microusd=parse_usd(form["daily_usd"]),
+                session_microusd=parse_usd(form["session_usd"]),expected_policy_digest=form["expected_policy_digest"])
+        except BudgetDenied:
+            raise HTTPException(409,"Spending policy changed; reload before saving") from None
+        except ValueError:
+            raise HTTPException(422,"Use a nonnegative USD amount with at most six decimal places, or unlimited") from None
+        except (sqlite3.Error,OSError):
+            raise HTTPException(503,"Spending policy save was not confirmed") from None
+        return RedirectResponse("/configuration/spending",status_code=303)
 
     @app.get("/configuration/credentials")
     def credentials_page(request:Request):

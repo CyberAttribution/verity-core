@@ -65,8 +65,12 @@ def validate(manifest):
                   "resource_hash","provenance","machine_id","machine_version","machine_hash","executor_id"}
         expanded={"instructions","resources","fallback_model","fallback_revision"}
         adapter={"adapter_kind","identity_status","runtime_version","service_identity"}
-        if not isinstance(cfg,dict) or not required <= set(cfg) or set(cfg)-required-expanded-adapter-{"daily_request_limit","session_request_limit"} or cfg["agent_id"]!=manifest["agent_id"] or cfg["model"]!=manifest["model"] or cfg["provider"]!=manifest["provider"] or cfg["resource_id"]!=TARGET or cfg["executor_id"]!="verity-report-broker":
+        if not isinstance(cfg,dict) or not required <= set(cfg) or set(cfg)-required-expanded-adapter-{"daily_request_limit","session_request_limit","routing_enabled","require_fresh_connection_observation"} or cfg["agent_id"]!=manifest["agent_id"] or cfg["model"]!=manifest["model"] or cfg["provider"]!=manifest["provider"] or cfg["resource_id"]!=TARGET or cfg["executor_id"]!="verity-report-broker":
             raise ValueError("Action configuration mismatch")
+        if "require_fresh_connection_observation" in cfg and type(cfg["require_fresh_connection_observation"]) is not bool:
+            raise ValueError("Invalid declared health requirement")
+        if "routing_enabled" in cfg and cfg["routing_enabled"] is not True:
+            raise ValueError("Agent routed requests are paused")
         if adapter & set(cfg):
             if not adapter <= set(cfg) or cfg["adapter_kind"] != "openclaw_v0" or cfg["identity_status"] != "unverified; operator-declared":
                 raise ValueError("Action adapter is unsupported or identity claim invalid")

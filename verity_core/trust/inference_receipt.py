@@ -29,6 +29,7 @@ def validate(payload):
         raise ValueError('Receipt must omit instruction text')
     for name in ('agent_id','resource_id','model','model_revision'):
         if cfg[name] != payload[name]:raise ValueError('Configuration identity mismatch')
+    if 'routing_enabled' in cfg and type(cfg['routing_enabled']) is not bool:raise ValueError('Invalid agent routing setting')
     for name in ('agent_version','connection_version','resource_version'):
         if type(cfg[name]) is not int or cfg[name]<1:raise ValueError('Invalid configuration version')
     for name in ('agent_hash','connection_hash','resource_hash','instructions_sha256'):
@@ -57,7 +58,7 @@ def export(run):
               'resource_id','resource_version','resource_hash','executor_id','machine_id','machine_version','machine_hash',
               'adapter_kind','runtime_version','service_identity','identity_status','daily_request_limit',
               'session_request_limit','require_fresh_connection_observation','fallback_id','fallback_version',
-              'fallback_model','fallback_revision','provenance','primary_connection_id','selected_connection_id','selection_reason'}
+              'fallback_model','fallback_revision','provenance','primary_connection_id','selected_connection_id','selection_reason','routing_enabled'}
     cfg={k:copy.deepcopy(v) for k,v in run['configuration'].items() if k in metadata}
     payload={k:copy.deepcopy(run[k]) for k in ('task_id','agent_id','resource_id','purpose','session_id','state','decision','reason','model','model_revision','prompt_sha256','result')}
     payload.update(schema=SCHEMA,run_id=run['id'],configuration=cfg,requested_configuration_sha256=run.get('requested_configuration_sha256'),limitations=LIMITATIONS)

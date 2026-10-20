@@ -217,6 +217,8 @@ def install(app,render,base_ctx):
                     body["require_fresh_connection_observation"] = previous["body"]["require_fresh_connection_observation"]
                 elif previous is None:
                     body["require_fresh_connection_observation"] = True
+                if previous and "routing_enabled" in previous["body"]:
+                    body["routing_enabled"]=previous["body"]["routing_enabled"]
                 if previous and "permitted_connection_ids" in previous["body"]:
                     body["permitted_connection_ids"]=previous["body"]["permitted_connection_ids"]
                 if previous and "adapter_kind" in previous["body"]:
@@ -234,6 +236,19 @@ def install(app,render,base_ctx):
         except (ValueError,TypeError,sqlite3.Error):
             raise HTTPException(422,"Configuration refused; check fields and referenced versions. Credentials cannot be entered here.") from None
         return RedirectResponse("/configuration",status_code=303)
+
+    @app.post("/agents/{identifier}/routing")
+    async def change_agent_routing(request:Request,identifier:str):
+        local_peer(request)
+        form=await decision_routes.operator_form(request,max_fields=3)
+        if set(form)!={"operator_token","expected_agent_digest","enabled"} or form["enabled"] not in {"true","false"}:
+            raise HTTPException(422,"Exact agent routing fields required")
+        try:database().set_routing(identifier,form["enabled"]=="true",form["expected_agent_digest"])
+        except sqlite3.OperationalError:
+            raise HTTPException(409,"Routing change is not confirmed while a request is in flight; retry after it finishes") from None
+        except (ValueError,sqlite3.Error):
+            raise HTTPException(409,"Agent changed; reload before changing routing") from None
+        return RedirectResponse("/agents",status_code=303)
 
     @app.post("/configuration/agents/{identifier}/models")
     async def additional_models(request:Request,identifier:str):

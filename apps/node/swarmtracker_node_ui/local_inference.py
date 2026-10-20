@@ -95,7 +95,9 @@ class LocalInference:
             connection = self.configuration.latest("connection", cfg["connection_id"])
             observation = self.configuration.observations().get(("connection",cfg["connection_id"]))
             reason = None
-            if selection_denial:
+            if cfg.get("routing_enabled",True) is not True:
+                reason="Agent routed requests were paused by the operator"
+            elif selection_denial:
                 reason=selection_denial
             elif cfg.get("adapter_kind") == "custom_unverified":
                 reason = "Custom agent is unverified; no dispatch adapter is enabled"

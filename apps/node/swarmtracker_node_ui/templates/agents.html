@@ -7,6 +7,8 @@
 {% if configured_agents_error %}<p>Agent configuration could not be read. Current setup is unknown.</p>{% endif %}
 {% for item in configured_agents %}<article class="card"><h3>{{ item.id }} · version {{ item.version }}</h3>
 <p>Adapter: {{ item.body.adapter_kind or 'legacy configuration; adapter not declared' }} · Identity: unverified, operator-declared.</p>
+<p>Future routed requests: <strong>{{ 'enabled' if item.body.routing_enabled|default(true) else 'paused' }}</strong>. This does not stop the runtime or cancel an already-started request.</p>
+<form method="post" action="/agents/{{ item.id }}/routing"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="expected_agent_digest" value="{{ item.digest }}"><input type="hidden" name="enabled" value="{{ 'false' if item.body.routing_enabled|default(true) else 'true' }}"><button>{{ 'Pause routed requests' if item.body.routing_enabled|default(true) else 'Re-enable routed requests' }}</button></form>
 <p>Runtime version: {{ item.body.runtime_version or 'not provided' }} · Service account: {{ item.body.service_identity or 'not provided' }} · Primary model connection: {{ item.body.connection_id }}</p>
 {% if item.body.adapter_kind == 'custom_unverified' %}<p>Registration only. No custom-agent dispatch or tool enforcement is available.</p>{% else %}<p>Verity can gate its routed local text requests. Direct runtime calls and OS tools remain outside this control.</p>{% endif %}
 <a href="/configuration">Review model, purpose and resource policy or run a bounded task</a></article>

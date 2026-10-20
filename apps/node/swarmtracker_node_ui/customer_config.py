@@ -60,6 +60,8 @@ class CustomerConfig:
         """
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
+            if expected.get("routing_enabled",True) is not True:
+                raise ValueError("Agent routed requests are paused")
             if self.connection_disabled(expected["connection_id"]):
                 raise ValueError("Primary model connection disabled before dispatch")
             observation = self.observations().get(("connection", expected["connection_id"]))
@@ -99,8 +101,10 @@ class CustomerConfig:
                 raise ValueError("Secrets cannot be entered in configuration")
         elif kind=="agent":
             required={"connection_id","instructions","allowed_tools","resources","external_sharing","fallback_id"}
-            if not required <= set(body) or set(body)-required-{"daily_request_limit","session_request_limit","adapter_kind","runtime_version","service_identity","require_fresh_connection_observation","permitted_connection_ids"}:
+            if not required <= set(body) or set(body)-required-{"daily_request_limit","session_request_limit","adapter_kind","runtime_version","service_identity","require_fresh_connection_observation","permitted_connection_ids","routing_enabled"}:
                 raise ValueError("Invalid agent fields")
+            if "routing_enabled" in body and type(body["routing_enabled"]) is not bool:
+                raise ValueError("Agent routing setting must be boolean")
             if "daily_request_limit" in body and (type(body["daily_request_limit"]) is not int or not 0<=body["daily_request_limit"]<=10000):
                 raise ValueError("Daily request limit must be 0 to 10000; zero is unlimited")
             if "session_request_limit" in body and (type(body["session_request_limit"]) is not int or not 0<=body["session_request_limit"]<=10000):
@@ -170,7 +174,10 @@ class CustomerConfig:
             if kind == "agent":
                 previous = db.execute("SELECT body FROM versions WHERE kind='agent' AND id=? ORDER BY version DESC LIMIT 1", (identifier,)).fetchone()
                 if previous:
-                    declared = json.loads(previous["body"]).get("adapter_kind")
+                    previous_body=json.loads(previous["body"])
+                    if "routing_enabled" in previous_body and "routing_enabled" not in body:
+                        raise ValueError("Explicit agent routing setting cannot be omitted")
+                    declared = previous_body.get("adapter_kind")
                     if declared and body.get("adapter_kind") != declared:
                         raise ValueError("Declared adapter cannot be removed or changed; use a new agent ID")
             if kind == "connection" and db.execute("SELECT 1 FROM disabled_connections WHERE id=?", (identifier,)).fetchone():
@@ -183,6 +190,12 @@ class CustomerConfig:
                 # about the newly saved connection, even when the ID is reused.
                 db.execute("DELETE FROM observations WHERE kind=? AND id=?", (kind,identifier))
         return self.latest(kind,identifier)
+
+    def set_routing(self,identifier,enabled,expected_digest):
+        if type(enabled) is not bool:raise ValueError("Agent routing setting must be boolean")
+        previous=self.latest("agent",identifier)
+        if not previous:raise ValueError("Unknown agent")
+        return self.save("agent",identifier,dict(previous["body"],routing_enabled=enabled),expected_digest=expected_digest)
 
     def set_permitted_connections(self,identifier,connections,expected_digest):
         previous=self.latest("agent",identifier)
@@ -281,7 +294,7 @@ class CustomerConfig:
                           identity_status="unverified; operator-declared",
                           runtime_version=agent["body"].get("runtime_version", ""),
                           service_identity=agent["body"].get("service_identity", ""))
-        for key in ("daily_request_limit","session_request_limit","require_fresh_connection_observation"):
+        for key in ("daily_request_limit","session_request_limit","require_fresh_connection_observation","routing_enabled"):
             if key in agent["body"]:
                 result[key]=agent["body"][key]
         if selected!=primary_id:

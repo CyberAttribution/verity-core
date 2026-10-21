@@ -153,3 +153,113 @@ def test_concurrent_removal_rereads_state_under_shared_lock(env,monkeypatch):
     reopened=CredentialManager(m.path,c,n)
     assert reopened.records()[0]['state']=='removed'
     reopened.create('external',expected_digest=e['digest'],secret='replacement')
+
+@pytest.mark.parametrize('mode,state',[('timeout','unknown'),('crash','pending')])
+def test_confirm_uncertain_save_is_metadata_only_and_durable(env,mode,state):
+    c,e,n,m=env;n.mode=mode
+    with pytest.raises((CredentialUnavailable,KeyboardInterrupt)):
+        m.create('external',expected_digest=e['digest'],secret='synthetic-sensitive-token')
+    ref=m.records()[0]['reference'];assert m.records()[0]['state']==state
+    reopened=CredentialManager(m.path,c,n)
+    assert reopened.confirm_saved(ref,expected_digest=e['digest'])==ref
+    assert [x[0] for x in n.calls]==['create','read']
+    assert [x['state'] for x in reopened.history(ref)]==['pending']+(['unknown'] if mode=='timeout' else [])+['stored']
+    assert reopened.confirm_saved(ref,expected_digest=e['digest'])==ref
+    assert [x[0] for x in n.calls]==['create','read']
+    assert 'synthetic-sensitive-token' not in m.path.read_bytes().decode('utf8',errors='ignore')
+
+
+def test_failed_confirmation_keeps_unresolved_reference_without_create_retry(env,monkeypatch):
+    c,e,n,m=env;n.mode='timeout'
+    with pytest.raises(CredentialUnavailable):m.create('external',expected_digest=e['digest'],secret='synthetic')
+    ref=m.records()[0]['reference'];before=m.history(ref)
+    def unavailable(*args,**kwargs):raise CredentialUnavailable('sensitive native diagnostic')
+    monkeypatch.setattr(n,'read',unavailable)
+    with pytest.raises(CredentialUnavailable) as caught:m.confirm_saved(ref,expected_digest=e['digest'])
+    assert 'sensitive' not in str(caught.value)
+    assert m.history(ref)==before and m.records()[0]['state']=='unknown'
+    with pytest.raises(CredentialConflict):m.create('external',expected_digest=e['digest'],secret='replacement')
+    assert len(n.calls)==1
+
+
+def test_confirmation_rejects_changed_disabled_removed_or_foreign_profile(env):
+    c,e,n,m=env;n.mode='timeout'
+    with pytest.raises(CredentialUnavailable):m.create('external',expected_digest=e['digest'],secret='synthetic')
+    ref=m.records()[0]['reference']
+    foreign=CredentialManager(m.path,c,Native())
+    with pytest.raises(CredentialConflict):foreign.confirm_saved(ref,expected_digest=e['digest'])
+    newer=c.save('connection','external',dict(e['body'],model='changed-model'))
+    for digest in (e['digest'],newer['digest']):
+        with pytest.raises(CredentialConflict):m.confirm_saved(ref,expected_digest=digest)
+    c.disable_connection('external')
+    with pytest.raises(CredentialConflict):m.confirm_saved(ref,expected_digest=newer['digest'])
+    m.remove(ref,expected_digest=newer['digest'])
+    with pytest.raises(CredentialConflict):m.confirm_saved(ref,expected_digest=newer['digest'])
+    assert [x[0] for x in n.calls]==['create','delete']
+
+
+def test_confirmation_rechecks_under_lock_after_concurrent_removal(env,monkeypatch):
+    c,e,n,m=env;n.mode='timeout'
+    with pytest.raises(CredentialUnavailable):m.create('external',expected_digest=e['digest'],secret='synthetic')
+    ref=m.records()[0]['reference']
+    from contextlib import contextmanager
+    original=m.connection
+    @contextmanager
+    def remove_first(*args,**kwargs):
+        other=CredentialManager(m.path,c,n)
+        other.remove(ref,expected_digest=e['digest'])
+        with original(*args,**kwargs) as value:yield value
+    monkeypatch.setattr(m,'connection',remove_first)
+    with pytest.raises(CredentialConflict):m.confirm_saved(ref,expected_digest=e['digest'])
+    assert [x[0] for x in n.calls]==['create','delete']
+
+def test_http_confirmation_checks_csrf_exact_fields_and_never_echoes_secret(env,monkeypatch):
+    from fastapi.testclient import TestClient
+    from swarmtracker_node_ui import app,store,customer_routes,decision_routes
+    c,e,n,m=env;n.mode='timeout'
+    with pytest.raises(CredentialUnavailable):
+        m.create('external',expected_digest=e['digest'],secret='synthetic-sensitive-token')
+    ref=m.records()[0]['reference']
+    monkeypatch.setattr(store,'DB_PATH',c.path.with_name('profile.db'))
+    monkeypatch.setattr(customer_routes,'credential_database',lambda:m)
+    client=TestClient(app.app,base_url='http://127.0.0.1')
+    path='/configuration/credentials/'+ref+'/confirm'
+    form=dict(operator_token=decision_routes.TOKEN,expected_digest=e['digest'])
+    page=client.get('/configuration/credentials')
+    assert path in page.text and 'synthetic-sensitive-token' not in page.text
+    assert client.post(path,data=dict(form,operator_token='wrong')).status_code==403
+    assert client.post(path,data=dict(form,secret='must-not-be-accepted')).status_code==400  # bounded form parser rejects excess fields
+    assert [x[0] for x in n.calls]==['create']
+    response=client.post(path,data=form,follow_redirects=False)
+    assert response.status_code==303 and response.headers['cache-control']=='no-store'
+    assert m.records()[0]['state']=='stored'
+    assert 'synthetic-sensitive-token' not in response.text+client.get('/configuration/credentials').text
+    assert client.get('/configuration/credentials/'+ref).status_code==404
+    assert [x[0] for x in n.calls]==['create','read']
+
+
+def test_confirmation_read_serializes_configuration_edit(env,monkeypatch):
+    c,e,n,m=env;n.mode='timeout'
+    with pytest.raises(CredentialUnavailable):m.create('external',expected_digest=e['digest'],secret='synthetic')
+    ref=m.records()[0]['reference'];entered=threading.Event();release=threading.Event();edited=threading.Event();errors=[]
+    original=n.read
+    def bounded_read(*args,**kwargs):
+        entered.set()
+        assert release.wait(3)
+        return original(*args,**kwargs)
+    monkeypatch.setattr(n,'read',bounded_read)
+    def confirm():
+        try:m.confirm_saved(ref,expected_digest=e['digest'])
+        except BaseException as exc:errors.append(exc)
+    def edit():
+        try:CustomerConfig(c.path).save('connection','external',dict(e['body'],model='newer'))
+        except BaseException as exc:errors.append(exc)
+        finally:edited.set()
+    worker=threading.Thread(target=confirm);worker.start();assert entered.wait(3)
+    editor=threading.Thread(target=edit);editor.start()
+    try:assert not edited.wait(.1)
+    finally:release.set()
+    worker.join(4);editor.join(4)
+    assert not worker.is_alive() and not editor.is_alive() and not errors and edited.is_set()
+    assert m.records()[0]['state']=='stored'
+    with pytest.raises(CredentialConflict):m.resolve('external',expected_digest=c.latest('connection','external')['digest'])

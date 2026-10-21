@@ -79,6 +79,34 @@ class CredentialManager:
             self._transition(reference,'stored')
             return reference
 
+    def confirm_saved(self,reference,*,expected_digest):
+        """Confirm an uncertain save locally; return only its recovery reference."""
+        identity(reference)
+        if self.native is None:raise CredentialUnavailable('Protected credential storage is not configured')
+        with self.db() as db:
+            initial=db.execute('SELECT connection_id FROM credential_records WHERE reference=?',(reference,)).fetchone()
+        if not initial:raise CredentialConflict('Unknown credential reference')
+        # Keep the same writer lock used by creation, removal and config edits.
+        # No native bytes leave this method or become durable metadata.
+        with self.connection(initial['connection_id'],expected_digest) as (entry,bound):
+            with self.db() as db:
+                rows=[dict(row) for row in db.execute("SELECT * FROM credential_records WHERE connection_id=? AND state!='removed'",(initial['connection_id'],))]
+            if len(rows)!=1 or rows[0]['reference']!=reference:
+                raise CredentialConflict('Credential recovery binding is not unique')
+            row=rows[0]
+            if (row['config_digest']!=entry['digest'] or row['profile']!=self.native.profile
+                    or row['provider']!=bound['provider'] or row['endpoint']!=bound['endpoint']):
+                raise CredentialConflict('Credential recovery binding changed')
+            if row['state']=='stored':return reference
+            if row['state'] not in ('pending','unknown'):
+                raise CredentialConflict('Credential is not awaiting save confirmation')
+            try:
+                self.native.read(reference,**bound)
+            except (CredentialUnavailable,ValueError):
+                raise CredentialUnavailable('Credential save remains unconfirmed; recovery reference retained') from None
+            self._transition(reference,'stored')
+            return reference
+
     def remove(self,reference,*,expected_digest):
         identity(reference)
         if self.native is None:raise CredentialUnavailable('Protected credential storage is not configured')

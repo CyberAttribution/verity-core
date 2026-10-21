@@ -170,6 +170,28 @@ def install(app,render,base_ctx):
             raise HTTPException(422,"Credential save refused; check connection and credential format.",headers={"Cache-Control":"no-store"}) from None
         return RedirectResponse("/configuration/credentials",status_code=303,headers={"Cache-Control":"no-store"})
 
+    @app.post("/configuration/credentials/{reference}/confirm")
+    async def confirm_credential(request:Request,reference:str):
+        from starlette.concurrency import run_in_threadpool
+        from .credentials import CredentialUnavailable
+        from .credential_manager import CredentialConflict
+        local_peer(request)
+        form=await decision_routes.operator_form(request,max_fields=2)
+        if set(form)!={"operator_token","expected_digest"}:
+            raise HTTPException(422,"Exact credential confirmation fields required",headers={"Cache-Control":"no-store"})
+        try:
+            manager=credential_database()
+            await run_in_threadpool(manager.confirm_saved,reference,expected_digest=form["expected_digest"])
+        except CredentialUnavailable:
+            raise HTTPException(503,"Credential confirmation is not confirmed. The recovery reference is retained.",headers={"Cache-Control":"no-store"}) from None
+        except CredentialConflict:
+            raise HTTPException(409,"Connection or credential state changed; reload the credential page.",headers={"Cache-Control":"no-store"}) from None
+        except (sqlite3.Error,OSError):
+            raise HTTPException(503,"Credential confirmation is not confirmed. The recovery reference is retained.",headers={"Cache-Control":"no-store"}) from None
+        except ValueError:
+            raise HTTPException(422,"Credential confirmation refused.",headers={"Cache-Control":"no-store"}) from None
+        return RedirectResponse("/configuration/credentials",status_code=303,headers={"Cache-Control":"no-store"})
+
     @app.post("/configuration/credentials/{reference}/remove")
     async def remove_credential(request:Request,reference:str):
         from starlette.concurrency import run_in_threadpool

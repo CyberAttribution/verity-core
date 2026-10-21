@@ -22,6 +22,24 @@ def endpoint(cfg,kind,identifier):
     return {key:entry[key] for key in ('kind','id','version','digest')}
 
 
+def test_configuration_browser_request_redirects_to_retained_evidence(environment,tmp_path,monkeypatch):
+    from swarmtracker_node_ui import store
+    cfg,client=environment
+    monkeypatch.setattr(store,'DB_PATH',tmp_path/'profile.db')
+    cfg.save('agent','paused',dict(connection_id='local',instructions='Synthetic',
+        allowed_tools=['generate_text'],resources=['report'],external_sharing='none',
+        fallback_id='',routing_enabled=False))
+    form=dict(operator_token=decision_routes.TOKEN,agent_id='paused',task_id='browser',
+        resource_id='report',purpose='generate_text',prompt='Synthetic',requested_model='')
+    response=client.post('/configuration/inference',data=form,headers={'Accept':'text/html'},follow_redirects=False)
+    assert response.status_code==303 and response.headers['Cache-Control']=='no-store'
+    page=client.get(response.headers['location'])
+    assert 'browser' in page.text and 'denied / denied' in page.text and 'paused by the operator' in page.text
+    form['task_id']='api'
+    response=client.post('/configuration/inference',data=form)
+    assert response.status_code==200 and response.json()['state']=='denied'
+
+
 def relationship_form(cfg,identifier='hosts',expected=''):
     return dict(operator_token=decision_routes.TOKEN,id=identifier,expected_digest=expected,
                 from_endpoint=canonical(endpoint(cfg,'machine','mac')),

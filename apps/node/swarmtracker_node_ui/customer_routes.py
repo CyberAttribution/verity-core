@@ -318,6 +318,9 @@ def install(app,render,base_ctx):
             raise HTTPException(409,"Task ID already recorded") from None
         except (ValueError,KeyError):
             raise HTTPException(422,"Inference configuration invalid") from None
+        if "text/html" in request.headers.get("accept", ""):
+            return RedirectResponse("/workbench/requests/"+run["id"],status_code=303,
+                                    headers={"Cache-Control":"no-store"})
         return JSONResponse(run,headers={"Cache-Control":"no-store"})
 
     @app.post("/configuration/connections/{identifier}/disable")

@@ -396,3 +396,32 @@ def test_reserved_write_without_approved_disk_bytes_stays_in_doubt(db, monkeypat
     assert not recovered["can_execute"] and not db.observed_file()["present"]
     with pytest.raises(report_actions.Conflict):
         db.execute(view["id"], "operator", recovered["head_hash"])
+
+@pytest.mark.parametrize('separate_database',[False,True])
+def test_fixed_target_cannot_be_overwritten_between_write_and_observation(db,tmp_path,monkeypatch,separate_database):
+    import threading
+    other=report_actions.Store(tmp_path/'other.db' if separate_database else db.db_path,db.output_dir)
+    first=approve(db,db.create(manifest("# First approved output\n")))
+    second=approve(other,other.create(manifest("# Second approved output\n")))
+    written=threading.Event();release=threading.Event();results=[];errors=[]
+    original=db._write
+    def pause_after_write(data):
+        original(data);written.set()
+        assert release.wait(3)
+    monkeypatch.setattr(db,'_write',pause_after_write)
+    def run():
+        try:results.append(db.execute(first['id'],'operator',first['head_hash']))
+        except BaseException as error:errors.append(error)
+    worker=threading.Thread(target=run);worker.start()
+    assert written.wait(3)
+    try:
+        with pytest.raises(report_actions.Conflict,match="fixed output"):
+            other.execute(second['id'],'operator',second['head_hash'])
+        assert other.get(second['id'])['attempts']==0
+    finally:release.set();worker.join(4)
+    assert not worker.is_alive() and not errors and results[0]['state']=='written'
+    assert db.observed_file()['sha256']==first['manifest']['action']['sha256']
+    # The second approval can be submitted after the first outcome is durable.
+    assert other.execute(second['id'],'operator',second['head_hash'])['state']=='written'
+    assert db.get(first['id'])['state']=='written'
+    assert other.observed_file()['sha256']==second['manifest']['action']['sha256']

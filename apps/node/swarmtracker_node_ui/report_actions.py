@@ -6,6 +6,7 @@ one fixed output name; reservation is durable before the external file effect.
 A crash after reservation leaves the action in doubt and blocks retries.
 """
 import hashlib
+import fcntl
 import os
 import secrets
 import sqlite3
@@ -333,6 +334,18 @@ class Store:
             os.close(fd)
 
     def execute(self, rid, actor, head):
+        # Cooperating brokers sharing this output directory serialize the whole
+        # reservation/write/observation/result boundary, even across databases.
+        # Independent OS writers remain outside this local broker guarantee.
+        fd=os.open(self.output_dir,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+        try:
+            try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise Conflict("Another report action owns the fixed output; reload after it finishes") from None
+            return self._execute_locked(rid,actor,head)
+        finally:os.close(fd)
+
+    def _execute_locked(self, rid, actor, head):
         _label(actor, "actor")
         with self.connection() as con:
             con.execute("BEGIN IMMEDIATE")

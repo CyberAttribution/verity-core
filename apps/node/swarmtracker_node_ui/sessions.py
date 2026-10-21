@@ -356,7 +356,15 @@ def install(app, render, base_ctx):
             participants=monitoring.participants(monitoring.database().recent())
         except (ValueError,sqlite3.Error,OSError):
             participants=[]
+        from .session_alerts import AlertJournal
+        try:
+            warning_history=AlertJournal(database.path.with_name("session-alerts.db")).history(session_id)
+            warning_history_error=False
+        except (OSError,sqlite3.Error):
+            warning_history=[]
+            warning_history_error=True
         ctx.update(record=record, view=configured_view(record), coordinator=coordinator,
+                   warning_history=warning_history,warning_history_error=warning_history_error,
                    attention=attention(coordinator,participants=participants) if coordinator else [])
         return render("session.html", ctx)
 

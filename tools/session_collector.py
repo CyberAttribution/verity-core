@@ -6,31 +6,56 @@ No provider credentials, outbound requests, task submission, or shutdown.
 """
 import argparse
 import json
+import sqlite3
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "node"))
 from swarmtracker_node_ui.sessions import SessionStore, configured_view, derive
+from swarmtracker_node_ui.session_alerts import AlertJournal
 
 
 def collect_once(inbox, db, now=None):
     inbox = Path(inbox)
     notices = []
+    failed_sessions=set()
+    unattributed_failure=False
     for path in sorted(inbox.glob("*.json")):
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 12000:
-            notices.append(f"Rejected unsafe or oversized inbox file: {path.name}")
-            continue
+        payload=None
         try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 12000:
+                notices.append(f"Rejected unsafe or oversized inbox file: {path.name}")
+                unattributed_failure=True
+                continue
             payload = json.loads(path.read_text(encoding="utf-8"))
-            if set(payload) != {"session_id", "event"}:
+            if not isinstance(payload,dict) or set(payload) != {"session_id", "event"}:
                 raise ValueError("Invalid inbox envelope")
             db.append(payload["session_id"], payload["event"])
             path.rename(path.with_suffix(".seen"))
-        except (ValueError, KeyError, OSError, json.JSONDecodeError) as exc:
+        except (ValueError, KeyError, OSError, sqlite3.Error, json.JSONDecodeError) as exc:
             notices.append(f"Rejected inbox file {path.name}: {type(exc).__name__}: {exc}")
-    for sid in db.list():
-        view = configured_view(db.get(sid)) if now is None else derive(db.get(sid), now=now)
+            if isinstance(payload,dict) and isinstance(payload.get("session_id"),str):
+                failed_sessions.add(payload["session_id"])
+            else:
+                unattributed_failure=True
+    try:
+        journal=AlertJournal(db.path.with_name("session-alerts.db"))
+        sessions=db.list()
+    except (OSError,sqlite3.Error) as exc:
+        notices.append("Session warning collection unavailable: "+type(exc).__name__)
+        return notices
+    for sid in sessions:
+        if unattributed_failure or sid in failed_sessions:
+            notices.append(f"{sid}: warning evaluation unavailable: incomplete inbox import; prior episodes retained")
+            continue
+        try:
+            view = configured_view(db.get(sid)) if now is None else derive(db.get(sid), now=now)
+            journal.evaluate(sid,view["alerts"],time.time() if now is None else now)
+        except (ValueError,KeyError,OSError,sqlite3.Error) as exc:
+            # Failed observation never means existing warnings have cleared.
+            notices.append(f"{sid}: warning evaluation unavailable: {type(exc).__name__}")
+            continue
         for warning in view["alerts"]:
             notices.append(f"{sid}: {warning}")
     return notices

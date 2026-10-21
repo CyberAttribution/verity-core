@@ -45,6 +45,48 @@ def test_export_failure_is_tracked_and_reconciliation_is_safe(tmp_path,issuer,mo
     assert [e["event"] for e in events]==["issuance_prepared","issuance_exported"]
     assert raw not in json.dumps(r.status())
 
+
+@pytest.mark.parametrize("intact", [False, True])
+def test_reconcile_after_revocation_observes_history_without_new_export(tmp_path, issuer, monkeypatch, intact):
+    import verity_core.pilot_registry as module
+    key, public, code = issuer
+    registry = Registry(tmp_path / "registry.db")
+    artifact = tmp_path / "pending.code"
+    save = module.save_private_new
+
+    def write_then_interrupt(path, data):
+        save(path, data)
+        raise OSError("Lost acknowledgment after export")
+
+    monkeypatch.setattr(module, "save_private_new", write_then_interrupt)
+    with pytest.raises(OSError):
+        registry.issue(code("pending"), public, artifact)
+    if not intact:
+        artifact.unlink()
+    claims = dict(schema="verity_pilot_revocations/v1", revision=1,
+                  issued_at=int(time.time()), license_ids=["pending"])
+    payload = activation.canonical(claims)
+    signed = activation.encode(payload) + "." + activation.encode(key.sign(payload))
+    revocations = tmp_path / "revocations.code"
+    revocations.write_text(signed)
+    registry.record_revocations(signed, public, revocations)
+    before = artifact.read_bytes() if intact else None
+    prior_events = registry.status()["events"]
+    if intact:
+        registry.reconcile("pending")
+        registry.reconcile("pending")
+        assert registry.status("pending")["licenses"][0]["artifact_state"] == "exported"
+        assert registry.status()["events"][:len(prior_events)] == prior_events
+        assert sum(e["event"] == "issuance_exported" for e in registry.status()["events"]) == 1
+    else:
+        with pytest.raises(FileNotFoundError):
+            registry.reconcile("pending")
+        assert registry.status()["events"] == prior_events
+        assert registry.status("pending")["licenses"][0]["artifact_state"] == "pending_reconciliation"
+    with pytest.raises(Conflict, match="revocation"):
+        registry.retry_export("pending", key)
+    assert (artifact.read_bytes() if artifact.exists() else None) == before
+
 def test_reservation_write_failure_creates_no_code(tmp_path,issuer,monkeypatch):
     key,pub,code=issuer;r=Registry(tmp_path/"registry.db")
     def fail(*a):raise OSError("controlled registry write failure")

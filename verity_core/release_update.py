@@ -147,3 +147,53 @@ def install(plan,artifact,target,profile,*,approval,history,authorization,simula
         raise
     finally:shutil.rmtree(stage,ignore_errors=True)
     return journal
+
+
+def inspect_repair(history, target, *, expected_previous_digest=None):
+    """Read-only diagnosis and proposed app restoration; never performs repair.
+
+    Existing journals do not authenticate retained backups. Eligibility therefore
+    requires a separately retained expected digest, not merely hashing a backup
+    for the first time. A human must review paths and stop the app before repair.
+    """
+    history, target = Path(history), Path(target)
+    if not history.is_dir() or history.is_symlink() or target.is_symlink():
+        raise ValueError("Expected isolated history and nonsymlink target")
+    hr, tr = history.resolve(), target.resolve()
+    if hr == tr or hr in tr.parents or tr in hr.parents:
+        raise ValueError("History and target must be separate")
+    journal = history / "outcome.json"
+    state = None
+    if journal.exists() or journal.is_symlink():
+        if journal.is_symlink() or not journal.is_file() or journal.stat().st_size > 32768:
+            raise ValueError("Invalid repair journal")
+        data = bounded_json_loads(journal.read_text())
+        if not isinstance(data, dict) or data.get("state") not in {"prepared", "installed", "recovered"}:
+            raise ValueError("Unknown repair journal state")
+        state = data["state"]
+    if expected_previous_digest is not None and (not isinstance(expected_previous_digest, str) or
+            len(expected_previous_digest) != 64 or any(c not in "0123456789abcdef" for c in expected_previous_digest)):
+        raise ValueError("Expected SHA256 digest required")
+
+    def observed(path):
+        if path.is_symlink():
+            raise ValueError("Symlink retained artifact refused")
+        if not path.exists():
+            return {"present": False, "digest": None}
+        return {"present": True, "digest": artifact_digest(path)}
+
+    previous = observed(history / "previous.app")
+    backup = observed(history / "profile-backup")
+    installed = observed(target)
+    verified = expected_previous_digest is not None and previous["digest"] == expected_previous_digest
+    eligible = state == "prepared" and not installed["present"] and verified and backup["present"]
+    reason = ("Prepared switch interrupted; retained app matches independent digest" if eligible else
+              "Review required: journal, missing target, independent app digest and profile backup must all qualify")
+    return {"schema": "verity_repair_inspection/v1", "journal_state": state,
+            "target": installed, "retained_previous_app": previous,
+            "retained_profile_backup": backup, "previous_digest_verified": verified,
+            "manual_repair_eligible": eligible, "diagnosis": reason,
+            "proposed_change": ({"action": "restore_previous_app", "from": str(history / "previous.app"),
+                                 "to": str(target), "expected_sha256": expected_previous_digest} if eligible else None),
+            "requires_operator_review": True, "mutation_performed": False,
+            "automatic_recovery": False}

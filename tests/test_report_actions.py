@@ -425,3 +425,97 @@ def test_fixed_target_cannot_be_overwritten_between_write_and_observation(db,tmp
     assert other.execute(second['id'],'operator',second['head_hash'])['state']=='written'
     assert db.get(first['id'])['state']=='written'
     assert other.observed_file()['sha256']==second['manifest']['action']['sha256']
+
+
+def _spawn_paused_report(db_path, output_dir, rid, head, written, release):
+    """A real broker in a fresh interpreter, paused after its durable effect."""
+    store = report_actions.Store(db_path, output_dir)
+    write = store._write
+
+    def pause(content):
+        import time
+        write(content)
+        written.touch()
+        deadline = time.monotonic() + 15
+        while not release.exists():
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Parent did not release test broker")
+            time.sleep(0.01)
+
+    store._write = pause
+    store.execute(rid, "operator", head)
+
+
+@pytest.mark.parametrize("kill_after_effect", [False, True])
+def test_spawn_separate_databases_exclude_broker_and_recover_lock(tmp_path, kill_after_effect):
+    import multiprocessing
+    import time
+
+    ctx = multiprocessing.get_context("spawn")
+    first_store = report_actions.Store(tmp_path / "first.db", tmp_path / "output")
+    second_store = report_actions.Store(tmp_path / "second.db", first_store.output_dir)
+    first = approve(first_store, first_store.create(manifest("# First process\n")))
+    second = approve(second_store, second_store.create(manifest("# Second process\n")))
+    # File barriers cannot strand a multiprocessing condition mutex on SIGKILL.
+    written, release = tmp_path / "written", tmp_path / "release"
+    worker = ctx.Process(target=_spawn_paused_report, args=(first_store.db_path,
+        first_store.output_dir, first["id"], first["head_hash"], written, release))
+    worker.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not written.exists() and worker.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert written.exists(), "Child never reached the post-effect boundary"
+        assert first_store.get(first["id"])["state"] == "in_doubt"
+        with pytest.raises(report_actions.Conflict, match="fixed output"):
+            second_store.execute(second["id"], "operator", second["head_hash"])
+        assert second_store.get(second["id"])["attempts"] == 0
+        assert first_store.observed_file()["sha256"] == first["manifest"]["action"]["sha256"]
+        if kill_after_effect:
+            worker.kill()
+        else:
+            release.touch()
+        worker.join(10)
+        assert not worker.is_alive()
+        if kill_after_effect:
+            assert worker.exitcode != 0
+        else:
+            assert worker.exitcode == 0
+        # Reopen the first database after the process has actually exited.
+        reopened = report_actions.Store(first_store.db_path, first_store.output_dir)
+        view = reopened.get(first["id"])
+        assert view["attempts"] == 1
+        assert view["state"] == ("in_doubt" if kill_after_effect else "written")
+        assert not view["can_execute"]
+        with pytest.raises(report_actions.Conflict):
+            reopened.execute(first["id"], "operator", view["head_hash"])
+        assert report_actions.verify(report_actions.export(view["record"]),
+                                     report_actions.checkpoint(view["record"]))
+        # Kernel lock release permits a different approval, never an automatic retry.
+        assert second_store.execute(second["id"], "operator", second["head_hash"])["state"] == "written"
+        assert reopened.get(first["id"])["state"] == view["state"]
+    finally:
+        release.touch()
+        if worker.is_alive():
+            worker.kill()
+        worker.join(10)
+
+
+def test_directory_lock_does_not_contain_arbitrary_os_writer(db, monkeypatch):
+    approved = approve(db, db.create(manifest()))
+    write = db._write
+
+    def overwrite_after_effect(content):
+        write(content)
+        # This writer deliberately does not cooperate with the broker's flock.
+        import subprocess, sys
+        subprocess.run([sys.executable, "-c",
+            "from pathlib import Path; import sys; Path(sys.argv[1]).write_text('outside broker')",
+            str(db.output_dir / "summary.md")], check=True, timeout=5)
+
+    monkeypatch.setattr(db, "_write", overwrite_after_effect)
+    with pytest.raises(ValueError, match="approved file digest"):
+        db.execute(approved["id"], "operator", approved["head_hash"])
+    assert (db.output_dir / "summary.md").read_text() == "outside broker"
+    assert db.get(approved["id"])["state"] == "in_doubt"
+    assert not db.get(approved["id"])["can_execute"]

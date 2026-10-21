@@ -156,3 +156,92 @@ def test_operator_ui_registry_and_signed_preview(tmp_path,monkeypatch):
     assert preview.status_code==200 and "Authorized release 2.0.0" in preview.text
     assert "awaiting explicit operator approval" in preview.text
     assert client.post("/setup",data=dict(action="inspect_release",manifest_path=str(manifest),artifact_path=str(artifact))).status_code==403
+
+
+def test_repair_inspection_requires_independent_digest_and_never_mutates(tmp_path):
+    history = tmp_path / "history"
+    history.mkdir()
+    target = tmp_path / "installed.app"
+    empty = release_update.inspect_repair(history, target)
+    assert not empty["manual_repair_eligible"] and empty["journal_state"] is None
+    assert empty["proposed_change"] is None
+    previous = history / "previous.app"
+    previous.mkdir()
+    (previous / "binary").write_text("retained previous app")
+    profile = history / "profile-backup"
+    profile.mkdir()
+    (profile / "evidence").write_text("preserved")
+    (history / "outcome.json").write_text(json.dumps({"state": "prepared"}))
+    digest = release_update.artifact_digest(previous)
+    before = {str(p): p.read_bytes() for p in history.rglob("*") if p.is_file()}
+    unverified = release_update.inspect_repair(history, target)
+    assert unverified["retained_previous_app"]["present"] and unverified["retained_profile_backup"]["present"]
+    assert not unverified["manual_repair_eligible"]
+    assert not release_update.inspect_repair(history, target, expected_previous_digest="0"*64)["manual_repair_eligible"]
+    report = release_update.inspect_repair(history, target, expected_previous_digest=digest)
+    assert report["manual_repair_eligible"] and report["requires_operator_review"]
+    assert not report["mutation_performed"] and not report["automatic_recovery"]
+    assert report["proposed_change"]["expected_sha256"] == digest
+    assert not target.exists()
+    assert before == {str(p): p.read_bytes() for p in history.rglob("*") if p.is_file()}
+    target.mkdir()
+    assert not release_update.inspect_repair(history, target, expected_previous_digest=digest)["manual_repair_eligible"]
+
+
+def test_repair_inspection_refuses_symlink_and_unknown_journal(tmp_path):
+    history = tmp_path / "history"
+    history.mkdir()
+    (history / "outcome.json").write_text('{"state":"unknown"}')
+    with pytest.raises(ValueError, match="journal"):
+        release_update.inspect_repair(history, tmp_path / "target")
+    (history / "outcome.json").unlink()
+    (history / "previous.app").symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(ValueError, match="Symlink"):
+        release_update.inspect_repair(history, tmp_path / "target")
+
+
+def _kill_during_app_switch(root):
+    import os, signal
+    reg, _, public, artifact, _, signed = setup(root)
+    reg.authorize_release("alpha", "pilot", "release-2", True, "Disposable test")
+    plan = preview(reg, public, artifact, signed)
+    target = root / "installed.app"
+    target.mkdir()
+    (target / "binary").write_text("old")
+    (root / "previous.sha256").write_text(release_update.artifact_digest(target))
+    profile = root / "profile"
+    profile.mkdir()
+    (profile / "evidence").write_text("preserved")
+    original = Path.rename
+
+    def interrupted(path, destination):
+        result = original(path, destination)
+        if path == target:
+            os.kill(os.getpid(), signal.SIGKILL)
+        return result
+
+    Path.rename = interrupted
+    release_update.install(plan, artifact, target, profile, approval=plan["approval_phrase"],
+                           history=root / "history", authorization=reg.release_allowed)
+
+
+def test_hard_kill_switch_diagnosis_is_read_only_and_retains_backups(tmp_path):
+    import multiprocessing, signal
+    process = multiprocessing.get_context("spawn").Process(target=_kill_during_app_switch, args=(tmp_path,))
+    process.start()
+    try:
+        process.join(10)
+        assert not process.is_alive()
+        assert process.exitcode == -signal.SIGKILL
+        assert not (tmp_path / "installed.app").exists()
+        expected = (tmp_path / "previous.sha256").read_text()
+        result = release_update.inspect_repair(tmp_path / "history", tmp_path / "installed.app",
+                                              expected_previous_digest=expected)
+        assert result["journal_state"] == "prepared" and result["manual_repair_eligible"]
+        assert result["retained_previous_app"]["present"] and result["retained_profile_backup"]["present"]
+        assert not result["mutation_performed"] and not (tmp_path / "installed.app").exists()
+        assert (tmp_path / "profile/evidence").read_text() == "preserved"
+    finally:
+        if process.is_alive():
+            process.kill()
+        process.join(10)

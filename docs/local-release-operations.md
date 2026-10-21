@@ -12,4 +12,13 @@ An older release requires `--rollback` and a distinct explicit authorization for
 
 For recovery, stop the app, inspect `outcome.json` in the selected history directory, compare the retained `previous.app` and `profile-backup`, and retry with a fresh history directory only after resolving the cause. An interrupted attempt before replacement is journaled as recovered. If power fails during the narrow filesystem switch, the staged directory and separate backups must be inspected by an operator; the installer does not claim crash-atomic transactions across directories. Keep the trust-record checkpoint separately from an exported history.
 
+`python -m tools.inspect_repair --history HISTORY --target TARGET` provides a
+read-only diagnosis, retained backup digests and a proposed app restoration.
+Supply `--expected-previous-digest SHA256` from an independently retained
+pre-update checkpoint to qualify the retained app. A newly computed backup hash
+alone does not authenticate it. Eligibility requires a prepared journal, missing
+target, matching previous-app digest and a retained profile backup. The command
+never restores either app or profile, opens a registry, or authorizes execution.
+Review the proposed paths and backup compatibility before any manual mutation.
+
 If the app switch succeeded but the registry write failed, run `tools/local_release.py reconcile` with the signed manifest, both public keys, installation/profile ID, current target and original history directory. It hashes the installed target and checks the signed manifest, local activation, authorization and successful journal before recording the update. It never repeats the app replacement. Use `export` with a separate `--output` and `--checkpoint`, then `verify-export` in another process; retain the checkpoint separately. The sanitized export records issuance, authorization, reported contact and update outcomes, excluding activation code bodies and private artifact paths. A matching hash detects accidental changes against the retained checkpoint, not coordinated replacement of both files.

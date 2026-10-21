@@ -145,3 +145,18 @@ def test_new_ssh_contact_with_regressed_probe_timestamp_preserves_newer_model_fa
     import_snapshot(db,'session',regressed,now=NOW+301)
     view=derive(db.get('session'),now=NOW+301)
     assert not view['stale'] and view['model']=='unknown'
+
+
+def test_failed_append_propagates_before_warning_journal_evaluation(db,tmp_path,monkeypatch):
+    path=tmp_path/'snapshot.json';path.write_text(json.dumps(sample()))
+    journal=AlertJournal(tmp_path/'session-alerts.db');journal.evaluate('session',['retained warning'],NOW-1)
+    before=journal.history('session');original=db.append;count=0
+    def unavailable(*args):
+        nonlocal count
+        count+=1
+        if count==2:raise sqlite3.OperationalError('synthetic')
+        return original(*args)
+    monkeypatch.setattr(db,'append',unavailable)
+    with pytest.raises(sqlite3.OperationalError):once(db,'session',path,now=NOW)
+    assert len(db.get('session')['events'])==1
+    assert journal.history('session')==before

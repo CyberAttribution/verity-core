@@ -33,10 +33,7 @@
 <p>Installation IDs and endpoint names do not authenticate hardware. Observed, confirmed, stale and unknown statuses require their own evidence; this form creates operator-entered, unknown records.</p></section>
 <section class="panel"><h2>Relationships and intended permissions</h2>
 {% for item in configurations if item.kind == 'link' %}<article class="card"><strong>{{ item.id }} v{{ item.version }}</strong> · {{ item.body.from_kind }} {{ item.body.from_id }} → {{ item.body.to_kind }} {{ item.body.to_id }} · {{ item.body.permission }} · {{ item.body.provenance }} / {{ item.body.status }}</article>{% endfor %}
-<form method="post" action="/configuration"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="kind" value="link">
-<label>Relationship ID <input name="id" required></label><label>From kind <select name="from_kind"><option>machine</option><option>agent</option></select></label><label>From ID <input name="from_id" required></label>
-<label>To kind <select name="to_kind"><option>connection</option><option>resource</option></select></label><label>To ID <input name="to_id" required></label>
-<label>Intended permission <select name="permission"><option>hosts</option><option>proposes</option><option>executor-host</option></select></label><button>Record unconfirmed relationship</button></form>
+<p><a href="/environment/relationships/new">Add a relationship with reviewed endpoint versions</a> · <a href="/environment">Inspect binding status and history</a></p>
 <p>These links do not change OS filesystem permissions or certify an installation ID.</p></section>
 <section class="panel"><h2>Governed local inference</h2>
 <p>Verity gates requests submitted here against the selected agent's primary model and allowed purpose before contacting a loopback OpenClaw endpoint. Known unavailable or stale local connection health blocks this route until rechecked. A health response does not prove model readiness. Agents requiring fresh health refuse a never-checked connection. Older agents without that requirement remain legacy-allowed. This does not prevent direct calls to OpenClaw or same-user access outside Verity.</p>

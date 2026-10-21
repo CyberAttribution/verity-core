@@ -110,16 +110,17 @@ def test_provider_running_after_confirmed_termination_is_unknown():
     assert any("Contradictory" in a for a in view["alerts"])
 
 
-def test_read_only_sessions_navigation():
+def test_sessions_navigation_preserves_observations_and_offers_manual_entry():
     import sys
     sys.path.insert(0, "apps/node")
     from swarmtracker_node_ui.app import app
     client = TestClient(app, base_url="http://127.0.0.1")
     response = client.get("/sessions")
     assert response.status_code == 200
-    assert "Read-only records" in response.text
+    assert "append-only operator declarations" in response.text
+    assert "Record manual session inventory" in response.text
     assert 'href="/sessions"' in response.text
-    assert client.post("/sessions").status_code == 405
+    assert client.post("/sessions").status_code == 415
 
 
 def test_collector_crash_restart_dedupes_and_alerts(tmp_path):

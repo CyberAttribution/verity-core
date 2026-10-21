@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block title %}Record session{% endblock %}{% block content %}
+<h1>Record a session</h1><p>Manual records create no provider resources and authorize no spending.</p>
+<form method="post" action="/sessions"><input type="hidden" name="operator_token" value="{{ operator_token }}">
+<label>Session ID <input name="id" required></label><label>Purpose <input name="purpose" required></label>
+<label>Provider name <input name="provider" required></label><button>Continue to manual inventory</button></form>{% endblock %}

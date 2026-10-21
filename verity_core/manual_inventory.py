@@ -33,7 +33,7 @@ def validate_interval(*, start, end=None, actual_rate=None, reference_rate=None,
     for value in (gpu_type, provenance):
         if not isinstance(value, str) or not value.strip() or len(value) > 500 or any(ord(c) < 32 for c in value):
             raise ValueError("GPU type and attributed provenance required")
-    if not isinstance(model_revision, str) or not re.fullmatch(r"[a-f0-9]{40}", model_revision):
+    if not isinstance(model_revision, str) or not re.fullmatch(r"(?:[a-f0-9]{40}|(?:sha256:)?[a-f0-9]{64})", model_revision):
         raise ValueError("Exact model revision required")
     return {"start": start, "end": end, "actual_rate": actual_rate,
             "session_id": session_id, "provider_id": provider_id, "resource_id": resource_id,

@@ -1,9 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Development Session{% endblock %}
 {% block content %}
-<h1>{{ record.identity.id }}</h1><p>{{ record.identity.purpose }}</p><p><a href="/workflows?session={{ record.identity.id }}">Related workflows and attention</a></p>
+<h1>{{ record.identity.id }}</h1><p><a href="/sessions/{{ record.identity.id }}/inventory">Inspect or correct manual inventory</a></p><p>{{ record.identity.purpose }}</p><p><a href="/workflows?session={{ record.identity.id }}">Related workflows and attention</a></p>
 <section class="panel"><h2>Session attention</h2>{% for issue in attention %}<p><a href="{{ issue.link }}">{{ issue.id }}</a> · {{ issue.cause }}{% if issue.acknowledgment %} · {{ issue.acknowledgment.status }} at {{ issue.acknowledgment.at }}{% endif %}</p>{% else %}<p>No coordinator attention item is currently derived.</p>{% endfor %}</section>
 <p><a class="btn btn-ghost" href="/sessions/{{ record.identity.id }}/export.json">Export JSON</a></p>
+{% if manual_inventory %}<section class="panel"><h2>Latest manual inventory declaration</h2>
+<p>{{ manual_inventory.data.provider_id }} / {{ manual_inventory.data.resource_id }} · region {{ manual_inventory.data.region }} · {{ manual_inventory.data.gpu_count }} × {{ manual_inventory.data.gpu_type }}.</p>
+<p>{{ manual_inventory.data.model_name }} · revision {{ manual_inventory.data.model_revision }} · operator interval {{ manual_inventory.data.start }} to {{ manual_inventory.data.end or 'unknown' }}.</p>
+<p>Reported hourly USD rate {{ manual_inventory.data.actual_rate if manual_inventory.data.actual_rate is not none else 'unknown' }} · reference hourly USD estimate {{ manual_inventory.data.reference_rate if manual_inventory.data.reference_rate is not none else 'unknown' }} · {{ manual_inventory.data.rate_provenance }}.</p>
+<p>Inventory source: {{ manual_inventory.data.provenance }}. Uncertainty: {{ manual_inventory.data.uncertainty }}. Operator end is not provider-confirmed termination; no bill or charge is inferred.</p></section>{% endif %}
 <section class="panel"><h2>Recovery summary</h2><p>{{ view.summary }}</p>
 {% for alert in view.alerts %}<p class="alert alert-bad">{{ alert }}</p>{% endfor %}
 <div class="kv-grid">

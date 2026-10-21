@@ -75,7 +75,7 @@ class CustomerConfig:
                 raise ValueError("Effective configuration changed before dispatch")
             yield
 
-    def save(self, kind, identifier, body, *, new_only=False, expected_digest=None):
+    def save(self, kind, identifier, body, *, new_only=False, expected_digest=None, expected_endpoints=None):
         label(identifier)
         if kind=="connection" and self.connection_disabled(identifier):
             raise ValueError("Disabled connection IDs cannot be reused")
@@ -159,15 +159,11 @@ class CustomerConfig:
             _text(body["description"],500)
             if body["provenance"] not in {"operator-entered","observed","confirmed"} or body["status"] not in {"unknown","current","stale"}:
                 raise ValueError("Invalid provenance or status")
-        raw=canonical(body)
-        if re.search(r"(?i)(bearer\s+|api[_-]?key\s*[:=]|password\s*[:=]|secret\s*[:=])",raw):
-            raise ValueError("Credentials cannot be stored in ordinary configuration")
-        digest=hashlib.sha256(raw.encode()).hexdigest()
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
             if expected_digest is not None:
                 previous=db.execute("SELECT digest FROM versions WHERE kind=? AND id=? ORDER BY version DESC LIMIT 1",(kind,identifier)).fetchone()
-                if previous is None or previous["digest"]!=expected_digest:
+                if (previous["digest"] if previous else "")!=expected_digest:
                     raise ValueError("Configuration changed before permission update")
             if new_only and db.execute("SELECT 1 FROM versions WHERE kind=? AND id=?", (kind,identifier)).fetchone():
                 raise ValueError("Configuration identifier already exists")
@@ -182,6 +178,21 @@ class CustomerConfig:
                         raise ValueError("Declared adapter cannot be removed or changed; use a new agent ID")
             if kind == "connection" and db.execute("SELECT 1 FROM disabled_connections WHERE id=?", (identifier,)).fetchone():
                 raise ValueError("Disabled connection IDs cannot be reused")
+            if kind == "link":
+                from verity_core.link_binding import validate_snapshot
+                endpoints=[]
+                for prefix in ("from", "to"):
+                    row=db.execute("SELECT version,digest FROM versions WHERE kind=? AND id=? ORDER BY version DESC LIMIT 1",
+                        (body[prefix+"_kind"],body[prefix+"_id"])).fetchone()
+                    if row is None:raise ValueError("Unknown relationship endpoint")
+                    endpoints.append(dict(kind=body[prefix+"_kind"],id=body[prefix+"_id"],version=row["version"],digest=row["digest"]))
+                if expected_endpoints is not None and validate_snapshot(endpoints,expected_endpoints)!="declared_current":
+                    raise ValueError("Relationship endpoints changed; reload before saving")
+                body=dict(body,endpoint_binding=endpoints)
+            raw=canonical(body)
+            if re.search(r"(?i)(bearer\s+|api[_-]?key\s*[:=]|password\s*[:=]|secret\s*[:=])",raw):
+                raise ValueError("Credentials cannot be stored in ordinary configuration")
+            digest=hashlib.sha256(raw.encode()).hexdigest()
             row=db.execute("SELECT COALESCE(MAX(version),0)+1 FROM versions WHERE kind=? AND id=?",(kind,identifier)).fetchone()
             version=row[0]
             db.execute("INSERT INTO versions VALUES (?,?,?,?,?,?)",(kind,identifier,version,digest,raw,time.time()))
@@ -190,6 +201,24 @@ class CustomerConfig:
                 # about the newly saved connection, even when the ID is reused.
                 db.execute("DELETE FROM observations WHERE kind=? AND id=?", (kind,identifier))
         return self.latest(kind,identifier)
+
+    def relationship(self, entry):
+        from verity_core.link_binding import validate_snapshot
+        body=entry["body"]
+        current=[]
+        with self._db() as db:
+            db.execute("BEGIN")
+            for prefix in ("from","to"):
+                row=db.execute("SELECT version,digest FROM versions WHERE kind=? AND id=? ORDER BY version DESC LIMIT 1",
+                    (body[prefix+"_kind"],body[prefix+"_id"])).fetchone()
+                if row is None:return dict(entry,binding_state="needs_review")
+                current.append(dict(kind=body[prefix+"_kind"],id=body[prefix+"_id"],version=row["version"],digest=row["digest"]))
+        return dict(entry,binding_state=validate_snapshot(current,body.get("endpoint_binding")))
+
+    def history(self, kind, identifier):
+        with self._db() as db:
+            return [dict(row,body=json.loads(row["body"])) for row in db.execute(
+                "SELECT * FROM versions WHERE kind=? AND id=? ORDER BY version DESC",(kind,identifier))]
 
     def set_routing(self,identifier,enabled,expected_digest):
         if type(enabled) is not bool:raise ValueError("Agent routing setting must be boolean")
@@ -268,7 +297,8 @@ class CustomerConfig:
             raise ValueError("Additional connection is no longer a supported local OpenClaw model")
         fallback=self.latest("connection",agent["body"]["fallback_id"]) if agent["body"]["fallback_id"] else None
         hosted=[x for x in self.all() if x["kind"]=="link" and x["body"]["to_kind"]=="connection"
-                and x["body"]["to_id"]==conn["id"] and x["body"]["permission"]=="hosts"]
+                and x["body"]["to_id"]==conn["id"] and x["body"]["permission"]=="hosts"
+                and self.relationship(x)["binding_state"]=="declared_current"]
         machine=self.latest("machine",hosted[0]["body"]["from_id"]) if len(hosted)==1 else None
         if not resource or not conn:raise ValueError("Incomplete effective configuration")
         result={"agent_id":agent_id,"agent_version":agent["version"],"agent_hash":agent["digest"],

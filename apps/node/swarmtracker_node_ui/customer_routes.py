@@ -111,11 +111,28 @@ def install(app,render,base_ctx):
             if item["kind"]!="agent":continue
             try:policy=ledger.policy(item["id"])
             except BudgetDenied:policy=None
-            agents.append(dict(entry=item,policy=policy))
+            agents.append(dict(entry=item,policy=policy,estimates=ledger.estimates(item['id'])))
         ctx=base_ctx(request,"configuration")
         ctx.update(operator_token=decision_routes.TOKEN,spending_agents=agents,format_usd=format_usd)
         response=render("customer_spending.html",ctx);response.headers["Cache-Control"]="no-store"
         return response
+
+    @app.post('/configuration/spending/{identifier}/estimate')
+    async def calculate_estimate(request:Request,identifier:str):
+        import re
+        local_peer(request);form=await decision_routes.operator_form(request,max_fields=8)
+        if set(form)!={'operator_token','input_tokens','output_tokens','input_rate_usd','output_rate_usd','pricing_source','pricing_as_of','basis'}:
+            raise HTTPException(422,'Exact offline calculation fields required')
+        if not database().latest('agent',identifier):raise HTTPException(404,'Unknown agent')
+        try:
+            for key in ('input_tokens','output_tokens'):
+                if not re.fullmatch(r'[0-9]{1,16}',form[key]):raise ValueError('Integer count required')
+            budget_database().record_estimate(identifier,input_tokens=int(form['input_tokens']),output_tokens=int(form['output_tokens']),
+                input_price=parse_usd(form['input_rate_usd']),output_price=parse_usd(form['output_rate_usd']),
+                pricing_source=form['pricing_source'],pricing_as_of=form['pricing_as_of'],basis=form['basis'])
+        except (ValueError,TypeError):raise HTTPException(422,'Use bounded whole token counts, explicit USD rates, source, date and basis') from None
+        except (sqlite3.Error,OSError):raise HTTPException(503,'Estimate save was not confirmed') from None
+        return RedirectResponse('/configuration/spending',status_code=303)
 
     @app.post("/configuration/spending/{identifier}")
     async def save_spending(request:Request,identifier:str):
@@ -248,9 +265,7 @@ def install(app,render,base_ctx):
             elif kind in ("machine","resource"):
                 body=dict(description=form.get("description",""),provenance="operator-entered",status="unknown")
             elif kind=="link":
-                body=dict(from_kind=form.get("from_kind",""),from_id=form.get("from_id",""),
-                          to_kind=form.get("to_kind",""),to_id=form.get("to_id",""),
-                          permission=form.get("permission",""),provenance="operator-entered",status="unknown")
+                raise ValueError('Use the reviewed Environment Map relationship form')
             else:raise ValueError("Unsupported configuration")
             database().save(kind,identifier,body)
         except sqlite3.OperationalError:

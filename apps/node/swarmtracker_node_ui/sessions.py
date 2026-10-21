@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from . import store
 
 DB_PATH = Path(os.environ.get("NODE_UI_SESSIONS_DB", str(store.DB_PATH.with_name("development-sessions.db"))))
-KINDS = {"provider", "connection", "inventory", "model", "task", "request", "result", "outcome", "contact", "billing", "shutdown", "resource", "gpu", "note"}
+KINDS = {"provider", "connection", "inventory", "manual_inventory", "model", "task", "request", "result", "outcome", "contact", "billing", "shutdown", "resource", "gpu", "note"}
 SOURCES = {"provider_api", "provider_console", "public_pricing", "ssh", "model_server", "local_collector", "operator", "test"}
 STATES = {"provisioning", "running", "stopping", "terminated", "unknown"}
 MODEL_STATES = {"unknown", "absent", "downloading", "downloaded", "loading", "ready", "inference", "failed"}
@@ -51,6 +51,9 @@ def validate_event(event):
     allowed = {
         "provider": {"state", "instance_id", "instance_type", "region", "gpu", "ip", "ssh_key_label"},
         "connection": {"state", "detail"}, "inventory": {"checked", "models", "download_bytes"},
+        "manual_inventory": {"start","end","actual_rate","reference_rate","session_id","provider_id","resource_id",
+                             "gpu_count","gpu_type","model_revision","provenance","source","termination_confirmed",
+                             "rate_provenance","region","model_name","uncertainty"},
         "model": {"state", "name", "revision", "download_bytes", "detail"},
         "task": {"task_id", "title", "state", "scope", "run_id", "action_id", "commit", "test", "output", "verification"},
         "request": {"task_id", "state", "request_id", "finish_reason"},
@@ -63,7 +66,17 @@ def validate_event(event):
     }[event["kind"]]
     if not data or not set(data) <= allowed:
         raise ValueError("Unknown or empty observation fields")
-    for value in data.values():
+    if event["kind"] == "manual_inventory":
+        from verity_core.manual_inventory import validate_interval
+        extra={"rate_provenance","region","model_name","uncertainty"}
+        if set(data) != allowed or event["source"] != "operator" or data["source"] != "operator" or data["termination_confirmed"] is not False:
+            raise ValueError("Manual inventory is a complete operator declaration")
+        normalized=validate_interval(**{key:data[key] for key in allowed-extra-{"source","termination_confirmed"}})
+        if any(normalized[key]!=data[key] for key in normalized):raise ValueError("Invalid inventory declaration")
+        for key in extra:_text(data[key],500)
+    for key,value in data.items():
+        if event["kind"] == "manual_inventory" and value is None and key in {"start","end","actual_rate","reference_rate"}:
+            continue
         if isinstance(value, str):
             _text(value, 500)
         elif isinstance(value, list):
@@ -161,12 +174,18 @@ class SessionStore:
         with self.connection() as db:
             db.execute("INSERT INTO sessions VALUES (?,?)", (identity["id"], json.dumps(identity, sort_keys=True)))
 
-    def append(self, session_id, event):
+    def append(self, session_id, event, *, expected_inventory_id=None):
         validate_event(event)
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             if not db.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone():
                 raise KeyError(session_id)
+            if event["kind"] == "manual_inventory":
+                if event["data"]["session_id"] != session_id:raise ValueError("Inventory belongs to another session")
+                if expected_inventory_id is not None:
+                    prior=db.execute("SELECT id FROM session_events WHERE session_id=? AND json_extract(event,'$.kind')='manual_inventory' ORDER BY rowid DESC LIMIT 1",(session_id,)).fetchone()
+                    if (prior[0] if prior else "") != expected_inventory_id:
+                        raise ValueError("Inventory changed; reload before saving")
             existing = db.execute("SELECT event FROM session_events WHERE session_id=? AND id=?", (session_id, event["id"])).fetchone()
             encoded = json.dumps(event, sort_keys=True, allow_nan=False)
             if existing:
@@ -341,6 +360,66 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
 def install(app, render, base_ctx):
     database = SessionStore()
 
+    @app.get("/sessions/new")
+    def new_session(request:Request):
+        from .customer_routes import local_peer
+        from . import decision_routes
+        local_peer(request)
+        response=render("session_new.html",dict(base_ctx(request,"sessions"),operator_token=decision_routes.TOKEN))
+        response.headers['Cache-Control']='no-store';return response
+
+    @app.post("/sessions")
+    async def create_session(request:Request):
+        from .customer_routes import local_peer
+        from . import decision_routes
+        from fastapi.responses import RedirectResponse
+        local_peer(request);form=await decision_routes.operator_form(request,max_fields=4)
+        if set(form)!={"operator_token","id","purpose","provider"}:raise HTTPException(422,"Exact session fields required")
+        try:database.create(dict(id=form["id"],purpose=form["purpose"],provider=form["provider"],macs=[],branch="not specified",commits=[]))
+        except (ValueError,sqlite3.Error):raise HTTPException(409,"Session ID exists or fields invalid; no existing session was changed") from None
+        return RedirectResponse('/sessions/'+form['id']+'/inventory',status_code=303)
+
+    @app.get("/sessions/{session_id}/inventory")
+    def inventory_page(session_id:str,request:Request):
+        from .customer_routes import local_peer
+        from . import decision_routes
+        local_peer(request)
+        try:record=database.get(session_id)
+        except KeyError:raise HTTPException(404,"Session not found") from None
+        entries=[e for e in record['events'] if e['kind']=='manual_inventory']
+        response=render('session_inventory.html',dict(base_ctx(request,'sessions'),record=record,entries=entries,
+            latest=entries[-1] if entries else None,operator_token=decision_routes.TOKEN))
+        response.headers['Cache-Control']='no-store';return response
+
+    @app.post("/sessions/{session_id}/inventory")
+    async def save_inventory(session_id:str,request:Request):
+        from .customer_routes import local_peer,parse_usd
+        from . import decision_routes
+        from fastapi.responses import RedirectResponse
+        from verity_core.manual_inventory import validate_interval
+        import uuid
+        local_peer(request);form=await decision_routes.operator_form(request,max_fields=18)
+        fields={'operator_token','expected_inventory_id','start','end','actual_rate','reference_rate','provider_id','resource_id',
+                'gpu_count','gpu_type','model_revision','provenance','rate_provenance','region','model_name','uncertainty'}
+        if set(form)!=fields:raise HTTPException(422,'Exact inventory fields required')
+        def rate(value):
+            if not value:return None
+            amount=parse_usd(value)
+            if amount is None:raise ValueError('Unknown rate must be blank')
+            return amount/1000000
+        try:
+            if not re.fullmatch(r'[0-9]{1,2}',form['gpu_count']):raise ValueError('GPU count required')
+            body=validate_interval(session_id=session_id,start=form['start'],end=form['end'] or None,
+                actual_rate=rate(form['actual_rate']),reference_rate=rate(form['reference_rate']),
+                provider_id=form['provider_id'],resource_id=form['resource_id'],gpu_count=int(form['gpu_count']),
+                gpu_type=form['gpu_type'],model_revision=form['model_revision'],provenance=form['provenance'])
+            body.update({key:form[key] for key in ('rate_provenance','region','model_name','uncertainty')})
+            database.append(session_id,dict(id='inventory.'+uuid.uuid4().hex,at=time.time(),kind='manual_inventory',source='operator',data=body),
+                            expected_inventory_id=form['expected_inventory_id'])
+        except KeyError:raise HTTPException(404,'Session not found') from None
+        except (ValueError,TypeError,sqlite3.Error):raise HTTPException(409,'Inventory invalid or changed; reload, use timezone offsets, exact revision, and leave unknown rates blank') from None
+        return RedirectResponse('/sessions/'+session_id+'/inventory',status_code=303)
+
     @app.get("/sessions")
     def sessions_page(request: Request):
         ctx = base_ctx(request, "sessions")
@@ -369,6 +448,7 @@ def install(app, render, base_ctx):
             warning_history=[]
             warning_history_error=True
         ctx.update(record=record, view=configured_view(record), coordinator=coordinator,
+                   manual_inventory=next((e for e in reversed(record['events']) if e['kind']=='manual_inventory'),None),
                    warning_history=warning_history,warning_history_error=warning_history_error,
                    attention=attention(coordinator,participants=participants) if coordinator else [])
         return render("session.html", ctx)

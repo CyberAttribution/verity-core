@@ -35,6 +35,32 @@ class BudgetLedger:
             db.execute('CREATE TABLE IF NOT EXISTS inference_budget_policies (agent TEXT NOT NULL,version INTEGER NOT NULL,digest TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(agent,version))')
             db.execute('CREATE TABLE IF NOT EXISTS inference_budget_entries (request_id TEXT PRIMARY KEY,agent TEXT NOT NULL,session_id TEXT NOT NULL,day INTEGER NOT NULL,estimate INTEGER NOT NULL,actual INTEGER,state TEXT NOT NULL,policy_digest TEXT NOT NULL,at REAL NOT NULL,detail TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS inference_budget_events (seq INTEGER PRIMARY KEY AUTOINCREMENT,request_id TEXT NOT NULL,state TEXT NOT NULL,at REAL NOT NULL,data TEXT NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS inference_cost_estimates (id TEXT PRIMARY KEY,agent TEXT NOT NULL,at REAL NOT NULL,body TEXT NOT NULL)')
+
+    def record_estimate(self,agent,*,input_tokens,output_tokens,input_price,output_price,pricing_source,pricing_as_of,basis):
+        """Append an offline scenario; never reserve, dispatch or reconcile usage."""
+        from .offline_cost import estimate_cost
+        import uuid
+        identifier(agent)
+        for text in (pricing_source,pricing_as_of,basis):
+            if not isinstance(text,str) or not text.strip() or len(text)>500 or any(ord(c)<32 for c in text):
+                raise ValueError('Pricing source, checked date and calculation basis required')
+            if re.search(r'(?i)(bearer\s+|api[_-]?key\s*[:=]|password\s*[:=]|secret\s*[:=])',text):
+                raise ValueError('Credentials cannot be entered in estimate records')
+        body=estimate_cost(input_tokens,output_tokens,input_price=input_price,output_price=output_price)
+        body.update(input_tokens=input_tokens,output_tokens=output_tokens,input_price=input_price,output_price=output_price,
+                    pricing_source=pricing_source,pricing_as_of=pricing_as_of,basis=basis,usage_source='operator assumptions')
+        record=dict(id=uuid.uuid4().hex,agent=agent,at=time.time(),body=body)
+        with self.db() as db:
+            db.execute('INSERT INTO inference_cost_estimates VALUES (?,?,?,?)',
+                       (record['id'],agent,record['at'],json.dumps(body,sort_keys=True,allow_nan=False)))
+        return record
+
+    def estimates(self,agent):
+        identifier(agent)
+        with self.db() as db:
+            return [dict(row,body=json.loads(row['body'])) for row in db.execute(
+                'SELECT * FROM inference_cost_estimates WHERE agent=? ORDER BY rowid DESC LIMIT 20',(agent,))]
 
     @contextmanager
     def db(self):

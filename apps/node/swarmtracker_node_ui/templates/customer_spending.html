@@ -7,6 +7,17 @@
 {% if row.policy %}<p>Policy v{{ row.policy.version }} · <code>{{ row.policy.digest }}</code></p>{% else %}<p>No monetary policy recorded. A governed paid adapter must refuse dispatch until a policy is set.</p>{% endif %}
 <form method="post" action="/configuration/spending/{{ row.entry.id }}"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="expected_policy_digest" value="{{ row.policy.digest if row.policy else '' }}">
 <label>Daily USD limit <input name="daily_usd" value="{{ format_usd(row.policy.daily_microusd) if row.policy else '0.000000' }}" required></label>
-<label>Session USD limit <input name="session_usd" value="{{ format_usd(row.policy.session_microusd) if row.policy else '0.000000' }}" required></label><button>Save spending policy version</button></form></section>
+<label>Session USD limit <input name="session_usd" value="{{ format_usd(row.policy.session_microusd) if row.policy else '0.000000' }}" required></label><button>Save spending policy version</button></form>
+<h3>Offline cost calculation</h3><p>Enter your own pricing source and planning assumptions. No provider is contacted. Counts are estimates, not reported usage; this calculation does not change held reservations.</p>
+<form method="post" action="/configuration/spending/{{ row.entry.id }}/estimate"><input type="hidden" name="operator_token" value="{{ operator_token }}">
+<label>Assumed input tokens <input name="input_tokens" required></label><label>Assumed output tokens <input name="output_tokens" required></label>
+<label>Input USD per million tokens <input name="input_rate_usd" required></label><label>Output USD per million tokens <input name="output_rate_usd" required></label>
+<label>Pricing source <input name="pricing_source" placeholder="Source URL or attributed supplied rate; no credentials" required></label>
+<label>Pricing checked date <input name="pricing_as_of" required></label><label>Calculation basis <input name="basis" placeholder="Describe the planned workload and assumptions" required></label>
+<button>Calculate and retain offline estimate</button></form>
+{% for estimate in row.estimates %}<article class="card"><h4>Estimate · {{ format_usd(estimate.body.amount) }} USD</h4>
+<p>Source: {{ estimate.body.pricing_source }} · checked {{ estimate.body.pricing_as_of }} · {{ estimate.body.basis }}</p>
+<p>{{ estimate.body.input_tokens }} input tokens × {{ format_usd(estimate.body.input_price) }} input USD per million + {{ estimate.body.output_tokens }} output tokens × {{ format_usd(estimate.body.output_price) }} output USD per million. Exact integer arithmetic; total rounded up once to microUSD.</p>
+<p>Operator assumptions, not provider-reported usage. No live provider-budget enforcement. Recorded {{ estimate.at }} · {{ estimate.id }}.</p></article>{% endfor %}</section>
 {% else %}<p>Register an agent before preparing its spending policy.</p>{% endfor %}
 <p>Reservations use estimates. Unknown completion retains the reservation; actual charges may exceed an estimate. Provider billing and usage evidence still require adapter integration.</p>{% endblock %}

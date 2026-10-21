@@ -1,0 +1,18 @@
+{% extends "base.html" %}{% block title %}Review relationship{% endblock %}{% block content %}
+<h1>Review declared relationship</h1><p><a href="/environment">Environment Map</a></p>
+<p>Select both ordered endpoints and review their versions and digests. Saving records a declaration; it grants no access and does not authenticate identity.</p>
+<form method="post" action="/environment/relationships">
+<input type="hidden" name="operator_token" value="{{ operator_token }}">
+<input type="hidden" name="expected_digest" value="{{ entry.digest if entry else '' }}">
+<label>Relationship ID <input name="id" value="{{ entry.id if entry else '' }}" {{ 'readonly' if entry else '' }} required></label>
+{% for side in ['from','to'] %}<label>{{ side|capitalize }} endpoint <select name="{{ side }}_endpoint">
+{% for endpoint in endpoints %}<option value="{{ canonical(endpoint) }}" {% if entry and entry.body[side+'_kind']==endpoint.kind and entry.body[side+'_id']==endpoint.id %}selected{% endif %}>{{ endpoint.kind }} {{ endpoint.id }} · v{{ endpoint.version }} · {{ endpoint.digest }}</option>{% endfor %}
+</select></label>{% endfor %}
+<label>Declared relationship <select name="permission">{% for permission in ['hosts','proposes','executor-host'] %}<option {% if entry and entry.body.permission==permission %}selected{% endif %}>{{ permission }}</option>{% endfor %}</select></label>
+<p>Supported directions: machine → connection hosts; agent → resource proposes; machine → resource executor-host.</p>
+<button>Save reviewed endpoint binding</button></form>
+<h2>Preserved relationship versions</h2>{% for version in history %}<article><h3>Version {{ version.version }} · {{ version.binding_state|replace('_',' ') }}</h3>
+<p>{{ version.body.from_kind }} {{ version.body.from_id }} → {{ version.body.permission }} → {{ version.body.to_kind }} {{ version.body.to_id }}</p>
+{% for endpoint in version.body.endpoint_binding|default([]) %}<p>{{ endpoint.kind }} {{ endpoint.id }} · v{{ endpoint.version }} · <code>{{ endpoint.digest }}</code></p>{% else %}<p>Legacy relationship is unbound; no endpoint snapshot was retained.</p>{% endfor %}
+<p>Relationship digest <code>{{ version.digest }}</code> · recorded {{ version.at }}</p></article>{% endfor %}
+{% endblock %}

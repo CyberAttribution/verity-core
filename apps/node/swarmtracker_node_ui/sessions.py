@@ -280,7 +280,12 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
     rate_event = next((e for e in reversed(record["events"]) if e["kind"] == "billing" and "rate" in e["data"]), None)
     charge_event = next((e for e in reversed(record["events"]) if e["kind"] == "billing" and "reported_charge" in e["data"]), None)
     start, rate = bill.get("billing_start", bill.get("estimate_start_proxy")), bill.get("rate")
-    stop_at = termination_report["at"] if confirmed and termination_report else state_report["at"] if confirmed and state_report else None
+    termination_evidence=[e for e in record["events"] if e["source"] in {"provider_api","provider_console"}
+                          and ((e["kind"]=="shutdown" and e["data"].get("confirmed"))
+                               or (e["kind"]=="provider" and e["data"].get("state")=="terminated"))]
+    # Later attributed provider corrections supersede the earlier end estimate.
+    # Operator claims and a stopped worker cannot establish a billing stop.
+    stop_at = termination_evidence[-1]["at"] if confirmed and termination_evidence else None
     elapsed = max(0, (min(now, stop_at) if stop_at else now) - start) if isinstance(start, (int, float)) else None
     estimate = round(elapsed / 3600 * rate, 2) if elapsed is not None and isinstance(rate, (int, float)) else None
     alerts = []
@@ -296,11 +301,11 @@ def derive(record, now=None, stale_after=300, idle_after=600, budget_margin=20):
             alerts.append("Prolonged paid idle interval")
     if stale and not confirmed:
         alerts.append("Contact stale or unknown")
-    if data("model").get("state") == "failed":
+    if not confirmed and data("model").get("state") == "failed":
         alerts.append("Model failure reported in last model observation")
-    if elapsed and elapsed > idle_after and model in {"unknown", "absent", "downloading", "downloaded", "loading"}:
+    if not confirmed and elapsed and elapsed > idle_after and model in {"unknown", "absent", "downloading", "downloaded", "loading"}:
         alerts.append("Prolonged setup")
-    if estimate is not None and isinstance(bill.get("ceiling"), (int, float)) and estimate >= bill["ceiling"] - budget_margin:
+    if not confirmed and estimate is not None and isinstance(bill.get("ceiling"), (int, float)) and estimate >= bill["ceiling"] - budget_margin:
         alerts.append("Approaching session budget")
     retained = [e["data"] for e in resources.values() if e["data"].get("billable") and e["data"].get("state") != "released"]
     task_views = []

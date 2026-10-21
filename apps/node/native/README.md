@@ -76,3 +76,28 @@ only status and recovery IDs and returns nonzero on failure. It does not contact
 a provider, print the generated credential, or automatically retry creation.
 Retain its JSON if cleanup or completion is unknown. This test does not establish
 OS-user separation, authenticated caller identity, release signing or notarization.
+
+## Signed development acceptance — October 20, 2026
+
+The prepared app built successfully with Xcode 16.4 on macOS 15.7.4, using the
+operator's Personal Team, an Apple Development certificate and Xcode-managed
+provisioning. Strict codesign verification passed. The signed helper passed
+synthetic create/read, wrong-origin/profile denial, delete, missing-read and
+confirmed cleanup. This supersedes the earlier missing-entitlement blocker for
+this signed local development build; the unsigned build still fails closed.
+
+The customer credential HTTP handlers also passed with the real signed helper
+in an isolated profile: CSRF denial, save, manager reopen/read, no credential-read
+route or echo, changed-configuration denial, disabled-connection cleanup and
+idempotent removal. Ordinary profile files contained no generated secret and
+cleanup was confirmed. No real provider key or paid API call was used.
+
+The first integration driver used an unsupported synthetic provider and was
+correctly rejected before native creation. The corrected driver used a supported
+provider label with a dummy HTTPS origin; this was local storage acceptance,
+not provider authorization. Evidence and local team settings remain private.
+
+Personal-Team provisioning is development-only and expires. This result does
+not establish release signing/notarization, authenticated helper callers,
+pristine-account installation, credential rotation, provider key validity or
+governed paid dispatch. Package trust and renewal remain required.

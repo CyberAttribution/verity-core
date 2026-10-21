@@ -41,6 +41,17 @@ class LocalInference:
         db.row_factory = sqlite3.Row
         return db
 
+    def latest_for_agent(self, agent_id, *, state=None):
+        label(agent_id)
+        if state not in {None,"completed","denied","failed","reserved"}:
+            raise ValueError("Invalid request state")
+        with self._db() as db:
+            if state is None:
+                row=db.execute("SELECT record FROM runs WHERE agent_id=? ORDER BY at DESC,rowid DESC LIMIT 1",(agent_id,)).fetchone()
+            else:
+                row=db.execute("SELECT record FROM runs WHERE agent_id=? AND state=? ORDER BY at DESC,rowid DESC LIMIT 1",(agent_id,state)).fetchone()
+        return json.loads(row["record"]) if row else None
+
     def recent(self):
         with self._db() as db:
             return [json.loads(r["record"]) for r in db.execute(

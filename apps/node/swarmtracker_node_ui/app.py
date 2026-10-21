@@ -1983,7 +1983,9 @@ def agents_page(request: Request):
         from .customer_config import CustomerConfig
         from . import store
         customer = CustomerConfig(store.DB_PATH.with_name("customer-config.db"))
-        ctx["configured_agents"] = [item for item in customer.all() if item["kind"] == "agent"]
+        from .agent_observations import configured_agents
+        from .local_inference import LocalInference
+        ctx["configured_agents"] = configured_agents(customer,LocalInference(store.DB_PATH.with_name("local-inference.db"),customer))
         ctx["configured_agents_error"] = False
     except (ValueError, sqlite3.Error, OSError):
         ctx["configured_agents"] = []

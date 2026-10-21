@@ -1,0 +1,53 @@
+"""Display-only setup observations; never permission or installation evidence."""
+import time
+
+
+def configured_agents(configuration, runs):
+    observations=configuration.observations()
+    views=[]
+    for agent in configuration.all():
+        if agent["kind"]!="agent":
+            continue
+        body=agent["body"]
+        connection=configuration.latest("connection",body["connection_id"])
+        observation=observations.get(("connection",body["connection_id"]))
+        disabled=configuration.connection_disabled(body["connection_id"])
+        if not connection:
+            state="unknown"
+            detail="Primary connection is not recorded"
+        elif disabled:
+            state="disabled"
+            detail="Primary connection was removed from future routing"
+        elif observation:
+            state=observation["state"]
+            detail=observation["detail"]
+        else:
+            state="unknown"
+            detail="No observation for the current primary connection"
+        def metadata(run):
+            if run is None:
+                return None
+            cfg=run["configuration"]
+            try:
+                selected=cfg.get("selected_connection_id","")
+                current=configuration.effective(agent["id"],run["resource_id"],selected)
+                matches=current==cfg
+            except (ValueError,KeyError,TypeError):
+                matches=False
+            result=run.get("result") or {}
+            return dict(id=run["id"],task_id=run["task_id"],at=run["at"],
+                        state=run["state"],connection_id=cfg["connection_id"],
+                        model=run["model"],configuration_matches=matches,
+                        runtime_event_id=result.get("runtime_event_id"),
+                        response_sha256=result.get("response_sha256"))
+        view=dict(agent)
+        view["setup_observation"]=dict(
+            assessed_at=time.time(),connection_state=state,connection_detail=detail,
+            connection_observed_at=observation["at"] if observation else None,
+            adapter_supported=body.get("adapter_kind","openclaw_v0")=="openclaw_v0"
+                and bool(connection) and connection["body"]["scope"]=="local"
+                and connection["body"]["provider"]=="openclaw",
+            latest_attempt=metadata(runs.latest_for_agent(agent["id"])),
+            last_completed=metadata(runs.latest_for_agent(agent["id"],state="completed")))
+        views.append(view)
+    return views

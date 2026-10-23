@@ -60,4 +60,11 @@ class ResearchJourney:
             return existing
 
     def intakes(self):
-        with self.work._db() as db:return [json.loads(r[0]) for r in db.execute('SELECT body FROM research_intake ORDER BY rowid DESC LIMIT 20')]
+        with self.work._db() as db:
+            items=[json.loads(r[0]) for r in db.execute('SELECT body FROM research_intake ORDER BY rowid DESC LIMIT 20')]
+        with self.runs._db() as db:
+            for item in items:
+                row=db.execute('SELECT record FROM runs WHERE task_id=?',(item['task_id'],)).fetchone()
+                run=json.loads(row[0]) if row else None
+                item['request']={k:run[k] for k in ('id','state','reason')} if run else None
+        return items

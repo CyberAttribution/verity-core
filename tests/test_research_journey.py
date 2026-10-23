@@ -40,6 +40,7 @@ def test_full_research_route_decision_restart_and_export(setup):
     assert c.post('/company-work/article-1/decision',data=choice).status_code==409
     choice['expected_binding']=w['proposal_binding']
     assert c.post('/company-work/article-1/decision',data=choice,follow_redirects=False).status_code==303
+    assert choice['detail'] in c.get('/company-work').text
     assert c.post('/company-work/article-1/decision',data=choice).status_code==409
     restored=ResearchJourney(j.path,LocalInference(j.runs.path,cfg))
     assert restored.recover('article-1')['operator_decision']['state']=='accepted'
@@ -86,6 +87,7 @@ def test_unpermitted_purpose_and_model_are_denied_before_runtime(setup):
     r=c.post('/company-work/research',data=form,follow_redirects=False);assert r.status_code==303
     assert calls==[]
     denied=j.runs.recent()[0];assert denied['state']=='denied' and 'Purpose denied' in denied['reason']
+    assert 'Inspect denied request' in c.get('/company-work').text
     run=j.runs.run(agent_id='researcher',task_id='wrong-model',resource_id='research',purpose='generate_text',prompt='Fixture',requested_model='unpermitted')
     assert run['state']=='denied' and calls==[]
 

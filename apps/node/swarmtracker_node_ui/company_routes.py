@@ -108,7 +108,7 @@ def install(app,render,base_ctx):
         except KeyError:
             raise HTTPException(404,"Research record not found") from None
         except ValueError:
-            raise HTTPException(409,"Decision refused or already recorded") from None
+            raise HTTPException(409,"Decision refused: content or configuration changed, routing paused, or decision already recorded. Review current settings; rejection remains available for a pending proposal.") from None
         except sqlite3.Error:
             raise HTTPException(503,"Decision storage unavailable") from None
         return RedirectResponse("/company-work",status_code=303)

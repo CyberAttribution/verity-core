@@ -3,8 +3,32 @@
 {% block content %}
 <h1>Company research</h1>
 <p>Source claims and agent interpretations are separate. An agent proposal does not authorize a company task. No decision or outcome is inferred from a completed model response.</p>
+<h2>Research an article</h2>
+<p><a href="/agents">Select and configure an agent</a> · <a href="/configuration">Model connection and permissions</a>. Choose the reviewed settings below. Article text is sent through the configured local route. The proposed implication stays pending until you decide.</p>
+{% for choice in research_choices %}{% set cfg=choice.configuration %}
+<details><summary>{{ cfg.agent_id }} · {{ cfg.model }} · settings v{{ cfg.agent_version }} / connection v{{ cfg.connection_version }}</summary>
+<p>Permitted purposes: {{ cfg.allowed_tools|join(', ') }} · resource {{ cfg.resource_id }} · routing {{ cfg.routing_enabled|default(true) }}</p>
+<form method="post" action="/company-work/research">
+<input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="agent_id" value="{{ cfg.agent_id }}"><input type="hidden" name="resource_id" value="{{ cfg.resource_id }}"><input type="hidden" name="expected_configuration_sha256" value="{{ choice.sha256 }}">
+<label>Research task ID <input name="task_id" required maxlength="80"></label><label>Session ID <input name="session_id" maxlength="160"></label>
+<label>Permitted research purpose <select name="purpose">{% for purpose in cfg.allowed_tools %}<option>{{ purpose }}</option>{% endfor %}</select></label>
+<label>Article title <input name="title" required maxlength="200"></label><label>Publication date <input name="date" type="date" required></label>
+<label>Source HTTPS URL <input name="source_url" type="url" required maxlength="1000"></label>
+<label>Input provenance <select name="synthetic"><option value="false">Operator-supplied real article excerpt</option><option value="true">Synthetic fixture — not real research</option></select></label>
+<label>Source claim to review <textarea name="source_claim" required maxlength="1000"></textarea></label>
+<label>Article excerpt <textarea name="text" required maxlength="2000"></textarea></label>
+<button>Request cited summary, proposed implication and uncertainty</button></form></details>
+{% else %}<p>No configured research route. Connect an agent and resource first.</p>{% endfor %}
+<h2>Retained intake and recovery</h2>
+{% for intake in research_intakes %}<details><summary>{{ intake.task_id }} · {{ intake.article.title }}</summary><p>Recovery reads the existing request; it never dispatches inference. An interrupted or denied request remains unconfirmed or denied.</p>
+<form method="post" action="/company-work/{{ intake.task_id }}/recover"><input type="hidden" name="operator_token" value="{{ operator_token }}"><button>Recover existing research proposal</button></form></details>{% endfor %}
 {% for work in company_work_records %}
 <section class="panel"><h2>{{ work.id }}</h2>
+{% if work.article is defined %}<h3>{{ work.article.title }} · {{ work.article.date }}</h3><p>{{ 'SYNTHETIC FIXTURE — not real research' if work.article.synthetic else 'Operator-supplied article excerpt; origin not independently authenticated' }}</p><details><summary>Retained article text</summary><pre>{{ work.article.text }}</pre></details>
+<p><a href="/workbench/requests/{{ work.request_id }}">Inspect routed request, configuration and model evidence</a> · <a href="/agents">Responsible agent</a> · <a href="/configuration">Current connection</a></p>
+<p>Company record inclusion: {{ work.operator_decision.state }}. Inclusion authorizes no implementation, spending, publication or outreach.</p>
+<p><a href="/company-work/{{ work.id }}/record/bundle.json">Export research record</a> · <a href="/company-work/{{ work.id }}/record/checkpoint.json">Retain research checkpoint separately</a></p>
+<p>Verify on another machine: <code>python -m verity_core.trust.research_record research.bundle.json --checkpoint research.checkpoint.json</code>. Integrity does not prove source truth, operator identity or OS containment.</p>{% endif %}
 <p><strong>Source claim</strong> · <a href="{{ work.source_claim.url }}">{{ work.source_claim.url }}</a><br>{{ work.source_claim.text }}<br>{{ work.source_claim.provenance }}</p>
 <p><strong>Agent interpretation</strong> · {{ work.agent_interpretation.agent_id }} / {{ work.agent_interpretation.model }} · task {{ work.agent_interpretation.task_id }} · runtime event {{ work.agent_interpretation.runtime_event_id }}<br>{{ work.agent_interpretation.response }}<br>Response SHA-256 <code>{{ work.agent_interpretation.response_sha256 }}</code></p>
 <p><strong>Operator decision:</strong> {{ work.operator_decision.state }}. <strong>Assigned task:</strong> {{ work.assigned_task or 'none' }}. <strong>Observed work:</strong> {{ work.observed_work or 'none' }}. <strong>Verified result:</strong> {{ work.verified_result or 'none' }}.</p>
@@ -33,9 +57,10 @@
 <form method="post" action="/company-work/{{ work.id }}/evidence"><input type="hidden" name="operator_token" value="{{ operator_token }}"><label>Check JSON <textarea name="check_json" maxlength="6000" required></textarea></label><button>Record evidence check</button></form></details>
 {% if work.operator_decision.state == 'pending' %}
 <form method="post" action="/company-work/{{ work.id }}/decision"><input type="hidden" name="operator_token" value="{{ operator_token }}">
-<label>Operator choice <select name="state"><option value="accepted">Accept proposal</option><option value="rejected">Reject proposal</option></select></label>
+{% if work.proposal_binding is defined %}<input type="hidden" name="expected_binding" value="{{ work.proposal_binding }}"><p>Decision binds the retained article, exact output and request configuration. Approval refuses changed configuration; rejection remains available.</p>{% endif %}
+<label>Operator choice <select name="state"><option value="accepted">Accept into company record</option><option value="rejected">Reject proposal</option></select></label>
 <label>Reason <textarea name="detail" maxlength="1000" required></textarea></label><button>Record decision</button></form>
-{% elif work.operator_decision.state == 'accepted' and not work.assigned_task %}
+{% elif work.operator_decision.state == 'accepted' and not work.assigned_task and work.article is not defined %}
 <form method="post" action="/company-work/{{ work.id }}/assignment"><input type="hidden" name="operator_token" value="{{ operator_token }}">
 <label>Task ID <input name="task_id" required></label><label>Assignee ID <input name="assignee" required></label>
 <button>Assign task</button></form>

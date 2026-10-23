@@ -24,6 +24,7 @@ class CompanyWorkStore:
         self.path.parent.mkdir(parents=True,exist_ok=True)
         with self._db() as db:
             db.execute("CREATE TABLE IF NOT EXISTS research (id TEXT PRIMARY KEY, agent_task_id TEXT NOT NULL UNIQUE, at REAL NOT NULL, record TEXT NOT NULL)")
+            db.execute("CREATE TABLE IF NOT EXISTS research_receipts (work_id TEXT PRIMARY KEY, bundle TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS research_events (seq INTEGER PRIMARY KEY, work_id TEXT NOT NULL, at REAL NOT NULL, action TEXT NOT NULL, detail TEXT NOT NULL)")
 
     def check_quotation(self, work_id, snapshot):
@@ -101,7 +102,7 @@ class CompanyWorkStore:
         db.row_factory=sqlite3.Row
         return db
 
-    def create(self, work_id, source_url, source_claim, run):
+    def create(self, work_id, source_url, source_claim, run, *, article=None, request_bundle=None):
         label(work_id)
         if not isinstance(source_url,str) or len(source_url)>1000:
             raise ValueError("HTTPS source URL required")
@@ -134,8 +135,18 @@ class CompanyWorkStore:
                 configuration=snapshot),
             operator_decision=dict(state="pending",detail=None),assigned_task=None,
             observed_work=None,verified_result=None)
+        if article is not None:
+            from verity_core.trust import research_record
+            record["article"] = article
+            record["request_id"] = run["id"]
+            record["configuration"] = cfg
+            record["request_bundle"] = request_bundle
+            record["proposal_binding"] = research_record.binding(record)
+            bundle = research_record.propose(record)
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
+            if article is not None:
+                db.execute("INSERT INTO research_receipts VALUES (?,?)", (work_id,canonical(bundle)))
             db.execute("INSERT INTO research VALUES (?,?,?,?)",(work_id,run["task_id"],record["at"],canonical(record)))
         return record
 
@@ -144,13 +155,23 @@ class CompanyWorkStore:
         with self._db() as db:
             row=db.execute("SELECT record FROM research WHERE id=?",(work_id,)).fetchone()
         if not row:raise KeyError(work_id)
-        return json.loads(row["record"])
+        record=json.loads(row["record"])
+        if "article" in record:
+            from verity_core.trust import research_record
+            bundle=self.receipt(work_id)
+            if bundle["record"]["entries"][0]["payload"]["proposal"]!=research_record.proposal(record):
+                raise ValueError("Research display differs from bound proposal")
+            entries=bundle["record"]["entries"]
+            state=entries[-1]["payload"]["state"] if len(entries)==2 else "pending"
+            if record["operator_decision"]["state"]!=state:raise ValueError("Research decision differs from receipt")
+        return record
 
     def recent(self):
         with self._db() as db:
-            return [json.loads(row["record"]) for row in db.execute("SELECT record FROM research ORDER BY at DESC LIMIT 20")]
+            identifiers=[row["id"] for row in db.execute("SELECT id FROM research ORDER BY at DESC LIMIT 20")]
+        return [self.get(identifier) for identifier in identifiers]
 
-    def decide(self,work_id,state,detail):
+    def decide(self,work_id,state,detail, *, expected_binding=None):
         """Record an explicit local operator choice; never infer it from the model."""
         label(work_id)
         if state not in ("accepted","rejected") or not isinstance(detail,str) or not detail.strip() or len(detail)>1000:
@@ -162,6 +183,16 @@ class CompanyWorkStore:
             record=json.loads(row["record"])
             if record["operator_decision"]["state"]!="pending":
                 raise ValueError("Operator decision is immutable")
+            if "article" in record:
+                from verity_core.trust import research_record
+                if expected_binding != record["proposal_binding"] or expected_binding != research_record.binding(record):
+                    raise ValueError("Exact reviewed article, output and configuration required")
+                row = db.execute("SELECT bundle FROM research_receipts WHERE work_id=?",(work_id,)).fetchone()
+                bundle=json.loads(row[0])
+                if not research_record.verify(bundle,bundle["checkpoint"]):
+                    raise ValueError("Research evidence integrity failed")
+                bundle=research_record.decide(bundle,state,detail)
+                db.execute("UPDATE research_receipts SET bundle=? WHERE work_id=?",(canonical(bundle),work_id))
             now=time.time()
             record["operator_decision"]=dict(state=state,detail=detail.strip(),at=now,
                                              provenance="local operator form; identity unverified")
@@ -222,3 +253,13 @@ class CompanyWorkStore:
             db.execute("INSERT INTO research_events(work_id,at,action,detail) VALUES (?,?,?,?)",
                        (work_id,now,"commit_observed",canonical(record["observed_work"])))
         return record
+
+    def receipt(self,work_id):
+        from verity_core.trust import research_record
+        with self._db() as db:
+            row=db.execute("SELECT bundle FROM research_receipts WHERE work_id=?",(work_id,)).fetchone()
+        if not row:raise KeyError(work_id)
+        bundle=json.loads(row[0])
+        if not research_record.verify(bundle,bundle["checkpoint"]):
+            raise ValueError("Research evidence integrity failed")
+        return bundle

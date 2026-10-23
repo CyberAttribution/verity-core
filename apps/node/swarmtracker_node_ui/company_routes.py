@@ -1,6 +1,7 @@
 """Read-only company research trace; no implied operator approval."""
 import sqlite3
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from fastapi import HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
@@ -24,24 +25,86 @@ def install(app,render,base_ctx):
     def page(request:Request):
         local_peer(request)
         ctx=base_ctx(request,"company_work")
-        ctx["company_work_records"]=database().recent()
         try:
+            ctx["company_work_records"]=database().recent()
             ctx["evidence_checks"]={w["id"]: database().checks(w["id"]) for w in ctx["company_work_records"]}
         except (ValueError,TypeError,sqlite3.Error):
             raise HTTPException(503,"Evidence integrity or storage unavailable") from None
         ctx["operator_token"]=decision_routes.TOKEN
+        from . import workbench_routes
+        from .research_journey import ResearchJourney
+        journey=ResearchJourney(store.DB_PATH.with_name("company-work.db"),workbench_routes.runs())
+        ctx["research_intakes"]=journey.intakes()
+        ctx["research_choices"]=[]
+        cfg=workbench_routes.runs().configuration
+        import hashlib
+        from .customer_config import canonical
+        for agent in [x for x in cfg.all() if x['kind']=='agent'][:20]:
+            for resource in agent['body']['resources'][:20]:
+                try:effective=cfg.effective(agent['id'],resource)
+                except ValueError:continue
+                ctx["research_choices"].append(dict(configuration=effective,sha256=hashlib.sha256(canonical(effective).encode()).hexdigest()))
+                if len(ctx["research_choices"])>=30:break
+            if len(ctx["research_choices"])>=30:break
         response=render("company_work.html",ctx)
         response.headers["Cache-Control"]="no-store"
         return response
+
+    @app.post("/company-work/research")
+    async def submit_research(request:Request):
+        local_peer(request)
+        form=await decision_routes.operator_form(request,max_fields=16)
+        required={"operator_token","task_id","title","date","text","synthetic","source_url","source_claim","agent_id","resource_id","session_id","purpose","expected_configuration_sha256"}
+        if set(form)!=required or form["synthetic"] not in ("true","false"):
+            raise HTTPException(422,"Exact article and reviewed request fields required")
+        from .research_journey import ResearchJourney
+        from . import workbench_routes
+        try:
+            run=ResearchJourney(store.DB_PATH.with_name("company-work.db"),workbench_routes.runs()).submit(
+                **{k:form[k] for k in ("task_id","source_url","source_claim","agent_id","resource_id","session_id","purpose","expected_configuration_sha256")},
+                article=dict(title=form["title"],date=form["date"],text=form["text"],synthetic=form["synthetic"]=="true"))
+        except sqlite3.IntegrityError:
+            raise HTTPException(409,"Task already retained; recover the proposal without another inference") from None
+        except (ValueError,KeyError,TypeError):
+            raise HTTPException(422,"Research intake refused; inspect article and configured request. Retained tasks are never automatically retried.") from None
+        except sqlite3.Error:
+            raise HTTPException(503,"Research persistence unconfirmed; inspect retained task and recover without resubmitting") from None
+        return RedirectResponse("/company-work" if run["state"]=="completed" else "/workbench/requests/"+run["id"],status_code=303)
+
+    @app.post("/company-work/{work_id}/recover")
+    async def recover_research(request:Request,work_id:str):
+        local_peer(request)
+        form=await decision_routes.operator_form(request)
+        if set(form)!={"operator_token"}:raise HTTPException(422,"Exact recovery fields required")
+        from .research_journey import ResearchJourney
+        from . import workbench_routes
+        try:ResearchJourney(store.DB_PATH.with_name("company-work.db"),workbench_routes.runs()).recover(work_id)
+        except (KeyError,ValueError,sqlite3.Error):raise HTTPException(409,"Recovery not confirmed; inspect retained request. No inference was dispatched.") from None
+        return RedirectResponse("/company-work",status_code=303)
+
+    @app.get("/company-work/{work_id}/record/{artifact}.json")
+    def research_export(request:Request,work_id:str,artifact:str):
+        local_peer(request)
+        if artifact not in ("bundle","checkpoint"):raise HTTPException(404,"Unknown research artifact")
+        try:bundle=database().receipt(work_id)
+        except KeyError:raise HTTPException(404,"Research receipt unavailable") from None
+        except (ValueError,sqlite3.Error):raise HTTPException(503,"Research integrity unavailable") from None
+        return JSONResponse(bundle if artifact=="bundle" else bundle["checkpoint"],headers={"Cache-Control":"no-store","Content-Disposition":f'attachment; filename="research.{artifact}.json"'})
 
     @app.post("/company-work/{work_id}/decision")
     async def decide(request:Request,work_id:str):
         local_peer(request)
         form=await decision_routes.operator_form(request)
-        if set(form)!={"operator_token","state","detail"}:
+        if set(form) not in ({"operator_token","state","detail"},{"operator_token","state","detail","expected_binding"}):
             raise HTTPException(422,"Exact decision fields required")
         try:
-            database().decide(work_id,form["state"],form["detail"])
+            work=database().get(work_id)
+            from . import customer_routes
+            cfg=work.get("configuration")
+            guard=(customer_routes.database().dispatch_guard(cfg["agent_id"],cfg["resource_id"],cfg)
+                   if cfg and form["state"]=="accepted" else nullcontext())
+            with guard:
+                database().decide(work_id,form["state"],form["detail"],expected_binding=form.get("expected_binding"))
         except KeyError:
             raise HTTPException(404,"Research record not found") from None
         except ValueError:

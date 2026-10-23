@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}Governed requests{% endblock %}{% block content %}
-<h1>Run a governed local request</h1>
+<h1>Run a governed local request</h1><p><a href="/company-work">Research an article and review its proposed company record</a></p>
 <p><a href="/setup">Installation activation</a> → <a href="/agents/add">Choose an agent</a> → <a href="/configuration">Models &amp; Connections</a> → request → inspect evidence.</p>
 <p>Choose a configured agent and resource below. Each request uses the displayed primary or explicitly permitted additional local model and exact settings; changed settings require a fresh review. No external fallback or paid provider request is enabled here. Configured permissions do not establish OS containment or verified agent identity.</p>
 {% if not choices %}<p>No configured agent/resource pair. <a href="/agents/add">Choose an agent</a> and add its model connection and resource first.</p>{% endif %}

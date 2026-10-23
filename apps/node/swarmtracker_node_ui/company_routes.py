@@ -34,6 +34,7 @@ def install(app,render,base_ctx):
     def page(request:Request):
         local_peer(request)
         ctx=base_ctx(request,"company_work")
+        ctx["research_detail"]=False
         try:
             ctx["company_work_records"]=database().recent()
             ctx["evidence_checks"]={w["id"]: database().checks(w["id"]) for w in ctx["company_work_records"]}
@@ -55,6 +56,22 @@ def install(app,render,base_ctx):
                 ctx["research_choices"].append(dict(configuration=effective,sha256=hashlib.sha256(canonical(effective).encode()).hexdigest()))
                 if len(ctx["research_choices"])>=30:break
             if len(ctx["research_choices"])>=30:break
+        response=render("company_work.html",ctx)
+        response.headers["Cache-Control"]="no-store"
+        return response
+
+    @app.get("/company-work/{work_id}")
+    def research_detail(request:Request,work_id:str):
+        local_peer(request)
+        ctx=base_ctx(request,"company_work")
+        try:
+            work=database().get(work_id)
+            checks=database().checks(work_id)
+        except KeyError:raise HTTPException(404,"Research record not found") from None
+        except (ValueError,TypeError,sqlite3.Error):
+            raise HTTPException(503,"Research evidence integrity or storage unavailable") from None
+        ctx.update(company_work_records=[work],evidence_checks={work_id:checks},
+                   operator_token=decision_routes.TOKEN,research_choices=[],research_intakes=[],research_detail=True)
         response=render("company_work.html",ctx)
         response.headers["Cache-Control"]="no-store"
         return response

@@ -3,6 +3,7 @@
 {% block content %}
 <h1>Company research</h1>
 <p>Source claims and agent interpretations are separate. An agent proposal does not authorize a company task. No decision or outcome is inferred from a completed model response.</p>
+{% if research_detail %}<p><a href="/company-work">All recent research and new tasks</a></p>{% else %}
 <h2>Research an article</h2>
 <p><a href="/agents">Select and configure an agent</a> · <a href="/configuration">Model connection and permissions</a>. Choose the reviewed settings below. Article text is sent through the configured local route. The proposed implication stays pending until you decide.</p>
 {% for choice in research_choices %}{% set cfg=choice.configuration %}
@@ -22,15 +23,16 @@
 <h2>Retained intake and recovery</h2>
 {% for intake in research_intakes %}<details><summary>{{ intake.task_id }} · {{ intake.article.title }}</summary><p>{% if intake.request %}<a href="/workbench/requests/{{ intake.request.id }}">Inspect {{ intake.request.state }} request</a>{% if intake.request.reason %} · {{ intake.request.reason }}{% endif %}{% else %}No request reservation retained; dispatch is unconfirmed.{% endif %}</p><p>Recovery reads the existing request; it never dispatches inference. An interrupted or denied request remains unconfirmed or denied.</p>
 <form method="post" action="/company-work/{{ intake.task_id }}/recover"><input type="hidden" name="operator_token" value="{{ operator_token }}"><button>Recover existing research proposal</button></form></details>{% endfor %}
+{% endif %}
 {% for work in company_work_records %}
-<section class="panel"><h2>{{ work.id }}</h2>
+<section class="panel"><h2><a href="/company-work/{{ work.id }}">{{ work.id }}</a></h2>
 {% if work.article is defined %}<h3>{{ work.article.title }} · {{ work.article.date }}</h3><p>{{ 'SYNTHETIC FIXTURE — not real research' if work.article.synthetic else 'Operator-supplied article excerpt; origin not independently authenticated' }}</p><details><summary>Retained article text</summary><pre>{{ work.article.text }}</pre></details>
 <p><a href="/workbench/requests/{{ work.request_id }}">Inspect routed request, configuration and model evidence</a> · <a href="/agents">Responsible agent</a> · <a href="/configuration">Current connection</a></p>
 <p>Stored record integrity checked against its retained evidence. Source truth and operator identity remain unverified.</p><p>Company record inclusion: {{ work.operator_decision.state }}. Inclusion authorizes no implementation, spending, publication or outreach.</p>
 <p><a href="/company-work/{{ work.id }}/record/bundle.json">Export research record</a> · <a href="/company-work/{{ work.id }}/record/checkpoint.json">Retain research checkpoint separately</a></p>
 <p>Verify on another machine: <code>python -m verity_core.trust.research_record research.bundle.json --checkpoint research.checkpoint.json</code>. Integrity does not prove source truth, operator identity or OS containment.</p>{% endif %}
 <p><strong>Source claim</strong> · <a href="{{ work.source_claim.url }}">{{ work.source_claim.url }}</a><br>{{ work.source_claim.text }}<br>{{ work.source_claim.provenance }}</p>
-<p><strong>Agent interpretation</strong> · {{ work.agent_interpretation.agent_id }} / {{ work.agent_interpretation.model }} · task {{ work.agent_interpretation.task_id }} · runtime event {{ work.agent_interpretation.runtime_event_id }}<br>{{ work.agent_interpretation.response }}<br>Response SHA-256 <code>{{ work.agent_interpretation.response_sha256 }}</code></p>
+<p><strong>Agent interpretation</strong> · {{ work.agent_interpretation.agent_id }} / {{ work.agent_interpretation.model }} · task {{ work.agent_interpretation.task_id }} · runtime event {{ work.agent_interpretation.runtime_event_id }}</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{ work.agent_interpretation.response }}</pre><p>Response SHA-256 <code>{{ work.agent_interpretation.response_sha256 }}</code></p>
 <p><strong>Operator decision:</strong> {{ work.operator_decision.state }}. <strong>Assigned task:</strong> {{ work.assigned_task or 'none' }}. <strong>Observed work:</strong> {{ work.observed_work or 'none' }}. <strong>Verified result:</strong> {{ work.verified_result or 'none' }}.</p>
 {% if work.operator_decision.detail %}<p><strong>Operator reason and qualifications:</strong> {{ work.operator_decision.detail }}</p>{% endif %}
 <h3>Evidence checks</h3>

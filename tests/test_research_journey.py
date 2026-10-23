@@ -149,3 +149,31 @@ def test_displayed_operator_qualifications_must_match_retained_decision(setup):
     assert c.get('/company-work').status_code==503
     assert j.work.receipt('article-1')==original
     assert original['record']['entries'][-1]['payload']['reason']=='Qualified research only'
+
+
+def test_exact_research_detail_survives_recent_limit_and_links_only_matching_request(setup):
+    cfg,j,calls,c,form=setup;c.post('/company-work/research',data=form)
+    original=j.work.get('article-1');request_id=original['request_id']
+    from test_company_work import completed_run
+    for n in range(21):
+        run=completed_run();run['task_id']='archive-'+str(n)
+        j.work.create('archive-'+str(n),'https://example.com/archive','Archived fixture',run)
+    assert all(w['id']!='article-1' for w in j.work.recent())
+    page=c.get('/company-work/article-1')
+    assert page.status_code==200 and page.headers['Cache-Control']=='no-store'
+    assert 'Fixture source' in page.text and 'Qualified research' not in page.text
+    assert '<h2>Research an article</h2>' not in page.text
+    assert '/workbench/requests/'+request_id in page.text
+    evidence=c.get('/workbench/requests/'+request_id)
+    assert 'href="/company-work/article-1"' in evidence.text
+    other=j.runs.run(agent_id='researcher',resource_id='research',task_id='unrelated',purpose='generate_text',prompt='Other fixture')
+    assert 'href="/company-work/article-1"' not in c.get('/workbench/requests/'+other['id']).text
+    assert c.get('/company-work/not-found').status_code==404
+    # Reading either page does not repeat model work or alter the pending decision.
+    assert len(calls)==2 and j.work.get('article-1')==original
+
+
+def test_direct_research_detail_keeps_loopback_boundary(setup):
+    cfg,j,calls,c,form=setup;c.post('/company-work/research',data=form)
+    remote=TestClient(ui.app,base_url='http://127.0.0.1',client=('203.0.113.15',1234))
+    assert remote.get('/company-work/article-1').status_code==403

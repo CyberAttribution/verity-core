@@ -61,6 +61,13 @@ def install(app,render,base_ctx):
         except KeyError:available=False
         except (ValueError,sqlite3.Error):raise HTTPException(503,'Request evidence unavailable; no verified receipt claimed') from None
         ctx=base_ctx(request,'workbench');ctx.update(run=run,receipt_available=available)
+        from . import company_routes
+        ctx.update(related_research_id=None,related_research_error=False)
+        try:
+            work=company_routes.database().get(run['task_id'])
+            if work.get('request_id')==run['id']:ctx['related_research_id']=work['id']
+        except KeyError:pass
+        except (ValueError,TypeError,sqlite3.Error):ctx['related_research_error']=True
         response=render('request_detail.html',ctx);response.headers['Cache-Control']='no-store';return response
 
     @app.get('/workbench/requests/{run_id}/export')

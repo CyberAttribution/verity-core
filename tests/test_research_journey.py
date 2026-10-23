@@ -59,6 +59,9 @@ def test_configuration_change_refuses_acceptance_but_allows_rejection(setup):
     choice=dict(operator_token=decision_routes.TOKEN,state='accepted',detail='Reviewed',expected_binding=w['proposal_binding'])
     assert c.post('/company-work/article-1/decision',data=choice).status_code==409
     assert j.work.get('article-1')['operator_decision']['state']=='pending'
+    refused=c.post('/company-work/article-1/decision',data=choice,headers={'Accept':'text/html'})
+    assert refused.status_code==409 and 'Return to research review' in refused.text
+    assert 'application/json' not in refused.headers['content-type']
     choice['state']='rejected';assert c.post('/company-work/article-1/decision',data=choice,follow_redirects=False).status_code==303
     form['task_id']='paused';form['expected_configuration_sha256']=hashlib.sha256(canonical(cfg.effective('researcher','research')).encode()).hexdigest()
     r=c.post('/company-work/research',data=form,follow_redirects=False)
@@ -112,3 +115,37 @@ def test_mutated_display_record_is_refused_and_export_remains_original(setup):
         db.execute('UPDATE research SET record=? WHERE id=?',(canonical(record),'article-1'))
     assert c.get('/company-work').status_code==503
     assert j.work.receipt('article-1')==original
+
+
+def test_missing_required_receipt_refuses_direct_decision_and_real_route(setup):
+    cfg,j,calls,c,form=setup;c.post('/company-work/research',data=form)
+    work=j.work.get('article-1')
+    with j.work._db() as db:db.execute('DELETE FROM research_receipts WHERE work_id=?',('article-1',))
+    with pytest.raises(ValueError,match='Required research receipt missing'):
+        j.work.decide('article-1','accepted','Review',expected_binding=work['proposal_binding'])
+    choice=dict(operator_token=decision_routes.TOKEN,state='accepted',detail='Review',expected_binding=work['proposal_binding'])
+    response=c.post('/company-work/article-1/decision',data=choice)
+    assert response.status_code==409
+    assert 'evidence is missing' in response.json()['detail']
+    assert 'decision remains pending' in response.json()['detail']
+    assert c.get('/company-work').status_code==503
+    with j.work._db() as db:
+        retained=json.loads(db.execute('SELECT record FROM research WHERE id=?',('article-1',)).fetchone()[0])
+        assert retained['operator_decision']['state']=='pending'
+        assert db.execute('SELECT COUNT(*) FROM research_receipts').fetchone()[0]==0
+        assert db.execute('SELECT COUNT(*) FROM research_events').fetchone()[0]==0
+    assert len(calls)==1
+
+
+def test_displayed_operator_qualifications_must_match_retained_decision(setup):
+    cfg,j,calls,c,form=setup;c.post('/company-work/research',data=form)
+    w=j.work.get('article-1')
+    c.post('/company-work/article-1/decision',data=dict(operator_token=decision_routes.TOKEN,state='accepted',detail='Qualified research only',expected_binding=w['proposal_binding']))
+    original=j.work.receipt('article-1')
+    with j.work._db() as db:
+        row=db.execute('SELECT record FROM research WHERE id=?',('article-1',)).fetchone();record=json.loads(row[0])
+        record['operator_decision']['detail']='Invented execution approval'
+        db.execute('UPDATE research SET record=? WHERE id=?',(canonical(record),'article-1'))
+    assert c.get('/company-work').status_code==503
+    assert j.work.receipt('article-1')==original
+    assert original['record']['entries'][-1]['payload']['reason']=='Qualified research only'

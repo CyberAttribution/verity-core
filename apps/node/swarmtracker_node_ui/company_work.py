@@ -158,12 +158,16 @@ class CompanyWorkStore:
         record=json.loads(row["record"])
         if "article" in record:
             from verity_core.trust import research_record
-            bundle=self.receipt(work_id)
+            try:bundle=self.receipt(work_id)
+            except KeyError:raise ValueError("Required research receipt missing") from None
             if bundle["record"]["entries"][0]["payload"]["proposal"]!=research_record.proposal(record):
                 raise ValueError("Research display differs from bound proposal")
             entries=bundle["record"]["entries"]
             state=entries[-1]["payload"]["state"] if len(entries)==2 else "pending"
             if record["operator_decision"]["state"]!=state:raise ValueError("Research decision differs from receipt")
+            detail=entries[-1]["payload"]["reason"] if len(entries)==2 else None
+            if record["operator_decision"]["detail"]!=detail:
+                raise ValueError("Research operator qualifications differ from receipt")
         return record
 
     def recent(self):
@@ -188,6 +192,7 @@ class CompanyWorkStore:
                 if expected_binding != record["proposal_binding"] or expected_binding != research_record.binding(record):
                     raise ValueError("Exact reviewed article, output and configuration required")
                 row = db.execute("SELECT bundle FROM research_receipts WHERE work_id=?",(work_id,)).fetchone()
+                if not row:raise ValueError("Required research receipt missing")
                 bundle=json.loads(row[0])
                 if not research_record.verify(bundle,bundle["checkpoint"]):
                     raise ValueError("Research evidence integrity failed")

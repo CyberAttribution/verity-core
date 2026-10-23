@@ -4,7 +4,7 @@ import json
 from contextlib import nullcontext
 from pathlib import Path
 from fastapi import HTTPException, Request
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
 from . import decision_routes, store
 from .company_work import CompanyWorkStore
 
@@ -18,6 +18,15 @@ def local_peer(request):
     if not request.client or request.client.host not in ("127.0.0.1","::1","testclient"):
         raise HTTPException(403,"Loopback peer required")
 
+
+
+def decision_refusal(request,message):
+    if "text/html" in request.headers.get("accept", ""):
+        from html import escape
+        return HTMLResponse("<main><h1>Decision not recorded</h1><p>"+escape(message)+
+            '</p><p><a href="/company-work">Return to research review</a> · <a href="/configuration">Review current settings</a></p></main>',
+            status_code=409,headers={"Cache-Control":"no-store"})
+    raise HTTPException(409,message)
 
 
 def install(app,render,base_ctx):
@@ -107,8 +116,10 @@ def install(app,render,base_ctx):
                 database().decide(work_id,form["state"],form["detail"],expected_binding=form.get("expected_binding"))
         except KeyError:
             raise HTTPException(404,"Research record not found") from None
-        except ValueError:
-            raise HTTPException(409,"Decision refused: content or configuration changed, routing paused, or decision already recorded. Review current settings; rejection remains available for a pending proposal.") from None
+        except ValueError as exc:
+            if str(exc)=="Required research receipt missing":
+                return decision_refusal(request,"Required research evidence is missing. The decision remains pending; restore the retained evidence before review.")
+            return decision_refusal(request,"Decision refused: content or configuration changed, routing paused, or decision already recorded. No new decision was recorded. Rejection remains available for a pending proposal.")
         except sqlite3.Error:
             raise HTTPException(503,"Decision storage unavailable") from None
         return RedirectResponse("/company-work",status_code=303)

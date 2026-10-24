@@ -104,3 +104,23 @@ def scenarios(assumptions):
                 result=dict(modeled_distributor_rentals=format(rentals,'.2f'),modeled_cash_after_listed_costs=format(receipts-vals['production_budget']-vals['marketing_distribution'],'.2f'))
         rows.append(dict(assumptions=copy.deepcopy(a),result=result,missing=missing,formula='rentals=gross*(1-exhibitor_share); cash=rentals*(1-distribution_fee)+ancillary_producer_receipts-production_budget-marketing_distribution',limitations='Illustrative simplified waterfall; financing, residuals, taxes, timing, overhead and unlisted expenses excluded. Not investment returns or a forecast.'))
     return dict(version=VERSION,scenarios=rows,sensitivity='Compare explicit low/base/high assumption rows; all differences are assumptions, not collected financial evidence.')
+
+
+def disagreements(observations):
+    """Conflicting recorded amounts in identical scopes; no truth selection.
+
+    Different textual periods are not normalized. Publisher agreement is not
+    evidence of independent origins, and this check does not assess materiality.
+    Historical calculation output remains unchanged by this read-only view.
+    """
+    groups={}
+    for o in observations:
+        validate_observation(o)
+        if o['value'] is None:continue
+        key=tuple(o[k] for k in ('subject_id','category','currency','territory','period'))
+        groups.setdefault(key,[]).append(o)
+    result=[]
+    for key,claims in groups.items():
+        if len({number(o['value']) for o in claims})<=1:continue
+        result.append(dict(scope=dict(zip(('subject_id','category','currency','territory','period'),key)),claims=[dict(id=o['id'],value=o['value'],publisher=o['source']['publisher'],url=o['source']['url'],dependence=o['dependence']) for o in claims],status='Unresolved disagreement; all reported values retained. No averaging, truth selection, independence or financial materiality established.'))
+    return result

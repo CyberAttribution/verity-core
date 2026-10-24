@@ -144,3 +144,19 @@ def test_readable_report_retains_cited_claims_and_marks_stale_calculations(setup
     assert r.status_code==200 and r.headers['cache-control']=='no-store' and 'Fixture publisher' in r.text and 'https://example.com/film' in r.text and 'Comparable inputs match the current dataset' in r.text
     b=append(db,b,'correction',dict(observation_id='o1',replacement=dict(o,value='6000000'),reason='Synthetic correction reason'))
     r=client.get('/company-work/pilot/pilot-1/report');assert 'outdated relative to current observations' in r.text and 'Synthetic correction reason' in r.text and 'Historical results; inputs have changed' in r.text and calls==[]
+
+
+def test_disagreement_retains_scopes_and_does_not_count_decimal_spelling_or_missing():
+    from verity_core.trust.research_finance import disagreements
+    o=observation();same=dict(o,id='same',value='5000000.0');missing=dict(o,id='unknown',value=None,classification='missing')
+    assert disagreements([o,same,missing])==[]
+    changed=dict(o,id='other',value='5000001');groups=disagreements([o,changed,dict(o,id='territory',territory='domestic',value='1'),dict(o,id='euro',currency='EUR',value='2'),dict(o,id='other-period',period='2020',value='3')])
+    assert len(groups)==1 and [x['value'] for x in groups[0]['claims']]==['5000000','5000001']
+
+
+def test_readable_report_marks_model_interpretation_historical_after_new_evidence(setup,tmp_path):
+    cfg,j,calls,client,form=setup;c=context(tmp_path);db=PilotStore(j.path);b=db.create_assignment(assignment(cfg,c));b=db.analyze('pilot-1',j.runs,c,b['checkpoint']['head_hash'])
+    assert 'Financial inputs match the current dataset' in client.get('/company-work/pilot/pilot-1/report').text
+    b=append(db,b,'observation',observation())
+    page=client.get('/company-work/pilot/pilot-1/report').text
+    assert 'Historical interpretation: newer evidence or corrections differ' in page and len(calls)==1

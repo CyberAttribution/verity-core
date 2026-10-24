@@ -62,13 +62,29 @@ def install(app,render,base_ctx):
     def report(request:Request,task_id:str):
         company_routes.local_peer(request)
         try:
-            from verity_core.trust.research_finance import comparisons
+            from verity_core.trust.research_finance import comparisons,disagreements
             b=database().get_assignment(task_id);entries=b['record']['entries'];a=entries[0]['payload']['assignment']
             subjects=a['subjects']+[e['payload']['body'] for e in entries if e['payload']['kind']=='subject_added']
             rows=comparisons(effective_observations(entries),subjects)
             calculations=[e for e in entries if e['payload']['kind']=='calculation']
             current=bool(calculations and calculations[-1]['payload']['body']['comparables']==rows)
-            ctx=base_ctx(request,'company_work');ctx.update(assignment=a,bundle=b,rows=rows,calculations=calculations,calculations_current=current,corrections=[e for e in entries if e['payload']['kind']=='correction'],requests=[e for e in entries if e['payload']['kind']=='request_reconciled'])
+            from verity_core.trust.research_finance import number
+            summary=[]
+            for row in rows:
+                claims={}
+                for name,category,territory in [('budget','production_budget',None),('domestic','theatrical_gross','domestic'),('worldwide','theatrical_gross','worldwide')]:
+                    selected=[o for o in row['observations'] if o['category']==category and (territory is None or o['territory']==territory)]
+                    claims[name]=[dict(id=o['id'],display='missing' if o['value'] is None else o['currency']+' '+format(number(o['value']),',f'),url=o['source']['url']) for o in selected]
+                summary.append(dict(subject=row['subject'],claims=claims))
+            request_views=[]
+            for e in entries:
+                if e['payload']['kind']!='request_reconciled':continue
+                rid=e['payload']['body']['request_id']
+                intended=[i for i,x in enumerate(entries) if x['payload']['kind']=='request_intent' and x['payload']['body']['request_id']==rid]
+                view=dict(e)
+                view['inputs_current']=len(intended)==1 and effective_observations(entries[:intended[0]])==effective_observations(entries)
+                request_views.append(view)
+            ctx=base_ctx(request,'company_work');ctx.update(assignment=a,bundle=b,rows=rows,summary=summary,disagreements=disagreements(effective_observations(entries)),export_ready=entries[-1]['payload']['kind']=='human_review',observations_used=sum(e['payload']['kind']=='observation' for e in entries),requests_used=sum(e['payload']['kind']=='request_intent' for e in entries),assignment_expired=time.time()>=a['limits']['expires_at'],calculations=calculations,calculations_current=current,corrections=[e for e in entries if e['payload']['kind']=='correction'],requests=request_views)
             response=render('research_pilot_report.html',ctx);response.headers['Cache-Control']='no-store';return response
         except (ValueError,KeyError,TypeError,sqlite3.Error) as e:return refuse(str(e))
 

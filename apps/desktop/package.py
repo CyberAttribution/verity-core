@@ -63,8 +63,8 @@ def package(repo, output, activation_public_key=None):
             (resources/"activation-public.pem").write_bytes(key)
         config = dict(python="backend/verity-worker", worker="backend/verity-worker", repo=".", bundled=True)
         (resources/"desktop-config.json").write_text(json.dumps(config, indent=2))
-        info = dict(CFBundleIdentifier="ai.swarmtracker.verity.pilot", CFBundleName="Verity Pilot",
-                    CFBundleDisplayName="Verity Pilot", CFBundleExecutable="Verity", CFBundlePackageType="APPL",
+        info = dict(CFBundleIdentifier="ai.swarmtracker.verity.pilot", CFBundleName="Verity by SwarmTracker",
+                    CFBundleDisplayName="Verity by SwarmTracker", CFBundleExecutable="Verity", CFBundlePackageType="APPL",
                     CFBundleShortVersionString="0.2.0", LSMinimumSystemVersion="15.0", NSHighResolutionCapable=True)
         icon = src/"assets/AppIcon.icns"
         if icon.is_file():

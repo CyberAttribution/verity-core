@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ page|replace("_"," ")|title }} · Verity</title>
+<title>{{ 'Overview' if page == 'dashboard' else page|replace("_"," ")|title }} · Verity by SwarmTracker</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -12,11 +12,11 @@
     <div class="brand">
       <div class="brand-mark">▲</div>
       <div>
-        <div class="brand-name">SwarmTracker <span>Node</span></div>
+        <div class="brand-name">Verity <span>by SwarmTracker</span></div>
         <div class="brand-sub">Governed Investigation Appliance · v0.2.0</div>
       </div>
     </div>
-    <a href="/" class="navlink {{ 'active' if page == 'dashboard' }}">Dashboard</a>
+    <a href="/" class="navlink {{ 'active' if page == 'dashboard' }}">Overview</a>
     <a href="/investigations" class="navlink {{ 'active' if page == 'investigations' }}">Investigations</a>
     <a href="/analyze" class="navlink {{ 'active' if page in ('analyze','report') }}">Analyze</a>
     <a href="/media" class="navlink {{ 'active' if page == 'media' }}">Media Evidence</a>
@@ -44,7 +44,7 @@
       <div class="topbar-right">
         <span class="pill pill-ok">Mode: {{ cfg.mode }}</span>
         <span class="pill pill-muted">Cloud Escalation: {{ cfg.cloud }}</span>
-        <span class="pill pill-muted mono">{{ cfg.model }}</span>
+        <span class="pill pill-muted mono">Analysis default (configured): {{ cfg.model }}</span>
       </div>
     </header>
     <main class="content">

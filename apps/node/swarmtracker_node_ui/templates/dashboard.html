@@ -1,62 +1,26 @@
 {% extends "base.html" %}
-{% block title %}Node Dashboard{% endblock %}
+{% block title %}Overview{% endblock %}
 {% block content %}
 
 <div class="cards">
-  <div class="card">
-    <div class="card-label">SwarmTracker Node</div>
-    <div class="card-value">
-      {% if status.node_online %}<span class="dot dot-ok"></span> Online
-      {% else %}<span class="dot dot-bad"></span> Degraded{% endif %}
-    </div>
-    <div class="card-sub">{{ status.node_name }}</div>
-  </div>
-  <div class="card">
-    <div class="card-label">Local Runtime</div>
-    <div class="card-value">
-      {% if status.runtime_online %}<span class="dot dot-ok"></span> Online
-      {% else %}<span class="dot dot-bad"></span> Offline{% endif %}
-    </div>
-    <div class="card-sub">{{ status.provider }} · schema {{ status.schema }}</div>
-  </div>
-  <div class="card">
-    <div class="card-label">Local Model</div>
-    <div class="card-value">
-      {% if status.model_online %}<span class="dot dot-ok"></span> Online
-      {% else %}<span class="dot dot-warn"></span> Not detected{% endif %}
-    </div>
-    <div class="card-sub mono">{{ status.reported_model }}</div>
-  </div>
-  <div class="card">
-    <div class="card-label">Ledger Events</div>
-    <div class="card-value">{{ ledger_count }}</div>
-    <div class="card-sub">Audit Ledger: {% if ledger_count > 0 %}Active{% else %}Empty{% endif %}</div>
-  </div>
-  <div class="card">
-    <div class="card-label">Mode</div>
-    <div class="card-value">{{ cfg.mode }}</div>
-    <div class="card-sub">Cloud Escalation: {{ cfg.cloud }}</div>
-  </div>
-  <div class="card">
-    <div class="card-label">Keel Policy</div>
-    <div class="card-value mono sm">{{ cfg.policy }}</div>
-    <div class="card-sub">Policy / audit / control layer</div>
-  </div>
-  <div class="card">
-    <div class="card-label">Hardware</div>
-    <div class="card-value sm">{{ cfg.hardware }}</div>
-    <div class="card-sub">Next target: {{ cfg.hardware_next }}</div>
-  </div>
-  <div class="card">
-    <div class="card-label">Model Runtime</div>
-    <div class="card-value sm">{{ cfg.runtime }}</div>
-    <div class="card-sub">Endpoint: 127.0.0.1 only</div>
-  </div>
+  <div class="card"><div class="card-label">Application health</div><div class="card-value">{{ application_health }}</div><div class="card-sub">App responding · technical node {{ cfg.node }}. Model connections are observed separately.</div></div>
+  <div class="card"><div class="card-label">Selected workflow</div><div class="card-value sm">{{ workflow.state }}</div><div class="card-sub">{{ workflow.detail }}</div></div>
+  <div class="card"><div class="card-label">Analysis JSONL ledger</div><div class="card-value">{{ ledger_count if ledger_scope != 'unknown' else 'Unknown' }}</div><div class="card-sub">{{ ledger_scope }} · This file counts analysis-runtime events only, not governed requests or company decisions.</div></div>
 </div>
+<section class="panel"><h2>Workflow readiness</h2>
+<form method="get" action="/"><label>Existing agent <select name="agent">{% for c in workflow.choices|unique(attribute='agent') %}<option value="{{ c.agent }}" {{ 'selected' if workflow.agent == c.agent }}>{{ c.agent }}</option>{% endfor %}</select></label>
+<label>Resource <select name="resource">{% for c in workflow.choices|unique(attribute='resource') %}<option value="{{ c.resource }}" {{ 'selected' if workflow.resource == c.resource }}>{{ c.resource }}</option>{% endfor %}</select></label><button class="btn">Inspect workflow</button></form>
+{% if workflow.connection %}<p>Agent {{ workflow.agent }} · resource {{ workflow.resource }} · primary connection {{ workflow.connection }} · configured model {{ workflow.model }}.</p>{% endif %}
+{% if workflow.request_id %}<p>Retained model execution: <a href="/workbench/requests/{{ workflow.request_id }}">Inspect exact request</a> · observed at epoch {{ workflow.request_at }}. Historical completion is not a live model inventory.</p>{% endif %}
+<p><a href="/agents">Review agent authority and routing</a> · <a href="/workbench">Run a governed request</a></p></section>
+<section class="panel"><h2>Individual connection observations</h2><p>These observations do not change application health. Unselected connections are optional for the selected workflow. A health response alone does not confirm an installed model.</p>
+{% for c in workflow.connections %}<p><strong>{{ c.id }}</strong> · {{ c.state }} · configured model {{ c.model }} · {{ c.endpoint }} · configuration v{{ c.version }}<br>{{ c.detail }}{% if c.at %} · observed at epoch {{ c.at }}{% endif %}</p>{% else %}<p>No connection observations available.</p>{% endfor %}<a href="/configuration">Check or repair Models &amp; Connections</a></section>
+<section class="panel"><h2>Optional analysis runtime setup</h2><p>This separate Analyze capability uses {{ cfg.runtime }} and configured default {{ cfg.model }}. It does not determine Company Research workflow readiness.</p><p>Current probe: {% if status.runtime_online %}runtime responded{% else %}runtime unavailable; check service and configured endpoint{% endif %}. {% if status.model_online %}Default model listed in the Ollama inventory{% else %}Default model inventory unconfirmed; configured name alone is not model detection{% endif %}.</p><a href="/setup/runtime">Inspect analysis runtime setup</a></section>
+<section class="panel"><h2>Active profile and evidence stores</h2><p>App profile: <code>{{ profile_path }}</code></p><p>Governed request store: {{ request_inventory.state }} · {{ request_inventory.counts }}. <a href="/workbench">Governed requests</a></p><p>Company record store: {{ company_inventory.state }} · {{ company_inventory.counts }}. <a href="/company-work">Company Research</a></p><p>Counts describe this profile only; other profiles, external runtimes and unimported history are outside this view.</p></section>
 
 <section class="panel">
   <div class="panel-head">
-    <h2>Recent Analyses</h2>
+    <h2>Recent analysis-runtime events</h2>
     <a class="btn btn-ghost" href="/ledger">Full ledger →</a>
   </div>
   {% if recent %}
@@ -78,15 +42,10 @@
     </tbody>
   </table>
   {% else %}
-  <p class="empty">No ledger events yet. Run an analysis to create the first governed event.</p>
+  <p class="empty">No analysis JSONL events were read from this profile. Governed requests and company decisions use separate stores above.</p>
   {% endif %}
 </section>
 
-<section class="panel panel-note">
-  <h2>Organization Context</h2>
-  <p><span class="badge badge-warn">Not connected yet</span>
-     No mailbox connectors or organization profile are loaded in v0.1.
-     Analyses are based on submitted evidence only.</p>
-</section>
+<section class="panel panel-note"><h2>Organization context in this profile</h2><p>{{ context_inventory.state }} · profiles {{ context_inventory.profiles }} · active versions {{ context_inventory.active }}.</p><p>Retained context is applied only when explicitly selected for a supported request; presence does not prove mailbox integration, source truth or authority. Connector availability is not inferred here.</p><a href="/contexts">Review context versions and applicable requests</a></section>
 
 {% endblock %}

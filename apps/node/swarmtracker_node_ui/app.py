@@ -28,7 +28,7 @@ from . import agents, governed_analysis, providers, decision_routes, monitoring,
 from . import openclaw_client as oc
 from . import store as store_mod
 
-app = FastAPI(title="SwarmTracker Node", docs_url=None, redoc_url=None)
+app = FastAPI(title="Verity by SwarmTracker", docs_url=None, redoc_url=None)
 
 # Local investigation persistence (v0.2.0). Fail-soft: if the DB can't open
 # (corrupt/locked), the app still boots and analysis works; investigation
@@ -106,11 +106,24 @@ def node_status() -> dict:
 def dashboard(request: Request):
     ctx = base_ctx(request, "dashboard")
     ctx["status"] = node_status()
+    from . import customer_routes, workbench_routes, overview, store
+    try:
+        ctx['workflow']=overview.workflow(customer_routes.database(),workbench_routes.runs(),request.query_params.get('agent',''),request.query_params.get('resource',''))
+    except (sqlite3.Error,OSError,ValueError):
+        ctx['workflow']=dict(state='unknown',detail='Configuration or request store unavailable. Review Models & Connections.',choices=[],connections=[])
+    ctx['application_health']='Available' if not STORE_ERROR else 'Storage needs attention'
+    ctx['profile_path']=str(store.DB_PATH.parent)
+    ctx['request_inventory']=overview.store_inventory(store.DB_PATH.with_name('local-inference.db'))
+    ctx['company_inventory']=overview.store_inventory(store.DB_PATH.with_name('company-work.db'))
+    ctx['context_inventory']=overview.context_inventory(store.DB_PATH.with_name('organization-context.db'))
+    ctx['ledger_scope']='not created' if not config.LEDGER_PATH.exists() else 'readable' if config.LEDGER_PATH.is_file() and __import__('os').access(config.LEDGER_PATH,__import__('os').R_OK) else 'unknown'
     ctx["ledger_count"] = ledger.count_events()
     events = ledger.read_events(limit=25)
     ctx["recent"] = [e for e in events if "generate" in e["event"].lower()][:8] \
         or events[:8]
-    return render("dashboard.html", ctx)
+    response=render("dashboard.html", ctx)
+    response.headers['Cache-Control']='no-store'
+    return response
 
 
 def modes_ctx() -> dict:

@@ -99,6 +99,8 @@ class Coordinator:
                   allowed INTEGER NOT NULL, reason TEXT NOT NULL);
             """)
             ddl=db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='work_sources'").fetchone()[0]
+            if 'deadline' not in {r['name'] for r in db.execute('PRAGMA table_info(control)')}:
+                db.execute('ALTER TABLE control ADD COLUMN deadline REAL')
             if "task_id TEXT UNIQUE" in ddl:
                 db.executescript("""ALTER TABLE work_sources RENAME TO work_sources_legacy;
                     CREATE TABLE work_sources (workflow_id TEXT NOT NULL, task_id TEXT NOT NULL,
@@ -119,13 +121,15 @@ class Coordinator:
         finally:
             db.close()
 
-    def configure(self, *, rate, start, ceiling, margin=5):
+    def configure(self, *, rate, start, ceiling, margin=5, deadline=None):
         if not (0 < rate < 100000 and 0 < start < self.clock()+60 and 0 < ceiling <= 1e8 and 0 <= margin < ceiling):
             raise ValueError("Invalid fixed rental budget")
+        if deadline is not None and not (self.clock() < deadline < float('inf')):
+            raise ValueError('A finite future deadline is required')
         with self.db() as db:
             if db.execute("SELECT 1 FROM control WHERE id=1").fetchone():
                 raise ValueError("Budget already configured; no automatic ceiling expansion")
-            db.execute("INSERT INTO control VALUES (1,'paused',NULL,NULL,?,?,?,?)", (rate,start,ceiling,margin))
+            db.execute("INSERT INTO control(id,mode,owner,heartbeat,rate,start,ceiling,margin,deadline) VALUES (1,'paused',NULL,NULL,?,?,?,?,?)", (rate,start,ceiling,margin,deadline))
 
     def enqueue(self, spec, *, _operator_priority=None):
         required = {"id", "purpose", "dependencies", "authorization", "acceptance_criteria", "model_settings", "expected_outputs", "validation_gates"}
@@ -531,6 +535,18 @@ class Coordinator:
     def _budget(self, control):
         return max(0,self.clock()-control["start"])*control["rate"]/3600
 
+    def dispatch_gate(self, control):
+        """Shared persisted session gate; this never stops provider billing."""
+        if not control:
+            return 'unconfigured'
+        if control.get('deadline') is not None and self.clock() >= control['deadline']:
+            return 'deadline reached'
+        if self._budget(control) >= control['ceiling']-control['margin']:
+            return 'budget reserve reached'
+        if control['mode'] != 'running':
+            return control['mode']
+        return None
+
     def _worker_active(self, row):
         try:
             os.kill(row["pid"],0)
@@ -582,7 +598,7 @@ class Coordinator:
         with self.db() as db:
             db.execute("BEGIN IMMEDIATE")
             c=db.execute("SELECT * FROM control WHERE id=1").fetchone()
-            if not c or c["mode"] != "running" or self._budget(c) >= c["ceiling"]-c["margin"]:
+            if self.dispatch_gate(dict(c) if c else None):
                 return None
             policy_hash,policy=self._active_review_policy(db)
             if policy and self._budget(c) >= min(c["ceiling"]-c["margin"],policy["spending_limit"]):
@@ -625,7 +641,7 @@ class Coordinator:
         with self.db() as db:
             db.execute("BEGIN IMMEDIATE")
             c=db.execute("SELECT * FROM control WHERE id=1").fetchone()
-            if not c or c["owner"] != owner or c["mode"] != "running" or self._budget(c) >= c["ceiling"]-c["margin"]:
+            if not c or c["owner"] != owner or self.dispatch_gate(dict(c)):
                 return False
             db.execute("UPDATE control SET heartbeat=? WHERE id=1",(self.clock(),))
             db.execute("UPDATE worker_process SET heartbeat=? WHERE token=?",(self.clock(),owner.split(":")[0]))

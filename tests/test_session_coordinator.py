@@ -234,3 +234,36 @@ def test_read_only_coordinator_export_survives_restart_without_mutation(tmp_path
     assert len(Coordinator(path).snapshot()["transitions"]) == before
     assert client.get("/sessions/synthetic/coordinator.json").json()["tasks"] == exported["tasks"]
     c.unregister_worker("live")
+
+
+def test_persisted_deadline_blocks_new_dispatch_and_survives_restart(tmp_path):
+    now=[1000.0];calls=[]
+    c=Coordinator(tmp_path/'deadline.db',clock=lambda:now[0],adapter=lambda s,r:calls.append(r))
+    c.configure(rate=1,start=990,ceiling=100,deadline=1010)
+    c.enqueue(spec('held'));c.control('running')
+    now[0]=1010
+    restarted=Coordinator(c.path,clock=lambda:now[0],adapter=c.adapter)
+    assert restarted.run_one('worker') is None and not calls
+    assert restarted.snapshot()['tasks'][0]['state']=='queued'
+    assert restarted.dispatch_gate(restarted.snapshot()['control'])=='deadline reached'
+    restarted.control('paused')
+    assert restarted.dispatch_gate(restarted.snapshot()['control'])=='deadline reached'
+    with pytest.raises(ValueError):restarted.configure(rate=1,start=990,ceiling=100,deadline=1020)
+
+
+def test_run_worker_registers_and_drains_independent_work_then_holds_dependency(tmp_path):
+    from tools.session_worker import run_worker
+    seen=[]
+    c=None
+    def adapter(s,r):
+        seen.append((s['id'],c.worker_status()['state']))
+        return dict(request_id=r,content='synthetic contract check',finish_reason='stop')
+    c=Coordinator(tmp_path/'worker.db',adapter=adapter)
+    c.configure(rate=1,start=time.time()-1,ceiling=100,deadline=time.time()+60)
+    c.enqueue(spec('first'));c.enqueue(spec('dependent',['first']));c.enqueue(spec('independent'))
+    c.control('running');run_worker(c)
+    assert seen==[('first','active'),('independent','active')]
+    assert c.worker_status()['state']=='absent'
+    assert [x['state']for x in c.snapshot()['tasks']]==['completed','queued','completed']
+    assert [x['attempts']for x in c.snapshot()['tasks']]==[1,0,1]
+    assert c.snapshot()['tasks'][0]['verifier'] is None

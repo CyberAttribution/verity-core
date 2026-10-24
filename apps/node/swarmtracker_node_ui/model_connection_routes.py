@@ -17,10 +17,13 @@ def install(app,render,base_ctx):
     async def connect(request:Request):
         customer_routes.local_peer(request)
         form=await decision_routes.operator_form(request,max_fields=6)
-        if set(form)!={'operator_token','connection_id','endpoint','model','revision'}:
+        required={'operator_token','connection_id','endpoint','model','revision'}
+        if set(form) not in (required,required|{'provider'}):
             raise HTTPException(422,'Exact local model connection fields required')
         try:
-            customer_routes.database().save('connection',form['connection_id'].strip(),dict(provider='openclaw',endpoint=form['endpoint'].strip(),
+            provider=form.get('provider','openclaw')
+            if provider not in ('openclaw','ollama_local'):raise ValueError('Unsupported local text adapter')
+            customer_routes.database().save('connection',form['connection_id'].strip(),dict(provider=provider,endpoint=form['endpoint'].strip(),
                 model=form['model'].strip(),revision=form['revision'].strip(),scope='local',credential_ref='none'),new_only=True)
         except sqlite3.OperationalError:
             raise HTTPException(409,'Configuration is busy; connection registration was not confirmed') from None

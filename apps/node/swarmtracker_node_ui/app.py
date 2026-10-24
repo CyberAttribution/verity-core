@@ -115,6 +115,9 @@ def dashboard(request: Request):
     ctx['profile_path']=str(store.DB_PATH.parent)
     ctx['request_inventory']=overview.store_inventory(store.DB_PATH.with_name('local-inference.db'))
     ctx['company_inventory']=overview.store_inventory(store.DB_PATH.with_name('company-work.db'))
+    ctx['primary_inventory']=overview.store_inventory(store.DB_PATH)
+    if any(ctx[name]['state']=='unknown' for name in ('primary_inventory','request_inventory','company_inventory')):
+        ctx['application_health']='Responding; evidence storage needs attention'
     ctx['context_inventory']=overview.context_inventory(store.DB_PATH.with_name('organization-context.db'))
     ctx['ledger_scope']='not created' if not config.LEDGER_PATH.exists() else 'readable' if config.LEDGER_PATH.is_file() and __import__('os').access(config.LEDGER_PATH,__import__('os').R_OK) else 'unknown'
     ctx["ledger_count"] = ledger.count_events()

@@ -11,7 +11,7 @@
 <form method="post" action="/agents/add">
 <input type="hidden" name="operator_token" value="{{ operator_token }}">
 <label>Agent ID <input name="agent_id" required maxlength="160" placeholder="myOpenClaw"></label>
-<label>Agent type <select name="adapter_kind"><option value="openclaw_v0">Existing OpenClaw v0 — local text requests</option><option value="custom_unverified">Custom agent — registration only</option></select></label>
+<label>Agent type <select name="adapter_kind"><option value="openclaw_v0">Existing OpenClaw v0 — local text requests</option><option value="ollama_local_v1">Direct local Ollama — Verity text route</option><option value="custom_unverified">Custom agent — registration only</option></select></label>
 <label>Primary model connection <select name="connection_id">{% for item in connections %}<option value="{{ item.id }}" {% if item.id == selected_connection %}selected{% endif %}>{{ item.id }} — {{ item.body.provider }} / {{ item.body.model }}</option>{% endfor %}</select></label>
 <label>Resource <select name="resource_id">{% for item in resources %}<option value="{{ item.id }}">{{ item.id }} — {{ item.body.description }}</option>{% endfor %}</select></label>
 <label>Instructions <textarea name="instructions" required maxlength="2000">Summarize the supplied specimen concisely. Do not attempt tools.</textarea></label>

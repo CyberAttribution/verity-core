@@ -44,7 +44,7 @@ def configured_agents(configuration, runs):
         view["setup_observation"]=dict(
             assessed_at=time.time(),connection_state=state,connection_detail=detail,
             connection_observed_at=observation["at"] if observation else None,
-            adapter_supported=body.get("adapter_kind","openclaw_v0")=="openclaw_v0"
+            adapter_supported=body.get("adapter_kind","openclaw_v0") in {"openclaw_v0","ollama_local_v1"}
                 and bool(connection) and connection["body"]["scope"]=="local"
                 and connection["body"]["provider"]=="openclaw",
             latest_attempt=metadata(runs.latest_for_agent(agent["id"])),

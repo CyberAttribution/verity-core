@@ -1,6 +1,7 @@
 {% extends "base.html" %}{% block title %}Request evidence{% endblock %}{% block content %}
 <h1>{{ run.task_id }} — {{ run.decision }} / {{ run.state }}</h1><p>Request <code>{{ run.id }}</code> · agent {{ run.agent_id }} · session {{ run.session_id or 'none' }} · purpose {{ run.purpose }} · resource {{ run.resource_id }}</p>
 <p>Model {{ run.model }} · revision {{ run.model_revision }} · connection {{ run.configuration.connection_id }} v{{ run.configuration.connection_version }} · agent settings v{{ run.configuration.agent_version }}.</p><p>Recorded host declaration: {{ run.configuration.machine_id or 'unknown' }}. Host/link assertions do not prove where execution occurred or OS isolation. <a href="/environment">Inspect current Environment Map</a>; current declarations may differ from this historical request.</p>
+{% if run.configuration.provider == "ollama_local" %}<p>Direct Ollama: the request was gated by Verity. Its event ID is a Verity client observation, not an Ollama audit event or runtime governance decision. No tools or OS containment are provided by this transport.</p>{% endif %}
 <p>Prompt fingerprint <code>{{ run.prompt_sha256 }}</code></p>
 {% if run.reason %}<p>{{ run.reason }}</p>{% endif %}
 {% if run.state == 'reserved' %}<p>Outcome unconfirmed. A durable reservation is not a completed response. Reconcile this task before another dispatch; there is no automatic retry or cancellation claim.</p>{% endif %}

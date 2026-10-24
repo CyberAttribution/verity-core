@@ -13,7 +13,7 @@ def connection_rows(configuration, *, now=None):
         observation=observed.get(('connection',item['id']))
         state=observation['state'] if observation else 'unknown'
         detail=observation['detail'] if observation else 'No observation for this configuration. Check this connection in Models & Connections.'
-        if observation and now-observation['at']>300:
+        if observation and not 0<=now-observation['at']<=300:
             state='stale';detail='Observation is older than five minutes; current availability is unknown. Recheck this connection.'
         if configuration.connection_disabled(item['id']):state='disabled';detail='Connection disabled. Select another permitted connection.'
         rows.append(dict(id=item['id'],model=item['body']['model'],endpoint=item['body']['endpoint'],state=state,detail=detail,
@@ -30,13 +30,15 @@ def workflow(configuration, runs, agent_id='', resource_id='', *, now=None):
     try:effective=configuration.effective(agent_id,resource_id)
     except (ValueError,KeyError,TypeError):
         return dict(result,state='unavailable',detail='Agent/resource configuration is incomplete or no longer permitted. Review Active Agents.')
-    connection=connections[effective['connection_id']]
+    connection=connections.get(effective['connection_id'])
+    if connection is None:return dict(result,state='unknown',detail='Connection changed during observation. Reload and review Models & Connections.')
     result.update(model=effective['model'],connection=connection['id'],state=connection['state'],detail=connection['detail'])
     if effective.get('routing_enabled',True) is False:
         return dict(result,state='paused',detail='This agent is paused. Resume routing in Active Agents before a new request; existing evidence remains readable.')
     if connection['state']!='reachable':return result
     last=runs.latest_for_agent(agent_id,state='completed')
-    matching=last and last['configuration']['connection_hash']==effective['connection_hash'] and last.get('model')==effective['model']
+    observed_now=time.time() if now is None else now
+    matching=last and 0<=observed_now-last['at']<=300 and last['configuration']['connection_hash']==effective['connection_hash'] and last.get('model')==effective['model']
     if matching:
         result.update(state='observed available',detail='Current connection health and a retained completed request match this configured model. Every new request rechecks authority; this is not OS containment.',request_id=last['id'],request_at=last['at'])
     else:
@@ -63,4 +65,4 @@ def context_inventory(path):
         from verity_core.organization_context import ContextStore
         profiles=ContextStore(path).profiles()
         return dict(state='Retained organization context profiles',profiles=len(profiles),active=sum(p['state']['active_version'] is not None for p in profiles))
-    except (sqlite3.Error,OSError,ValueError):return dict(state='Organization context store unavailable; current context unknown',profiles=None,active=None)
+    except (sqlite3.Error,OSError,ValueError,KeyError,TypeError):return dict(state='Organization context store unavailable; current context unknown',profiles=None,active=None)

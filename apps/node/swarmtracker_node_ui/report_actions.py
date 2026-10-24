@@ -73,7 +73,7 @@ def validate(manifest):
         if "routing_enabled" in cfg and cfg["routing_enabled"] is not True:
             raise ValueError("Agent routed requests are paused")
         if adapter & set(cfg):
-            if not adapter <= set(cfg) or cfg["adapter_kind"] != "openclaw_v0" or cfg["identity_status"] != "unverified; operator-declared":
+            if not adapter <= set(cfg) or cfg["adapter_kind"] not in {"openclaw_v0","ollama_local_v1"} or cfg["identity_status"] != "unverified; operator-declared":
                 raise ValueError("Action adapter is unsupported or identity claim invalid")
             if any(not isinstance(cfg[k],str) or len(cfg[k])>160 or "\x00" in cfg[k] for k in ("runtime_version","service_identity")):
                 raise ValueError("Invalid declared adapter identity")
@@ -274,6 +274,51 @@ class Store:
     def get(self, rid):
         with self.connection() as con:
             return self._get(con, rid)[1]
+
+    def create_bound(self, manifest, inference):
+        """Exact completed request -> one retained proposal; never inference.
+
+        Reuses activity_run_id and task_id, with no new identity/authority store.
+        This narrow path writes the exact returned text, not an unverified
+        transformation. Generic historical proposal creation remains unchanged.
+        """
+        from verity_core.trust import inference_receipt
+        validate(manifest)
+        if not {'activity_run_id','response_sha256','effective_configuration'} <= set(manifest):
+            raise ValueError('Completed request and configuration binding required')
+        run=inference.get(manifest['activity_run_id']);result=run.get('result') or {}
+        retained=inference.request_export(run['id'])
+        rebuilt=inference_receipt.export(run)
+        if retained['record']['entries'][0]['payload']!=rebuilt['record']['entries'][0]['payload']:
+            raise ValueError('Request record differs from retained receipt')
+        if (run['state']!='completed' or run['decision']!='allowed'
+                or run['task_id']!=manifest['task_id'] or run['agent_id']!=manifest['agent_id']
+                or run['resource_id']!=TARGET or run['model']!=manifest['model']
+                or run['configuration']!=manifest['effective_configuration']
+                or run['configuration']['provider']!=manifest['provider']
+                or run['prompt_sha256']!=manifest['source_sha256']
+                or result.get('response_sha256')!=manifest['response_sha256']
+                or result.get('response')!=manifest['proposal']
+                or result.get('runtime_event_id')!=manifest['runtime_event_id']):
+            raise ValueError('Completed request does not match proposal')
+        with self.connection() as con:
+            con.execute('BEGIN IMMEDIATE')
+            # Corruption is a blocker, never a reason to skip a candidate.
+            candidates=[]
+            for (identifier,) in con.execute('SELECT id FROM report_actions'):
+                view=self._get(con,identifier)[1];m=view['manifest']
+                if m['task_id']==manifest['task_id'] or m.get('activity_run_id')==run['id']:
+                    candidates.append(view)
+            if len(candidates)>1:raise Conflict('Ambiguous retained proposals; manual reconciliation required')
+            if candidates:
+                if candidates[0]['manifest']!=manifest:raise Conflict('Retained proposal belongs to different request or content')
+                return candidates[0]
+            if self.config_store is None:raise ValueError('Authoritative configuration store required')
+            if self.config_store.effective(run['agent_id'],TARGET)!=run['configuration']:
+                raise Conflict('Configuration changed; renewed proposal required')
+            record=new(manifest)
+            con.execute('INSERT INTO report_actions VALUES (?,?)',(record['record_id'],trust.canonical_json(record)))
+        return inspect(record)
 
     def recent(self, limit=50):
         with self.connection() as con:

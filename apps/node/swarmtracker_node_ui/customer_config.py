@@ -112,7 +112,7 @@ class CustomerConfig:
             if "require_fresh_connection_observation" in body and type(body["require_fresh_connection_observation"]) is not bool:
                 raise ValueError("Fresh connection observation requirement must be boolean")
             if "adapter_kind" in body:
-                if body["adapter_kind"] not in {"openclaw_v0", "custom_unverified"}:
+                if body["adapter_kind"] not in {"openclaw_v0", "ollama_local_v1", "custom_unverified"}:
                     raise ValueError("Unsupported agent adapter")
             for key in ("runtime_version", "service_identity"):
                 if key in body and (not isinstance(body[key], str) or len(body[key]) > 160 or "\x00" in body[key]):
@@ -139,6 +139,10 @@ class CustomerConfig:
                 primary = self.latest("connection", body["connection_id"])["body"]
                 if primary["scope"] != "local" or primary["provider"] != "openclaw":
                     raise ValueError("OpenClaw v0 adapter requires a local OpenClaw connection")
+            if body.get('adapter_kind')=='ollama_local_v1':
+                conn=self.latest('connection',body['connection_id'])
+                if conn['body']['scope']!='local' or conn['body']['provider']!='ollama_local':
+                    raise ValueError('Direct Ollama adapter requires a local Ollama connection')
             if body["fallback_id"] and not self.latest("connection",body["fallback_id"]):raise ValueError("Unknown fallback")
             for x in body["resources"]:
                 if not self.latest("resource",x):raise ValueError("Unknown resource")

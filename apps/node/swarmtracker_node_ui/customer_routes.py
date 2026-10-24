@@ -349,7 +349,8 @@ def install(app,render,base_ctx):
             from .session_coordinator import LOCAL_OPENER
             try:
                 endpoint=entry["body"]["endpoint"].rstrip("/")
-                with LOCAL_OPENER.open(urllib.request.Request(endpoint+"/healthz"),timeout=2) as response:
+                path='/api/version' if entry['body']['provider']=='ollama_local' else '/healthz'
+                with LOCAL_OPENER.open(urllib.request.Request(endpoint+path),timeout=2) as response:
                     if response.status!=200:raise ValueError("Unhealthy status")
                     response.read(4096)
                 observed_state="reachable"

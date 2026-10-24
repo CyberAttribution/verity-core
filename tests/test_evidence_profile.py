@@ -83,3 +83,43 @@ def test_correction_chain_rollback_withdrawal_preserve_original(setup):
     with j.work._db() as db:db.execute("CREATE TRIGGER fail_correction BEFORE INSERT ON research_events BEGIN SELECT RAISE(ABORT,'storage failure'); END")
     with pytest.raises(sqlite3.IntegrityError):j.work.correct('article-1','Will fail atomically',kind='correction',expected_binding=work['proposal_binding'],expected_head=second['checkpoint']['head_hash'])
     assert j.work.corrections('article-1')==[first,second] and j.work.receipt('article-1')==original and len(calls)==1
+
+
+def test_profile_cannot_be_reconciled_under_foreign_work_id(setup):
+    bundle,decision,denied,correction=make_profile(setup)
+    cfg,j,calls,c,form=setup
+    with j.work._db() as db:
+        db.execute("INSERT INTO research_events(work_id,at,action,detail) VALUES (?,?,?,?)",('foreign-work',1,'provisional_profile_exported',__import__('json').dumps(bundle)))
+    with pytest.raises((ValueError,KeyError)):j.work.profiles('foreign-work')
+
+
+def test_resealed_wrong_correction_link_and_removal_refused(setup):
+    bundle,decision,denied,correction=make_profile(setup)
+    p=copy.deepcopy(correction['record']['entries'][0]['payload']);p['previous_correction_head']='0'*64
+    r=trust.new_record(correction['record']['subject']);trust.append_entry(r,'note',actor='local operator',payload=p)
+    changed=dict(schema=profile.CORRECTION,record=r,checkpoint=research_record.checkpoint(r))
+    with pytest.raises(ValueError,match='binding'):profile.assemble(decision,denied,[changed])
+    payload=copy.deepcopy(bundle['record']['entries'][0]['payload']);payload['corrections']=[]
+    r=trust.new_record(bundle['record']['subject']);trust.append_entry(r,'note',payload=payload)
+    stripped=dict(schema=profile.SCHEMA,record=r,checkpoint=research_record.checkpoint(r))
+    assert not profile.verify(stripped,stripped['checkpoint']) and not profile.verify(stripped,bundle['checkpoint'])
+
+
+def test_concurrent_correction_one_winner_and_no_receipt_replacement(setup):
+    from concurrent.futures import ThreadPoolExecutor
+    cfg,j,calls,c,form=accepted(setup);work=j.work.get('article-1');original=j.work.receipt('article-1')
+    def attempt(text):
+        try:return j.work.correct('article-1',text,kind='correction',expected_binding=work['proposal_binding'],expected_head='')
+        except ValueError:return None
+    with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(attempt,['First correction','Concurrent correction']))
+    assert sum(x is not None for x in results)==1
+    assert len(j.work.corrections('article-1'))==1 and j.work.receipt('article-1')==original and len(calls)==1
+
+
+def test_wrong_agent_denial_refused(setup):
+    cfg,j,calls,c,form=accepted(setup);decision=j.work.receipt('article-1')
+    body=cfg.latest('agent','researcher')['body'];cfg.save('agent','other',body)
+    a=cfg.latest('agent','other');cfg.set_routing('other',False,a['digest'])
+    run=j.runs.run(agent_id='other',resource_id='research',task_id='denied-other',session_id='session-1',purpose='generate_text',prompt='Denied elsewhere')
+    other=j.runs.request_export(run['id']);correction=profile.correction(decision,[],'Qualification')
+    with pytest.raises(ValueError,match='same agent/resource/session'):profile.assemble(decision,other,[correction])

@@ -310,9 +310,7 @@ class CompanyWorkStore:
             rows=db.execute("SELECT detail FROM research_events WHERE work_id=? AND action='provisional_profile_exported' ORDER BY seq",(work_id,)).fetchall()
             # Repeated export of unchanged inputs returns the same checkpoint.
             wanted=bundle['record']['entries'][0]['payload']
-            for row in rows:
-                old=json.loads(row[0])
-                if not evidence_profile.verify(old,old['checkpoint']):raise ValueError('Retained profile integrity differs')
+            for old in self.profiles(work_id):
                 if old['record']['entries'][0]['payload']==wanted:return old
             if len(rows)>=20:raise ValueError('Profile export allowance exceeded')
             db.execute("INSERT INTO research_events(work_id,at,action,detail) VALUES (?,?,?,?)",
@@ -324,5 +322,11 @@ class CompanyWorkStore:
         label(work_id)
         with self._db() as db:
             items=[json.loads(row[0]) for row in db.execute("SELECT detail FROM research_events WHERE work_id=? AND action='provisional_profile_exported' ORDER BY seq",(work_id,))]
-        if any(not evidence_profile.verify(b,b['checkpoint']) for b in items):raise ValueError('Retained profile integrity differs')
+        decision=self.receipt(work_id);corrections=self.corrections(work_id)
+        for bundle in items:
+            if not evidence_profile.verify(bundle,bundle['checkpoint']):raise ValueError('Retained profile integrity differs')
+            payload=bundle['record']['entries'][0]['payload']
+            if (bundle['record']['subject']['identifier']!=work_id or payload['decision']!=decision
+                or payload['corrections']!=corrections[:len(payload['corrections'])]):
+                raise ValueError('Retained profile differs from this work and its correction history')
         return items

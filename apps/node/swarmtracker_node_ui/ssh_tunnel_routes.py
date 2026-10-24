@@ -29,7 +29,9 @@ def install(app,render,base_ctx):
     @app.post('/configuration/connections/{identifier}/ssh/stop')
     async def stop(request:Request,identifier:str):
         await reviewed(request,identifier)
-        await run_in_threadpool(stop_connection,identifier)
+        try:await run_in_threadpool(stop_connection,identifier)
+        except (OSError,ValueError,subprocess.SubprocessError):
+            raise HTTPException(409,'Owned SSH exit is unconfirmed. Dispatch remains disabled; retry Stop before reconnecting. No unrelated process was signalled.') from None
         return RedirectResponse('/configuration',status_code=303)
 
     @app.get('/configuration/connections/{identifier}/ssh/status')
@@ -40,4 +42,7 @@ def install(app,render,base_ctx):
         tunnel=MANAGED.get(identifier)
         try:view=await run_in_threadpool(tunnel.observation) if tunnel else dict(state='unknown',meaning='No owned tunnel in this app process; start and check explicitly')
         except (OSError,ValueError,subprocess.SubprocessError):view=dict(state='unknown',meaning='SSH observation unavailable; recheck')
+        if 'text/html' in request.headers.get('accept',''):
+            ctx=base_ctx(request,'configuration');ctx.update(entry=entry,view=view,operator_token=decision_routes.TOKEN)
+            response=render('ssh_status.html',ctx);response.headers['Cache-Control']='no-store';return response
         return JSONResponse(dict(view,model_readiness='separate health and governed request required'),headers={'Cache-Control':'no-store'})

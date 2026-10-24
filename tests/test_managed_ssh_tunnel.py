@@ -67,3 +67,48 @@ def test_socket_permission_is_reported_separately(tmp_path,monkeypatch):
         def bind(self,*args):raise PermissionError(errno.EACCES,'restricted')
     monkeypatch.setattr('swarmtracker_node_ui.managed_ssh_tunnel.socket.socket',Refused)
     with pytest.raises(TunnelError,match='permission'):ManagedSSHTunnel(cfg,'mini').start(entry['digest'])
+
+
+def test_unconfirmed_owned_exit_retains_handle_and_refuses_dispatch(tmp_path,monkeypatch):
+    import subprocess
+    from swarmtracker_node_ui import managed_ssh_tunnel as transport
+    cfg,entry,t,known=fixture(tmp_path);manager=ManagedSSHTunnel(cfg,'mini')
+    class Stuck:
+        pid=99999
+        def poll(self):return None
+        def terminate(self):pass
+        def kill(self):pass
+        def wait(self,timeout):raise subprocess.TimeoutExpired('owned fixture',timeout)
+    manager.process=Stuck();manager.binding=entry;transport.MANAGED['mini']=manager
+    try:
+        with pytest.raises(TunnelError,match='exit unconfirmed'):transport.stop_connection('mini')
+        assert transport.MANAGED['mini'] is manager and manager.process is not None
+        assert not manager.healthy()
+        with pytest.raises(TunnelError):transport.require_connection('mini',entry['digest'])
+    finally:transport.MANAGED.pop('mini',None)
+
+
+def test_healthy_control_timeout_is_unknown(tmp_path,monkeypatch):
+    import subprocess
+    cfg,entry,t,known=fixture(tmp_path);manager=ManagedSSHTunnel(cfg,'mini')
+    class Alive:
+        pid=99999
+        def poll(self):return None
+    manager.process=Alive();manager.binding=entry;manager.transport=t;manager.control='/private/tmp/unused-control'
+    def unavailable(*args,**kwargs):raise subprocess.TimeoutExpired('owned-control',1)
+    monkeypatch.setattr('swarmtracker_node_ui.managed_ssh_tunnel.subprocess.run',unavailable)
+    assert not manager.healthy() and manager.observation()['state']=='unknown'
+
+
+def test_failed_start_retains_unconfirmed_owned_child(tmp_path,monkeypatch):
+    from swarmtracker_node_ui import managed_ssh_tunnel as transport
+    cfg,entry,t,known=fixture(tmp_path)
+    def failed(self,*args,**kwargs):
+        self.process=object();self.cancelled.set()
+        raise TunnelError('Owned SSH exit unconfirmed')
+    monkeypatch.setattr(ManagedSSHTunnel,'start',failed)
+    try:
+        with pytest.raises(TunnelError):transport.start_connection(cfg,'mini',entry['digest'])
+        assert transport.MANAGED['mini'].process is not None
+        assert transport.MANAGED['mini'].cancelled.is_set()
+    finally:transport.MANAGED.pop('mini',None)

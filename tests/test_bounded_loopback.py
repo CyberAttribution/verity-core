@@ -44,3 +44,29 @@ def test_inference_wait_can_exceed_short_connect_timeout():
     try:
         assert request_json('http://127.0.0.1:'+str(server.server_port),'POST','/api/generate',{},timeout=7)=={'done':True}
     finally:server.shutdown();server.server_close()
+
+
+def test_establishment_has_short_bound_no_request_or_retry(monkeypatch):
+    calls=[]
+    class Refused:
+        def __init__(self,host,port,timeout):calls.append(('bound',timeout))
+        def connect(self):calls.append('connect');raise TimeoutError('connect deadline')
+        def request(self,*args,**kwargs):raise AssertionError('must not send after failed connect')
+        def close(self):calls.append('close')
+    monkeypatch.setattr('swarmtracker_node_ui.bounded_loopback.http.client.HTTPConnection',Refused)
+    with pytest.raises(TimeoutError):request_json('http://127.0.0.1:9','GET','/api/tags',timeout=90)
+    assert calls==[('bound',5),'connect','close']
+
+
+def test_establishment_consumes_overall_deadline(monkeypatch):
+    from swarmtracker_node_ui import bounded_loopback as transport
+    clock=iter([10.,10.3]);calls=[]
+    class Connected:
+        def __init__(self,*args,**kw):self.sock=self
+        def connect(self):pass
+        def settimeout(self,value):calls.append(value)
+        def close(self):calls.append('closed')
+    monkeypatch.setattr(transport.time,'monotonic',lambda:next(clock))
+    monkeypatch.setattr(transport.http.client,'HTTPConnection',Connected)
+    with pytest.raises(TimeoutError,match='during connect'):request_json('http://127.0.0.1:9','GET','/api/tags',timeout=.2)
+    assert calls==['closed']

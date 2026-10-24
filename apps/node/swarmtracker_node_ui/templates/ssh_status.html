@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block title %}Connection transport status{% endblock %}{% block content %}
+<h1>Owned SSH status · {{ entry.id }} v{{ entry.version }}</h1>
+<p>Configuration SHA-256 <code>{{ entry.digest }}</code></p>
+<h2>Current SSH observation</h2><p><strong>{{ view.state }}</strong> · {{ view.meaning }}</p>
+{% if entry.body.transport is defined %}<p>Peer {{ entry.body.transport.login }}@{{ entry.body.transport.host }}:{{ entry.body.transport.ssh_port }} · remote loopback port {{ entry.body.transport.remote_port }} · local forward port {{ entry.body.transport.local_port }}.</p><p>Pinned trust-file SHA-256 <code>{{ entry.body.transport.known_hosts_sha256 }}</code>. SSH server-key/account authentication does not attest installation identity, hardware or OS containment.</p>{% else %}<p>This connection has no managed SSH transport.</p>{% endif %}
+<h2>Configured model — readiness checked separately</h2><p>{{ entry.body.provider }} · {{ entry.body.model }} · revision {{ entry.body.revision or 'unknown' }}.</p><p>A configured name is not verified availability. Check connection health, then inspect a completed governed request for the exact returned model. This SSH observation alone does not prove either.</p>
+{% if entry.body.transport is defined %}<h2>Recovery controls</h2><p>If a tunnel is lost or its configuration changes, explicitly stop and start the owned transport, then recheck model health. An uncertain request must be reconciled from its retained evidence; reconnect does not authorize a duplicate inference.</p>
+<form method="post" action="/configuration/connections/{{ entry.id }}/ssh/start"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="expected_digest" value="{{ entry.digest }}"><button>Start authenticated SSH connection</button></form>
+<form method="post" action="/configuration/connections/{{ entry.id }}/ssh/stop"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="expected_digest" value="{{ entry.digest }}"><button>Stop owned SSH connection</button></form>
+<form method="post" action="/configuration/connections/{{ entry.id }}/check"><input type="hidden" name="operator_token" value="{{ operator_token }}"><button>Check model connection health</button></form>{% endif %}
+<p><a href="/configuration">Models &amp; Connections</a> · <a href="/workbench">Governed request evidence</a></p>
+{% endblock %}

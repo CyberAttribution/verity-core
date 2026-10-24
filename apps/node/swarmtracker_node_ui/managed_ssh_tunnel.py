@@ -83,25 +83,31 @@ class ManagedSSHTunnel:
 
     def healthy(self):
         process=self.process
-        if process is None or process.poll() is not None:return False
+        if self.cancelled.is_set() or process is None or process.poll() is not None:return False
         entry=self.configuration.latest('connection',self.connection_id)
         if not entry or entry['digest']!=self.binding['digest'] or self.configuration.connection_disabled(self.connection_id):return False
         try:self._trust(self.transport)
         except (OSError,ValueError):return False
-        result=subprocess.run(['/usr/bin/ssh','-F','/dev/null','-S',self.control,'-O','check',self.transport['login']+'@'+self.transport['host']],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=1)
+        try:
+            result=subprocess.run(['/usr/bin/ssh','-F','/dev/null','-S',self.control,'-O','check',self.transport['login']+'@'+self.transport['host']],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=1)
+        except (OSError,subprocess.SubprocessError):return False
         return result.returncode==0 and ('pid='+str(process.pid)+')').encode() in result.stderr
 
     def stop(self):
+        # Keep ownership if the bounded teardown cannot confirm child exit.
         with self.lock:
-            self.cancelled.set();process=self.process;self.process=None
-            error_file=self.error_file;self.error_file=None
-            stage=self.stage;self.stage=None
-        if process:
-            process.terminate()
-            try:process.wait(timeout=3)
-            except subprocess.TimeoutExpired:process.kill();process.wait(timeout=2)
-        if error_file:error_file.close()
-        if stage:stage.cleanup()
+            self.cancelled.set();process=self.process
+            if process:
+                try:
+                    if process.poll() is None:process.terminate()
+                    try:process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        process.kill();process.wait(timeout=2)
+                except (OSError,subprocess.SubprocessError) as exc:
+                    raise TunnelError('Owned SSH exit unconfirmed; transport disabled, retry stop before reconnect') from exc
+            self.process=None
+            if self.error_file:self.error_file.close();self.error_file=None
+            if self.stage:self.stage.cleanup();self.stage=None
 
     def observation(self):
         return dict(state='authenticated forward' if self.healthy() else 'unknown',connection_id=self.connection_id,
@@ -120,7 +126,7 @@ def start_connection(configuration,identifier,expected_digest):
     try:tunnel.start(expected_digest)
     except BaseException:
         with REGISTRY_LOCK:
-            if MANAGED.get(identifier) is tunnel:MANAGED.pop(identifier)
+            if MANAGED.get(identifier) is tunnel and tunnel.process is None:MANAGED.pop(identifier)
         raise
     return tunnel
 
@@ -133,8 +139,11 @@ def require_connection(identifier,digest):
 
 
 def stop_connection(identifier):
-    with REGISTRY_LOCK:tunnel=MANAGED.pop(identifier,None)
-    if tunnel:tunnel.stop()
+    with REGISTRY_LOCK:
+        tunnel=MANAGED.get(identifier)
+        if tunnel:
+            tunnel.stop()
+            if MANAGED.get(identifier) is tunnel:MANAGED.pop(identifier,None)
 
 
 def _close_owned():

@@ -211,3 +211,27 @@ def test_source_origin_report_escapes_and_preserves_checkpoint(setup,tmp_path):
     assert '<script>shared</script>' not in r.text and 'Second publisher' in r.text
     assert 'not verified dependence or independence' in r.text
     assert db.get_assignment('pilot-1')==before and calls==[]
+
+
+def test_model_packet_retains_origin_basis_and_missing_values(setup,tmp_path):
+    import json
+    cfg,j,calls,client,form=setup;c=context(tmp_path);db=PilotStore(j.path);b=db.create_assignment(assignment(cfg,c))
+    o=observation();o['dependence']=dict(status='asserted',origin='wire-reference-7',basis='Explicit shared attribution; not independently verified')
+    b=append(db,b,'observation',o);other=copy.deepcopy(o);other['id']='copy';other['source']['publisher']='Second publisher';b=append(db,b,'observation',other)
+    b=append(db,b,'observation',dict(o,id='missing',value=None,classification='missing'));before=copy.deepcopy(b)
+    after=db.analyze('pilot-1',j.runs,c,b['checkpoint']['head_hash']);assert len(calls)==1
+    packet=json.JSONDecoder().raw_decode(calls[0].split('Financial observations: ',1)[1])[0]
+    assert [x['dependence'] for x in packet['reported_claims']]==[o['dependence'],o['dependence']]
+    assert packet['missing']==[dict(id='missing',category='production_budget')]
+    assert all(x['value'] is not None for x in packet['reported_claims'])
+    assert after['record']['entries'][:len(before['record']['entries'])]==before['record']['entries']
+    assert verify(after,after['checkpoint'])
+
+
+def test_provenance_packet_limit_refuses_before_reservation(setup,tmp_path):
+    cfg,j,calls,client,form=setup;c=context(tmp_path);db=PilotStore(j.path);b=db.create_assignment(assignment(cfg,c))
+    o=observation();o['dependence']['basis']='A'*1000
+    for i in range(5):b=append(db,b,'observation',dict(o,id='long-'+str(i)))
+    before=copy.deepcopy(b)
+    with pytest.raises(ValueError,match='exceeds supported request size'):db.analyze('pilot-1',j.runs,c,b['checkpoint']['head_hash'])
+    assert db.get_assignment('pilot-1')==before and calls==[] and j.runs.recent()==[]

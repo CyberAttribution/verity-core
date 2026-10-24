@@ -291,7 +291,7 @@ class Store:
         rebuilt=inference_receipt.export(run)
         if retained['record']['entries'][0]['payload']!=rebuilt['record']['entries'][0]['payload']:
             raise ValueError('Request record differs from retained receipt')
-        if (run['state']!='completed' or run['decision']!='allowed'
+        if (run['state']!='completed' or run['decision']!='allowed' or run['purpose']!='draft_text'
                 or run['task_id']!=manifest['task_id'] or run['agent_id']!=manifest['agent_id']
                 or run['resource_id']!=TARGET or run['model']!=manifest['model']
                 or run['configuration']!=manifest['effective_configuration']

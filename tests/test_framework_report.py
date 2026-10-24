@@ -63,3 +63,19 @@ def test_uncertain_request_never_recovers_or_redispatches(report):
     runs._dispatch=original
     with pytest.raises(ValueError,match='uncertain'):j.propose(**call,recover=True)
     assert runs.get(call['request_id'])['state']=='reserved' and actions.recent()==[] and calls==[]
+
+
+def test_duplicate_new_call_refuses_without_redispatch(report):
+    import sqlite3
+    cfg,runs,calls,actions,j,call=report;j.propose(**call)
+    with pytest.raises(sqlite3.IntegrityError):j.propose(**call)
+    assert len(calls)==1 and len(actions.recent())==1
+
+
+def test_changed_configuration_blocks_effect_not_historical_recovery(report):
+    cfg,runs,calls,actions,j,call=report;out=j.propose(**call);view=actions.get(out['proposal_id'])
+    approved=actions.decide(view['id'],'approved','Disposable report only','operator',view['head_hash'])
+    a=cfg.latest('agent','researcher')['body'];a['instructions']='Changed instructions';cfg.save('agent','researcher',a)
+    assert j.propose(**call,recover=True)['proposal_id']==view['id']
+    with pytest.raises(ra.Conflict):actions.execute(view['id'],'broker',approved['head_hash'])
+    assert not actions.observed_file()['present'] and len(calls)==1

@@ -271,15 +271,8 @@ class LocalInference:
         _refuse_cloud(cfg['model'])
         endpoint=cfg['endpoint'].rstrip('/');config.assert_local(endpoint)
         def call(method,path,payload=None,timeout=5):
-            with requests.Session() as session:
-                session.trust_env=False
-                with session.request(method,endpoint+path,json=payload,timeout=timeout,allow_redirects=False,stream=True) as response:
-                    if response.is_redirect:raise ValueError('Runtime redirect refused')
-                    response.raise_for_status();raw=bytearray()
-                    for chunk in response.iter_content(chunk_size=16384):
-                        if len(raw)+len(chunk)>MAX_RUNTIME_RESPONSE_BYTES:raise ValueError('Runtime envelope exceeds bound')
-                        raw.extend(chunk)
-                    return bounded_json_loads(raw,max_depth=32)
+            from .bounded_loopback import request_json
+            return request_json(endpoint,method,path,payload,timeout=timeout,max_bytes=MAX_RUNTIME_RESPONSE_BYTES)
         metadata=call('POST','/api/show',{'model':cfg['model']})
         if (metadata.get('remote_model') or metadata.get('remote_host') or not metadata.get('model_info')
                 or metadata.get('details',{}).get('format')!='gguf'):
@@ -287,7 +280,9 @@ class LocalInference:
         tags=call('GET','/api/tags');models=[m for m in tags.get('models',[]) if m.get('name')==cfg['model']]
         if len(models)!=1:raise ValueError('Exact local model inventory missing or ambiguous')
         revision=cfg.get('model_revision','unknown')
-        if revision not in ('','unknown') and models[0].get('digest')!=revision.removeprefix('sha256:'):
+        observed_digest=models[0].get('digest','')
+        if not isinstance(observed_digest,str):raise ValueError('Model digest missing')
+        if revision not in ('','unknown') and observed_digest.removeprefix('sha256:')!=revision.removeprefix('sha256:'):
             raise ValueError('Local model digest differs from configured revision')
         data=call('POST','/api/generate',dict(model=cfg['model'],prompt=cfg['instructions']+'\n\n'+prompt,
                     stream=False,options={'num_ctx':4096,'num_predict':512},keep_alive='5m'),timeout=90)

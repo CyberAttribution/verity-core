@@ -5,6 +5,7 @@ authenticate machines, or grant a runtime any new tool capability.
 """
 from contextlib import contextmanager
 import hashlib
+import math
 import json
 import re
 import sqlite3
@@ -27,6 +28,12 @@ def _text(value, limit=1000):
     if not isinstance(value,str) or not value.strip() or len(value)>limit or "\x00" in value:
         raise ValueError("Invalid configuration text")
     return value.strip()
+
+
+def observation_age(value,now=None):
+    if type(value) not in (int,float) or not math.isfinite(value):return None
+    age=(time.time() if now is None else now)-value
+    return age if math.isfinite(age) and age>=0 else None
 
 
 class CustomerConfig:
@@ -311,7 +318,10 @@ class CustomerConfig:
                     or item["config_version"] != item["current_version"] or item["config_digest"] != item["current_digest"]):
                 item["state"]="unknown"
                 item["detail"]="Health observation lacks the current connection version binding; recheck"
-            elif item["state"]=="reachable" and time.time()-item["at"]>300:
+            elif observation_age(item["at"]) is None:
+                item["state"]="unknown"
+                item["detail"]="Observation time is invalid or in the future; current availability unknown. Recheck."
+            elif observation_age(item["at"])>300:
                 item["state"]="stale"
                 item["detail"]="Last health observation is stale; current reachability unknown"
         return result

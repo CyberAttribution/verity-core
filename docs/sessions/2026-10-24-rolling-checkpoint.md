@@ -24,3 +24,7 @@ HTTP establishment has a short bound and no automatic retry; its elapsed time no
 The bounded MacBook experiment completed two new requests after the fix; output throughput was approximately 19 and 10 tokens/second. Active system-wide swapping persisted after unload, including a final sampled interval near 25 MiB/s. This is not all attributable to Ollama and is distinct from allocated swap. Further stress was stopped; use the Mini for development inference. Preserve the installed MacBook model and explicit unload setting for optional use. Native acceptance and restart checks remain pending.
 
 The copied-source failure is retained privately as a labeled B18/B25 evaluation case, including exact input/output/model/configuration and expected one-source result. Existing source-dependence/disagreement qualifications now appear in profile review. No automatic source-independence verification is claimed.
+
+## Shared readiness continuation
+
+Future/nonfinite/invalid saved observation times are unknown rather than dispatch authority. A valid old observation is stale. Overview and Agents reuse the same connection-state derivation, including the requirement for an owned current SSH tunnel; a saved reachable result alone cannot label a disconnected paired agent ready. Historical completed request metadata remains separate and unchanged. Focused readiness/framework checks: 22 passed on the working changes after 762668a; final native acceptance remains pending.

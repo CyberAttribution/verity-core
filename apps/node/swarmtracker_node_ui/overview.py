@@ -13,8 +13,11 @@ def connection_rows(configuration, *, now=None):
         observation=observed.get(('connection',item['id']))
         state=observation['state'] if observation else 'unknown'
         detail=observation['detail'] if observation else 'No observation for this configuration. Check this connection in Models & Connections.'
-        if observation and not 0<=now-observation['at']<=300:
-            state='stale';detail='Observation is older than five minutes; current availability is unknown. Recheck this connection.'
+        if observation and state!='unknown':
+            from .customer_config import observation_age
+            age=observation_age(observation['at'],now)
+            if age is None:state='unknown';detail='Observation time is invalid or in the future; current availability unknown. Recheck this connection.'
+            elif age>300:state='stale';detail='Observation is older than five minutes; current availability is unknown. Recheck this connection.'
         if configuration.connection_disabled(item['id']):state='disabled';detail='Connection disabled. Select another permitted connection.'
         elif item['body'].get('transport'):
             from .managed_ssh_tunnel import MANAGED

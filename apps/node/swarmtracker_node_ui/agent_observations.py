@@ -3,27 +3,17 @@ import time
 
 
 def configured_agents(configuration, runs):
-    observations=configuration.observations()
+    from .overview import connection_rows
+    connections={row["id"]:row for row in connection_rows(configuration)}
     views=[]
     for agent in configuration.all():
         if agent["kind"]!="agent":
             continue
         body=agent["body"]
         connection=configuration.latest("connection",body["connection_id"])
-        observation=observations.get(("connection",body["connection_id"]))
-        disabled=configuration.connection_disabled(body["connection_id"])
-        if not connection:
-            state="unknown"
-            detail="Primary connection is not recorded"
-        elif disabled:
-            state="disabled"
-            detail="Primary connection was removed from future routing"
-        elif observation:
-            state=observation["state"]
-            detail=observation["detail"]
-        else:
-            state="unknown"
-            detail="No observation for the current primary connection"
+        observation=connections.get(body["connection_id"])
+        state=observation["state"] if observation else "unknown"
+        detail=observation["detail"] if observation else "Primary connection is not recorded"
         def metadata(run):
             if run is None:
                 return None

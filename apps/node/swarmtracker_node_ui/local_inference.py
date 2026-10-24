@@ -288,7 +288,7 @@ class LocalInference:
         if revision not in ('','unknown') and observed_digest.removeprefix('sha256:')!=revision.removeprefix('sha256:'):
             raise ValueError('Local model digest differs from configured revision')
         data=call('POST','/api/generate',dict(model=cfg['model'],prompt=cfg['instructions']+'\n\n'+prompt,
-                    stream=False,options={'num_ctx':4096,'num_predict':512},keep_alive=0),timeout=90)
+                    stream=False,options={'num_ctx':4096,'num_predict':512},keep_alive=cfg.get('runtime_options',{}).get('keep_alive_seconds',300)),timeout=90)
         # This allowed value reports the already-applied Verity dispatch gate.
         # Ollama has no governance decision or native audit-event identity.
         return dict(data,decision='allowed',event_id='verity-client-observation-'+str(uuid.uuid4()),

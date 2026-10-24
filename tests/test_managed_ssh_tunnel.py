@@ -42,3 +42,28 @@ def test_finite_handshake_kills_only_owned_process_and_forces_loopback(tmp_path,
     assert '127.0.0.1:19434:127.0.0.1:11434' in argv and 'StrictHostKeyChecking=yes' in argv
     assert argv[1:3]==['-F','/dev/null'] and 'ForwardAgent=no' in argv and 'PermitLocalCommand=no' in argv
     assert seen[-1]=='terminate-owned' and manager.process is None
+
+
+def test_actual_unrelated_listener_is_never_adopted(tmp_path):
+    cfg,entry,t,known=fixture(tmp_path)
+    with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+        listener.bind(('127.0.0.1',0));listener.listen()
+        t['local_port']=listener.getsockname()[1]
+        body=dict(entry['body'],endpoint='http://127.0.0.1:'+str(t['local_port']),transport=t)
+        entry=cfg.save('connection','mini',body)
+        manager=ManagedSSHTunnel(cfg,'mini')
+        with pytest.raises(TunnelError,match='occupied'):manager.start(entry['digest'])
+        assert listener.fileno()>=0 and manager.process is None
+
+
+def test_socket_permission_is_reported_separately(tmp_path,monkeypatch):
+    import errno
+    cfg,entry,t,known=fixture(tmp_path)
+    class Refused:
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def setsockopt(self,*args):pass
+        def bind(self,*args):raise PermissionError(errno.EACCES,'restricted')
+    monkeypatch.setattr('swarmtracker_node_ui.managed_ssh_tunnel.socket.socket',Refused)
+    with pytest.raises(TunnelError,match='permission'):ManagedSSHTunnel(cfg,'mini').start(entry['digest'])

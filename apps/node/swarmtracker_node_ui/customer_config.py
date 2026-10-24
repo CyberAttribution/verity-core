@@ -75,6 +75,22 @@ class CustomerConfig:
                 raise ValueError("Effective configuration changed before dispatch")
             yield
 
+    @contextmanager
+    def action_guard(self,agent_id,resource_id,expected):
+        """Serialize approved effects with configuration writers.
+
+        A retained model response needs no new model health observation merely
+        to write its reviewed text. Identity, routing and permissions must still
+        match; updates wait for an already-started bounded broker operation.
+        """
+        with self._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if expected.get('routing_enabled',True) is not True or self.connection_disabled(expected['connection_id']):
+                raise ValueError('Action configuration is paused or disabled')
+            current=self.effective(agent_id,resource_id,expected.get('selected_connection_id',''))
+            if current!=expected:raise ValueError('Action configuration changed before effect')
+            yield
+
     def save(self, kind, identifier, body, *, new_only=False, expected_digest=None, expected_endpoints=None):
         label(identifier)
         if kind=="connection" and self.connection_disabled(identifier):
@@ -83,7 +99,7 @@ class CustomerConfig:
             raise ValueError("Unsupported configuration")
         if kind=="connection":
             required={"provider","endpoint","model","revision","scope","credential_ref"}
-            if set(body) not in (required,required|{'transport'}):
+            if not required <= set(body) or set(body)-required-{'transport','runtime_options'}:
                 raise ValueError("Invalid connection fields")
             for key in ("provider","model","scope"):_text(body[key],160)
             if body["scope"] not in {"local","external"}:raise ValueError("Invalid connection scope")
@@ -100,6 +116,10 @@ class CustomerConfig:
             # export credentials, or silently dispatch to external endpoints.
             if body["credential_ref"] not in ("none", "separately-managed"):
                 raise ValueError("Secrets cannot be entered in configuration")
+            if 'runtime_options' in body:
+                options=body['runtime_options']
+                if body['provider']!='ollama_local' or not isinstance(options,dict) or set(options)!={'keep_alive_seconds'} or type(options['keep_alive_seconds']) is not int or not 0<=options['keep_alive_seconds']<=600:
+                    raise ValueError('Invalid provisional Ollama residency option')
             if 'transport' in body:
                 from .managed_ssh_tunnel import validate_transport
                 if body['scope']!='local':raise ValueError('SSH forward must terminate on loopback')
@@ -129,8 +149,8 @@ class CustomerConfig:
             for additional_id in additional:
                 label(additional_id)
                 entry=self.latest("connection",additional_id)
-                if not entry or entry["body"]["scope"]!="local" or entry["body"]["provider"]!="openclaw":
-                    raise ValueError("Additional connections require a registered local OpenClaw model")
+                if not entry or entry["body"]["scope"]!="local" or entry["body"]["provider"] not in {'openclaw','ollama_local'}:
+                    raise ValueError("Additional connections require a registered local OpenClaw or Ollama model")
             label(body["connection_id"])
             _text(body["instructions"],2000)
             if body["fallback_id"]:label(body["fallback_id"])
@@ -306,8 +326,8 @@ class CustomerConfig:
         if selected!=primary_id and selected not in agent["body"].get("permitted_connection_ids",[]):
             raise ValueError("Requested connection is not permitted for this agent")
         conn=self.latest("connection",selected)
-        if selected!=primary_id and (not conn or conn["body"]["scope"]!="local" or conn["body"]["provider"]!="openclaw"):
-            raise ValueError("Additional connection is no longer a supported local OpenClaw model")
+        if selected!=primary_id and (not conn or conn["body"]["scope"]!="local" or conn["body"]["provider"] not in {'openclaw','ollama_local'}):
+            raise ValueError("Additional connection is no longer a supported local model")
         fallback=self.latest("connection",agent["body"]["fallback_id"]) if agent["body"]["fallback_id"] else None
         hosted=[x for x in self.all() if x["kind"]=="link" and x["body"]["to_kind"]=="connection"
                 and x["body"]["to_id"]==conn["id"] and x["body"]["permission"]=="hosts"
@@ -337,6 +357,8 @@ class CustomerConfig:
                           identity_status="unverified; operator-declared",
                           runtime_version=agent["body"].get("runtime_version", ""),
                           service_identity=agent["body"].get("service_identity", ""))
+        if 'runtime_options' in conn['body']:
+            result['runtime_options']=dict(conn['body']['runtime_options'])
         if 'transport' in conn['body']:
             t=conn['body']['transport']
             result['transport_summary']={k:t[k] for k in ('kind','host','login','ssh_port','remote_port','local_port','known_hosts_sha256')}

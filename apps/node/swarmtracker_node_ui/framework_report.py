@@ -28,7 +28,8 @@ class ReportJourney:
                 raise ValueError('Recovery identity or reviewed content differs')
         else:
             run=self.inference.run(agent_id=agent_id,task_id=task_id,resource_id=report_actions.TARGET,purpose='draft_text',
-                    prompt=prompt,session_id=session_id,request_id=request_id,expected_configuration_sha256=config_sha)
+                    prompt=prompt,session_id=session_id,request_id=request_id,expected_configuration_sha256=config_sha,
+                    requested_connection_id=configuration.get('selected_connection_id',''))
         if run['state']=='denied':return dict(state='denied',request_id=run['id'],reason=run['reason'])
         if run['state']!='completed':raise ValueError('Request unfinished or uncertain; no automatic redispatch')
         result=run['result'];body=result['response']

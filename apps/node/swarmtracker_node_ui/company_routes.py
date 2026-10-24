@@ -43,6 +43,35 @@ def profile_context(works):
 
 
 def install(app,render,base_ctx):
+    @app.get('/company-work/{work_id}/profile/{head}/reduced',response_class=HTMLResponse)
+    def reduced_preview(request:Request,work_id:str,head:str):
+        local_peer(request)
+        from verity_core.trust import selective_profile
+        try:
+            data=database();parent=data.disclosure_parent(work_id,head)
+            ctx=base_ctx(request,'company_work');ctx.update(work_id=work_id,parent_head=head,projection=selective_profile.projection(parent),reduced=data.disclosures(work_id),operator_token=decision_routes.TOKEN)
+        except (KeyError,ValueError,TypeError,sqlite3.Error):raise HTTPException(409,'Retained parent or reduced evidence unavailable; return to company research') from None
+        response=render('reduced_profile.html',ctx);response.headers['Cache-Control']='no-store';return response
+
+    @app.post('/company-work/{work_id}/reduced')
+    async def reduced_prepare(request:Request,work_id:str):
+        local_peer(request)
+        form=await decision_routes.operator_form(request,max_fields=3)
+        if set(form)!={'operator_token','parent_head','review_ack'} or form['review_ack']!='on':raise HTTPException(422,'Review of every disclosed value is required')
+        try:database().prepare_disclosure(work_id,form['parent_head'])
+        except (KeyError,ValueError,TypeError,sqlite3.Error):return decision_refusal(request,'Reduced copy not prepared. Parent cutoff may be stale or evidence unavailable; review and prepare a current profile.')
+        return RedirectResponse('/company-work/'+work_id+'/profile/'+form['parent_head']+'/reduced',status_code=303)
+
+    @app.get('/company-work/{work_id}/reduced/{head}/{artifact}.json')
+    def reduced_export(request:Request,work_id:str,head:str,artifact:str):
+        local_peer(request)
+        if artifact not in ('bundle','checkpoint'):raise HTTPException(404,'Unknown reduced artifact')
+        try:
+            items=[b for b in database().disclosures(work_id) if b['checkpoint']['head_hash']==head]
+            if len(items)!=1:raise KeyError(head)
+        except (KeyError,ValueError,TypeError,sqlite3.Error):raise HTTPException(409,'Retained reduced evidence unavailable') from None
+        return JSONResponse(items[0] if artifact=='bundle' else items[0]['checkpoint'],headers={'Cache-Control':'no-store','Content-Disposition':'attachment; filename="internal-reduced-profile.'+artifact+'.json"'})
+
     @app.get("/company-work")
     def page(request:Request):
         local_peer(request)

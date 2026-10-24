@@ -79,3 +79,33 @@ def test_changed_configuration_blocks_effect_not_historical_recovery(report):
     assert j.propose(**call,recover=True)['proposal_id']==view['id']
     with pytest.raises(ra.Conflict):actions.execute(view['id'],'broker',approved['head_hash'])
     assert not actions.observed_file()['present'] and len(calls)==1
+
+
+def test_explicit_ollama_alternate_stays_bound_through_report_effect(report):
+    cfg,runs,calls,actions,j,call=report
+    cfg.save('connection','ollama-alt',dict(provider='ollama_local',endpoint='http://127.0.0.1:11434',model='fixture',revision='fixture-alt',scope='local',credential_ref='none'))
+    cfg.observe('connection','ollama-alt','reachable','Synthetic local Ollama observation')
+    a=cfg.latest('agent','researcher');cfg.set_permitted_connections('researcher',['ollama-alt'],a['digest'])
+    call['configuration']=cfg.effective('researcher',ra.TARGET,'ollama-alt')
+    out=j.propose(**call);view=actions.get(out['proposal_id'])
+    assert view['manifest']['effective_configuration']['selected_connection_id']=='ollama-alt'
+    assert view['manifest']['provider']=='ollama_local'
+    assert cfg.effective('researcher',ra.TARGET)['connection_id']=='local'
+    approved=actions.decide(view['id'],'approved','Explicit alternate disposable report','operator',view['head_hash'])
+    assert actions.execute(view['id'],'broker',approved['head_hash'])['state']=='written'
+    assert len(calls)==1
+
+
+def test_configuration_writer_waits_for_reserved_broker_effect(report):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading,time
+    cfg,runs,calls,actions,j,call=report;out=j.propose(**call);view=actions.get(out['proposal_id'])
+    approved=actions.decide(view['id'],'approved','Disposable output','operator',view['head_hash'])
+    entered=threading.Event();release=threading.Event();write=actions._write
+    def controlled(data):entered.set();assert release.wait(3);write(data)
+    actions._write=controlled
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        execution=pool.submit(actions.execute,view['id'],'broker',approved['head_hash']);assert entered.wait(2)
+        body=cfg.latest('agent','researcher')['body'];body['instructions']='Future instructions'
+        update=pool.submit(cfg.save,'agent','researcher',body);time.sleep(.05);assert not update.done()
+        release.set();assert execution.result()['state']=='written';assert update.result()['body']['instructions']=='Future instructions'

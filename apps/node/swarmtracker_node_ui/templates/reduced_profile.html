@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block title %}Review reduced evidence export{% endblock %}{% block content %}
+<h1>Review reduced copy: {{ work_id }}</h1>
+<p>Internal and provisional. This copy omits structured raw source, model response, instructions and context. Qualifications and corrections below can still quote private inputs. Review every value before exporting to an authorized recipient. This is not an anonymity tool or a cryptographic selective proof.</p>
+<h2>Disclosed identity and qualifications</h2><table>{% for key,value in projection.mapping.items() %}<tr><th>{{ key|replace('_',' ') }}</th><td>{{ value if value is not none else 'none recorded' }}</td></tr>{% endfor %}</table>
+<p><strong>Original decision qualification:</strong> {{ projection.decision_qualification }}</p>
+{% for correction in projection.corrections %}<p><strong>{{ correction.kind }}</strong> · {{ correction.at }} · {{ correction.text }} · correction checkpoint {{ correction.checkpoint.head_hash }}</p>{% endfor %}
+<h2>Withheld</h2><ul>{% for field in projection.withheld %}<li>{{ field }}</li>{% endfor %}</ul>
+<p>Exact parent references are included: profile {{ projection.parent_references.profile.head_hash }}, decision {{ projection.parent_references.decision.head_hash }}, denial {{ projection.parent_references.denial.head_hash }}.</p>
+<p>Without the full parent, the verifier checks child integrity only. With the full parent, it also checks correspondence to these retained references. Neither check proves truth, authenticated origin or execution authority. Corrections known after this parent's cutoff are not silently included; prepare a new parent when history changes.</p>
+<form method="post" action="/company-work/{{ work_id }}/reduced"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="parent_head" value="{{ parent_head }}"><label><input type="checkbox" name="review_ack" required> I reviewed every disclosed value, including free-form qualifications, IDs and references, for this private export.</label><button>Prepare this reviewed reduced copy</button></form>
+<h2>Retained historical reduced copies</h2>{% for bundle in reduced %}<p>Cutoff {{ bundle.record.entries[0].at_utc }} · <a href="/company-work/{{ work_id }}/reduced/{{ bundle.checkpoint.head_hash }}/bundle.json">Export reduced copy</a> · <a href="/company-work/{{ work_id }}/reduced/{{ bundle.checkpoint.head_hash }}/checkpoint.json">Retain child checkpoint separately</a></p>{% else %}<p>None prepared.</p>{% endfor %}
+<p>Offline: python -m verity_core.trust.selective_profile child.json --checkpoint child.checkpoint.json [--parent full-parent.json]. Supplying a parent that differs fails correspondence; omission leaves that check unperformed.</p>
+<p><a href="/company-work/{{ work_id }}">Return to research, full evidence and current corrections</a></p>
+{% endblock %}

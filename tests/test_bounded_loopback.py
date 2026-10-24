@@ -31,3 +31,16 @@ def test_redirect_or_oversized_envelope_refused(code,body):
     try:
         with pytest.raises(ValueError):request_json('http://127.0.0.1:'+str(server.server_port),'GET','/api/tags',max_bytes=1000)
     finally:server.shutdown();server.server_close()
+
+
+def test_inference_wait_can_exceed_short_connect_timeout():
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args):pass
+        def do_POST(self):
+            time.sleep(5.2)
+            body=b'{"done":true}'
+            self.send_response(200);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
+    try:
+        assert request_json('http://127.0.0.1:'+str(server.server_port),'POST','/api/generate',{},timeout=7)=={'done':True}
+    finally:server.shutdown();server.server_close()

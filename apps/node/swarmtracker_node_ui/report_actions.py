@@ -12,7 +12,7 @@ import secrets
 import sqlite3
 import stat
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager,ExitStack
 from pathlib import Path
 
 from verity_core.json_safety import bounded_json_loads
@@ -65,9 +65,12 @@ def validate(manifest):
                   "external_sharing","fallback_id","fallback_version","resource_id","resource_version",
                   "resource_hash","provenance","machine_id","machine_version","machine_hash","executor_id"}
         expanded={"instructions","resources","fallback_model","fallback_revision"}
+        selection={'primary_connection_id','selected_connection_id','selection_reason'}
         adapter={"adapter_kind","identity_status","runtime_version","service_identity"}
-        if not isinstance(cfg,dict) or not required <= set(cfg) or set(cfg)-required-expanded-adapter-{"daily_request_limit","session_request_limit","routing_enabled","require_fresh_connection_observation","transport_summary"} or cfg["agent_id"]!=manifest["agent_id"] or cfg["model"]!=manifest["model"] or cfg["provider"]!=manifest["provider"] or cfg["resource_id"]!=TARGET or cfg["executor_id"]!="verity-report-broker":
+        if not isinstance(cfg,dict) or not required <= set(cfg) or set(cfg)-required-expanded-adapter-selection-{"daily_request_limit","session_request_limit","routing_enabled","require_fresh_connection_observation","transport_summary","runtime_options"} or cfg["agent_id"]!=manifest["agent_id"] or cfg["model"]!=manifest["model"] or cfg["provider"]!=manifest["provider"] or cfg["resource_id"]!=TARGET or cfg["executor_id"]!="verity-report-broker":
             raise ValueError("Action configuration mismatch")
+        if selection & set(cfg):
+            if not selection<=set(cfg) or cfg['selected_connection_id']!=cfg['connection_id'] or cfg['primary_connection_id']==cfg['selected_connection_id'] or cfg['selection_reason']!='operator_explicit':raise ValueError('Selected connection binding invalid')
         if "require_fresh_connection_observation" in cfg and type(cfg["require_fresh_connection_observation"]) is not bool:
             raise ValueError("Invalid declared health requirement")
         if "routing_enabled" in cfg and cfg["routing_enabled"] is not True:
@@ -263,7 +266,7 @@ class Store:
     def create(self, manifest):
         if self.config_store is not None and "effective_configuration" in manifest:
             cfg=manifest["effective_configuration"]
-            if cfg != self.config_store.effective(manifest["agent_id"],TARGET):
+            if cfg != self.config_store.effective(manifest["agent_id"],TARGET,cfg.get('selected_connection_id','')):
                 raise ValueError("Effective configuration changed before proposal was saved")
         record = new(manifest)
         with self.connection() as con:
@@ -314,7 +317,7 @@ class Store:
                 if candidates[0]['manifest']!=manifest:raise Conflict('Retained proposal belongs to different request or content')
                 return candidates[0]
             if self.config_store is None:raise ValueError('Authoritative configuration store required')
-            if self.config_store.effective(run['agent_id'],TARGET)!=run['configuration']:
+            if self.config_store.effective(run['agent_id'],TARGET,run['configuration'].get('selected_connection_id',''))!=run['configuration']:
                 raise Conflict('Configuration changed; renewed proposal required')
             record=new(manifest)
             con.execute('INSERT INTO report_actions VALUES (?,?)',(record['record_id'],trust.canonical_json(record)))
@@ -387,7 +390,14 @@ class Store:
             try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:
                 raise Conflict("Another report action owns the fixed output; reload after it finishes") from None
-            return self._execute_locked(rid,actor,head)
+            with ExitStack() as stack:
+                if self.config_store is not None:
+                    with self.connection() as con:view=self._get(con,rid)[1]
+                    expected=view['manifest'].get('effective_configuration')
+                    if expected is not None:
+                        try:stack.enter_context(self.config_store.action_guard(view['manifest']['agent_id'],TARGET,expected))
+                        except ValueError:raise Conflict('Action configuration changed or unavailable; renewed review required') from None
+                return self._execute_locked(rid,actor,head)
         finally:os.close(fd)
 
     def _execute_locked(self, rid, actor, head):
@@ -399,7 +409,7 @@ class Store:
                 raise Conflict("Action changed or already attempted; reload")
             if self.config_store is not None and "effective_configuration" in view["manifest"]:
                 try:
-                    current=self.config_store.effective(view["manifest"]["agent_id"],TARGET)
+                    current=self.config_store.effective(view["manifest"]["agent_id"],TARGET,view['manifest']['effective_configuration'].get('selected_connection_id',''))
                 except ValueError:
                     raise Conflict("Effective configuration unavailable; renewed proposal required") from None
                 if current!=view["manifest"]["effective_configuration"]:

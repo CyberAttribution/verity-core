@@ -16,15 +16,20 @@ def install(app,render,base_ctx):
     @app.post('/models/connect')
     async def connect(request:Request):
         customer_routes.local_peer(request)
-        form=await decision_routes.operator_form(request,max_fields=16)
+        form=await decision_routes.operator_form(request,max_fields=17)
         required={'operator_token','connection_id','endpoint','model','revision'}
         ssh_fields={'transport_kind','ssh_host','ssh_login','ssh_port','ssh_remote_port','ssh_known_hosts_path','ssh_known_hosts_sha256','ssh_identity_file'}
-        if not required<=set(form) or set(form)-required-{'provider'}-ssh_fields:
+        if not required<=set(form) or set(form)-required-{'provider','ollama_residency'}-ssh_fields:
             raise HTTPException(422,'Exact local model connection fields required')
         try:
             provider=form.get('provider','openclaw')
             if provider not in ('openclaw','ollama_local'):raise ValueError('Unsupported local text adapter')
             body=dict(provider=provider,endpoint=form['endpoint'].strip(),model=form['model'].strip(),revision=form['revision'].strip(),scope='local',credential_ref='none')
+            residency=form.get('ollama_residency','default')
+            if residency not in ('default','unload'):raise ValueError('Invalid residency choice')
+            if residency=='unload':
+                if provider!='ollama_local':raise ValueError('Unload option is Ollama-specific')
+                body['runtime_options']={'keep_alive_seconds':0}
             if form.get('transport_kind','direct')=='ssh_local_forward':
                 from urllib.parse import urlsplit
                 body['transport']=dict(kind='ssh_local_forward',host=form['ssh_host'].strip(),login=form['ssh_login'].strip(),ssh_port=int(form['ssh_port']),remote_port=int(form['ssh_remote_port']),local_port=urlsplit(body['endpoint']).port,known_hosts_path=form['ssh_known_hosts_path'].strip(),known_hosts_sha256=form['ssh_known_hosts_sha256'].strip(),identity_file=form['ssh_identity_file'].strip())
@@ -33,5 +38,5 @@ def install(app,render,base_ctx):
         except sqlite3.OperationalError:
             raise HTTPException(409,'Configuration is busy; connection registration was not confirmed') from None
         except (ValueError,TypeError,KeyError,sqlite3.Error):
-            raise HTTPException(422,'Connection not registered. Use a new ID, an HTTP loopback OpenClaw endpoint and exact model name. Do not enter credentials.') from None
+            raise HTTPException(422,'Connection not registered. Use a new ID, an HTTP loopback endpoint and exact model name. Do not enter credentials.') from None
         return RedirectResponse('/agents/add?'+urlencode(dict(connection_id=form['connection_id'].strip())),status_code=303)

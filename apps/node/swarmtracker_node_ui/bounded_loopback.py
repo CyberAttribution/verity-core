@@ -18,6 +18,8 @@ def request_json(endpoint,method,path,payload=None,*,timeout=5,max_bytes=131072)
     expired=threading.Event();timer=None
     try:
         connection.connect();connected_socket=connection.sock
+        # The short connect bound must not become a five-second inference timeout.
+        connected_socket.settimeout(timeout)
         def interrupt():
             expired.set()
             try:connected_socket.shutdown(socket.SHUT_RDWR)

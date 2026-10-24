@@ -4,7 +4,7 @@ No key provisioning, authorized_keys edits, password prompts, proxy commands or
 remote shell. SSH authenticates the server key/login; machine/profile claims
 still require their own verification. Unowned listeners/PIDs are never adopted.
 """
-import hashlib,os,re,socket,subprocess,tempfile,time,threading
+import errno,hashlib,os,re,socket,subprocess,tempfile,time,threading
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -49,8 +49,12 @@ class ManagedSSHTunnel:
         if not entry or entry['digest']!=expected_digest or self.configuration.connection_disabled(self.connection_id):raise TunnelError('Connection changed or disabled')
         t=validate_transport(entry['body'].get('transport'),entry['body']['endpoint']);self._trust(t)
         with socket.socket() as probe:
+            probe.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
             try:probe.bind(('127.0.0.1',t['local_port']))
-            except OSError:raise TunnelError('Local port already occupied; existing listener is not adopted') from None
+            except OSError as exc:
+                if exc.errno==errno.EADDRINUSE:
+                    raise TunnelError('Local port already occupied; existing listener is not adopted') from None
+                raise TunnelError('Local listener permission or socket unavailable; use permitted access') from None
         self.stage=tempfile.TemporaryDirectory(prefix='verity-ssh-');os.chmod(self.stage.name,0o700)
         self.control=str(Path(self.stage.name)/'control');self.error_file=open(Path(self.stage.name)/'stderr.log','w+b')
         self.binding=entry;self.transport=t

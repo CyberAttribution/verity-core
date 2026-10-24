@@ -330,3 +330,38 @@ class CompanyWorkStore:
                 or payload['corrections']!=corrections[:len(payload['corrections'])]):
                 raise ValueError('Retained profile differs from this work and its correction history')
         return items
+
+    def disclosure_parent(self,work_id,head,*,current=False):
+        items=[b for b in self.profiles(work_id) if b['checkpoint']['head_hash']==head]
+        if len(items)!=1:raise KeyError('Exact retained parent profile unavailable')
+        parent=items[0]
+        if current and len(parent['record']['entries'][0]['payload']['corrections'])!=len(self.corrections(work_id)):
+            raise ValueError('Profile cutoff is stale; prepare a new full profile before reduced export')
+        return parent
+
+    def prepare_disclosure(self,work_id,parent_head):
+        from verity_core.trust import selective_profile
+        with self._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            parent=self.disclosure_parent(work_id,parent_head,current=True)
+            wanted=selective_profile.projection(parent)
+            old=self.disclosures(work_id)
+            for bundle in old:
+                if {k:v for k,v in bundle['record']['entries'][0]['payload'].items() if k!='schema'}==wanted:return bundle
+            if len(old)>=20:raise ValueError('Reduced export allowance exceeded')
+            bundle=selective_profile.create(parent)
+            db.execute('INSERT INTO research_events(work_id,at,action,detail) VALUES (?,?,?,?)',(work_id,time.time(),'reduced_profile_exported',canonical(bundle)))
+        return bundle
+
+    def disclosures(self,work_id):
+        from verity_core.trust import selective_profile
+        label(work_id)
+        with self._db() as db:
+            items=[json.loads(row[0]) for row in db.execute("SELECT detail FROM research_events WHERE work_id=? AND action='reduced_profile_exported' ORDER BY seq",(work_id,))]
+        for bundle in items:
+            if bundle['record']['subject']!={'kind':'internal_reduced_profile','identifier':work_id}:raise ValueError('Reduced copy belongs to different work')
+            ref=bundle['record']['entries'][0]['payload']['parent_references']['profile']
+            parent=self.disclosure_parent(work_id,ref['head_hash'])
+            checks=selective_profile.verify(bundle,bundle['checkpoint'],parent=parent)
+            if not checks['child_integrity'] or checks['correspondence'] is not True:raise ValueError('Reduced copy or parent correspondence differs')
+        return items

@@ -67,10 +67,12 @@ def validate(manifest):
         expanded={"instructions","resources","fallback_model","fallback_revision"}
         selection={'primary_connection_id','selected_connection_id','selection_reason'}
         adapter={"adapter_kind","identity_status","runtime_version","service_identity"}
-        if not isinstance(cfg,dict) or not required <= set(cfg) or set(cfg)-required-expanded-adapter-selection-{"daily_request_limit","session_request_limit","routing_enabled","require_fresh_connection_observation","transport_summary","runtime_options"} or cfg["agent_id"]!=manifest["agent_id"] or cfg["model"]!=manifest["model"] or cfg["provider"]!=manifest["provider"] or cfg["resource_id"]!=TARGET or cfg["executor_id"]!="verity-report-broker":
+        if not isinstance(cfg,dict) or not required <= set(cfg) or set(cfg)-required-expanded-adapter-selection-{"daily_request_limit","session_request_limit","routing_enabled","require_fresh_connection_observation","transport_summary","runtime_options","pre_dispatch_fallback_enabled"} or cfg["agent_id"]!=manifest["agent_id"] or cfg["model"]!=manifest["model"] or cfg["provider"]!=manifest["provider"] or cfg["resource_id"]!=TARGET or cfg["executor_id"]!="verity-report-broker":
             raise ValueError("Action configuration mismatch")
         if selection & set(cfg):
-            if not selection<=set(cfg) or cfg['selected_connection_id']!=cfg['connection_id'] or cfg['primary_connection_id']==cfg['selected_connection_id'] or cfg['selection_reason']!='operator_explicit':raise ValueError('Selected connection binding invalid')
+            if not selection<=set(cfg) or cfg['selected_connection_id']!=cfg['connection_id'] or cfg['primary_connection_id']==cfg['selected_connection_id'] or cfg['selection_reason'] not in {'operator_explicit','pre_dispatch_policy'}:raise ValueError('Selected connection binding invalid')
+        if 'pre_dispatch_fallback_enabled' in cfg and type(cfg['pre_dispatch_fallback_enabled']) is not bool:raise ValueError('Invalid fallback authority')
+        if cfg.get('selection_reason')=='pre_dispatch_policy' and (cfg.get('pre_dispatch_fallback_enabled') is not True or cfg.get('fallback_id')!=cfg['connection_id']):raise ValueError('Fallback selection authority differs')
         if "require_fresh_connection_observation" in cfg and type(cfg["require_fresh_connection_observation"]) is not bool:
             raise ValueError("Invalid declared health requirement")
         if "routing_enabled" in cfg and cfg["routing_enabled"] is not True:
@@ -266,7 +268,7 @@ class Store:
     def create(self, manifest):
         if self.config_store is not None and "effective_configuration" in manifest:
             cfg=manifest["effective_configuration"]
-            if cfg != self.config_store.effective(manifest["agent_id"],TARGET,cfg.get('selected_connection_id','')):
+            if cfg != self.config_store.for_snapshot(manifest["agent_id"],TARGET,cfg):
                 raise ValueError("Effective configuration changed before proposal was saved")
         record = new(manifest)
         with self.connection() as con:
@@ -317,7 +319,7 @@ class Store:
                 if candidates[0]['manifest']!=manifest:raise Conflict('Retained proposal belongs to different request or content')
                 return candidates[0]
             if self.config_store is None:raise ValueError('Authoritative configuration store required')
-            if self.config_store.effective(run['agent_id'],TARGET,run['configuration'].get('selected_connection_id',''))!=run['configuration']:
+            if self.config_store.for_snapshot(run['agent_id'],TARGET,run['configuration'])!=run['configuration']:
                 raise Conflict('Configuration changed; renewed proposal required')
             record=new(manifest)
             con.execute('INSERT INTO report_actions VALUES (?,?)',(record['record_id'],trust.canonical_json(record)))
@@ -409,7 +411,7 @@ class Store:
                 raise Conflict("Action changed or already attempted; reload")
             if self.config_store is not None and "effective_configuration" in view["manifest"]:
                 try:
-                    current=self.config_store.effective(view["manifest"]["agent_id"],TARGET,view['manifest']['effective_configuration'].get('selected_connection_id',''))
+                    current=self.config_store.for_snapshot(view["manifest"]["agent_id"],TARGET,view['manifest']['effective_configuration'])
                 except ValueError:
                     raise Conflict("Effective configuration unavailable; renewed proposal required") from None
                 if current!=view["manifest"]["effective_configuration"]:

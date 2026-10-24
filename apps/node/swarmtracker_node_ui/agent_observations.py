@@ -20,7 +20,7 @@ def configured_agents(configuration, runs):
             cfg=run["configuration"]
             try:
                 selected=cfg.get("selected_connection_id","")
-                current=configuration.effective(agent["id"],run["resource_id"],selected)
+                current=configuration.for_snapshot(agent["id"],run["resource_id"],cfg)
                 matches=current==cfg
             except (ValueError,KeyError,TypeError):
                 matches=False

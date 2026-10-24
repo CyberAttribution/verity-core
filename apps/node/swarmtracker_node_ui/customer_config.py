@@ -77,7 +77,7 @@ class CustomerConfig:
             if observation and observation["state"] != "reachable":
                 raise ValueError("Local connection observation changed before dispatch")
             selected=expected.get("selected_connection_id", "")
-            actual=self.effective(agent_id,resource_id,selected) if selected else self.effective(agent_id,resource_id)
+            actual=self.for_snapshot(agent_id,resource_id,expected)
             if actual != expected:
                 raise ValueError("Effective configuration changed before dispatch")
             yield
@@ -94,7 +94,7 @@ class CustomerConfig:
             db.execute('BEGIN IMMEDIATE')
             if expected.get('routing_enabled',True) is not True or self.connection_disabled(expected['connection_id']):
                 raise ValueError('Action configuration is paused or disabled')
-            current=self.effective(agent_id,resource_id,expected.get('selected_connection_id',''))
+            current=self.for_snapshot(agent_id,resource_id,expected)
             if current!=expected:raise ValueError('Action configuration changed before effect')
             yield
 
@@ -133,8 +133,14 @@ class CustomerConfig:
                 validate_transport(body['transport'],body['endpoint'])
         elif kind=="agent":
             required={"connection_id","instructions","allowed_tools","resources","external_sharing","fallback_id"}
-            if not required <= set(body) or set(body)-required-{"daily_request_limit","session_request_limit","adapter_kind","runtime_version","service_identity","require_fresh_connection_observation","permitted_connection_ids","routing_enabled"}:
+            if not required <= set(body) or set(body)-required-{"daily_request_limit","session_request_limit","adapter_kind","runtime_version","service_identity","require_fresh_connection_observation","permitted_connection_ids","routing_enabled","pre_dispatch_fallback_enabled"}:
                 raise ValueError("Invalid agent fields")
+            if 'pre_dispatch_fallback_enabled' in body:
+                if type(body['pre_dispatch_fallback_enabled']) is not bool:raise ValueError('Fallback policy must be boolean')
+                if body['pre_dispatch_fallback_enabled']:
+                    fallback=self.latest('connection',body['fallback_id']) if body['fallback_id'] else None
+                    if not fallback or fallback['id']==body['connection_id'] or fallback['body']['scope']!='local' or fallback['body']['provider'] not in {'openclaw','ollama_local'}:
+                        raise ValueError('Reviewed fallback requires a distinct supported local connection')
             if "routing_enabled" in body and type(body["routing_enabled"]) is not bool:
                 raise ValueError("Agent routing setting must be boolean")
             if "daily_request_limit" in body and (type(body["daily_request_limit"]) is not int or not 0<=body["daily_request_limit"]<=10000):
@@ -326,14 +332,15 @@ class CustomerConfig:
                 item["detail"]="Last health observation is stale; current reachability unknown"
         return result
 
-    def effective(self,agent_id,resource_id,requested_connection_id=""):
+    def effective(self,agent_id,resource_id,requested_connection_id="",*,allow_fallback=False):
         agent=self.latest("agent",agent_id)
         if not agent or resource_id not in agent["body"]["resources"]:raise ValueError("Agent resource not configured")
         resource=self.latest("resource",resource_id)
         primary_id=agent["body"]["connection_id"]
         selected=requested_connection_id or primary_id
         label(selected)
-        if selected!=primary_id and selected not in agent["body"].get("permitted_connection_ids",[]):
+        fallback_authorized=(allow_fallback and selected==agent['body']['fallback_id'] and selected!=primary_id and agent['body'].get('pre_dispatch_fallback_enabled') is True)
+        if selected!=primary_id and selected not in agent["body"].get("permitted_connection_ids",[]) and not fallback_authorized:
             raise ValueError("Requested connection is not permitted for this agent")
         conn=self.latest("connection",selected)
         if selected!=primary_id and (not conn or conn["body"]["scope"]!="local" or conn["body"]["provider"] not in {'openclaw','ollama_local'}):
@@ -372,10 +379,32 @@ class CustomerConfig:
         if 'transport' in conn['body']:
             t=conn['body']['transport']
             result['transport_summary']={k:t[k] for k in ('kind','host','login','ssh_port','remote_port','local_port','known_hosts_sha256')}
-        for key in ("daily_request_limit","session_request_limit","require_fresh_connection_observation","routing_enabled"):
+        for key in ("daily_request_limit","session_request_limit","require_fresh_connection_observation","routing_enabled","pre_dispatch_fallback_enabled"):
             if key in agent["body"]:
                 result[key]=agent["body"][key]
         if selected!=primary_id:
             result.update(primary_connection_id=primary_id,selected_connection_id=selected,
-                          selection_reason="operator_explicit",require_fresh_connection_observation=True)
+                          selection_reason="pre_dispatch_policy" if fallback_authorized else "operator_explicit",require_fresh_connection_observation=True)
         return result
+
+    def for_snapshot(self,agent_id,resource_id,snapshot):
+        return self.effective(agent_id,resource_id,snapshot.get('selected_connection_id',''),
+            allow_fallback=snapshot.get('selection_reason')=='pre_dispatch_policy')
+
+    def resolve_pre_dispatch(self,agent_id,resource_id,purpose):
+        """Read-only prospective selection, used only before a reviewed reservation."""
+        primary=self.effective(agent_id,resource_id)
+        body=self.latest('agent',agent_id)['body']
+        if (body.get('pre_dispatch_fallback_enabled') is not True or body.get('routing_enabled',True) is not True
+                or purpose not in body['allowed_tools']):return primary
+        observations=self.observations();identifier=body['connection_id']
+        down=self.connection_disabled(identifier) or observations.get(('connection',identifier),{}).get('state')=='unavailable'
+        if not down:return primary
+        fallback=self.latest('connection',body['fallback_id'])
+        if (not fallback or fallback['body']['scope']!='local' or fallback['body']['provider'] not in {'openclaw','ollama_local'}
+                or self.connection_disabled(fallback['id']) or observations.get(('connection',fallback['id']),{}).get('state')!='reachable'):return primary
+        if fallback['body'].get('transport'):
+            from .managed_ssh_tunnel import require_connection
+            try:require_connection(fallback['id'],fallback['digest'])
+            except (OSError,ValueError):return primary
+        return self.effective(agent_id,resource_id,fallback['id'],allow_fallback=True)

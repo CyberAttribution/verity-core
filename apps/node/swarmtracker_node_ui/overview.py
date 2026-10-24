@@ -39,12 +39,15 @@ def workflow(configuration, runs, agent_id='', resource_id='', *, now=None):
     choices=[dict(agent=a['id'],resource=r) for a in agents for r in a['body']['resources']]
     result=dict(choices=choices,connections=rows,state='not selected',detail='Select an existing agent and resource to inspect its primary workflow.',agent=agent_id,resource=resource_id)
     if not agent_id:return result
-    try:effective=configuration.effective(agent_id,resource_id)
+    try:
+        agent=configuration.latest('agent',agent_id)
+        purpose=(agent['body']['allowed_tools'] or ['generate_text'])[0] if agent else 'generate_text'
+        effective=configuration.resolve_pre_dispatch(agent_id,resource_id,purpose)
     except (ValueError,KeyError,TypeError):
         return dict(result,state='unavailable',detail='Agent/resource configuration is incomplete or no longer permitted. Review Active Agents.')
     connection=connections.get(effective['connection_id'])
     if connection is None:return dict(result,state='unknown',detail='Connection changed during observation. Reload and review Models & Connections.')
-    result.update(model=effective['model'],connection=connection['id'],state=connection['state'],detail=connection['detail'])
+    result.update(model=effective['model'],connection=connection['id'],state=connection['state'],detail=connection['detail'],selection_reason=effective.get('selection_reason','primary'),primary_connection_id=effective.get('primary_connection_id',effective['connection_id']))
     if effective.get('routing_enabled',True) is False:
         return dict(result,state='paused',detail='This agent is paused. Resume routing in Active Agents before a new request; existing evidence remains readable.')
     if connection['state']!='reachable':return result

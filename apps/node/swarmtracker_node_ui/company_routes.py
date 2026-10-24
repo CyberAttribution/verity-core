@@ -95,7 +95,7 @@ def install(app,render,base_ctx):
         from .customer_config import canonical
         for agent in [x for x in cfg.all() if x['kind']=='agent'][:20]:
             for resource in agent['body']['resources'][:20]:
-                try:effective=cfg.effective(agent['id'],resource)
+                try:effective=cfg.resolve_pre_dispatch(agent['id'],resource,'generate_text')
                 except ValueError:continue
                 ctx["research_choices"].append(dict(configuration=effective,sha256=hashlib.sha256(canonical(effective).encode()).hexdigest()))
                 if len(ctx["research_choices"])>=30:break

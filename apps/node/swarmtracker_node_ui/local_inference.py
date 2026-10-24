@@ -106,6 +106,8 @@ class LocalInference:
             if requested_connection_id and requested_connection_id!=cfg["connection_id"]:
                 try:cfg=self.configuration.effective(agent_id,resource_id,requested_connection_id)
                 except ValueError:selection_denial="Requested additional connection is not permitted or supported"
+            if not requested_connection_id and expected_configuration_sha256:
+                cfg=self.configuration.resolve_pre_dispatch(agent_id,resource_id,purpose)
             connection = self.configuration.latest("connection", cfg["connection_id"])
             observation = self.configuration.observations().get(("connection",cfg["connection_id"]))
             reason = None
@@ -190,8 +192,7 @@ class LocalInference:
             if self.configuration.connection_disabled(cfg["connection_id"]):
                 raise ValueError("Primary model connection disabled before dispatch")
             selected=cfg.get("selected_connection_id", "")
-            current_cfg=(self.configuration.effective(agent_id,resource_id,selected) if selected
-                         else self.configuration.effective(agent_id,resource_id))
+            current_cfg=self.configuration.for_snapshot(agent_id,resource_id,cfg)
             if current_cfg != cfg:
                 raise ValueError("Effective configuration changed before dispatch")
             # Hold the configuration write reservation across the last checks

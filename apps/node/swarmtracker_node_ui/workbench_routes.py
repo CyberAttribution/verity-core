@@ -14,18 +14,35 @@ def runs():
 
 
 def install(app,render,base_ctx):
+    @app.post('/configuration/agents/{identifier}/fallback-policy')
+    async def fallback_policy(request:Request,identifier:str):
+        customer_routes.local_peer(request)
+        form=await decision_routes.operator_form(request,max_fields=4)
+        required={'operator_token','expected_digest','fallback_id'}
+        if not required<=set(form) or set(form)-required-{'enabled'} or form.get('enabled','off') not in ('on','off'):
+            raise HTTPException(422,'Exact reviewed fallback policy fields required')
+        cfg=customer_routes.database();agent=cfg.latest('agent',identifier)
+        if not agent:raise HTTPException(404,'Unknown agent')
+        if agent['digest']!=form['expected_digest']:raise HTTPException(409,'Agent changed; reload and review fallback policy')
+        body=dict(agent['body'],fallback_id=form['fallback_id'].strip(),pre_dispatch_fallback_enabled=form.get('enabled')=='on')
+        try:cfg.save('agent',identifier,body,expected_digest=form['expected_digest'])
+        except (ValueError,KeyError,TypeError):raise HTTPException(422,'Fallback policy refused; select a distinct registered local model connection') from None
+        except sqlite3.Error:raise HTTPException(409,'Policy update unconfirmed; reload before another change') from None
+        return RedirectResponse('/configuration',status_code=303)
+
     @app.get('/workbench')
     def page(request:Request):
         customer_routes.local_peer(request)
         cfg=customer_routes.database();all_items=cfg.all();choices=[]
         for agent in [x for x in all_items if x['kind']=='agent'][:20]:
             for resource in agent['body']['resources'][:20]:
-                for connection_id in [agent['body']['connection_id']]+agent['body'].get('permitted_connection_ids',[]):
-                    try:effective=cfg.effective(agent['id'],resource,connection_id)
+                for connection_id in ['']+agent['body'].get('permitted_connection_ids',[]):
+                    try:effective=(cfg.effective(agent['id'],resource,connection_id) if connection_id else cfg.resolve_pre_dispatch(agent['id'],resource,(agent['body']['allowed_tools'] or ['generate_text'])[0]))
                     except ValueError:continue  # A changed unsupported alternate is not selectable.
                     choices.append(dict(configuration=effective,sha256=hashlib.sha256(canonical(effective).encode()).hexdigest(),
+                        requested_connection_id='' if effective.get('selection_reason')=='pre_dispatch_policy' else effective['connection_id'],
                         registered_only=effective.get('adapter_kind')=='custom_unverified',
-                        connection_role='additional' if effective.get('selected_connection_id') else 'primary'))
+                        connection_role='reviewed policy fallback' if effective.get('selection_reason')=='pre_dispatch_policy' else ('additional' if effective.get('selected_connection_id') else 'primary')))
                     if len(choices)>=50:break
                 if len(choices)>=50:break
             if len(choices)>=50:break

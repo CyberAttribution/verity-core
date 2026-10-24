@@ -49,3 +49,18 @@ def test_reviewed_route_export_restart_and_stale_parent(setup):
     assert c.post('/company-work/article-1/correction',data=correction,follow_redirects=False).status_code==303
     assert c.post('/company-work/article-1/reduced',data=data).status_code==409
     assert j.work.disclosures('article-1')==[child] and len(calls)==1
+
+
+def test_fresh_self_consistent_assertion_cannot_replace_retained_anchor_or_parent(setup):
+    from verity_core.trust import record as trust,evidence_profile as profile
+    parent,*_=make_profile(setup);original=reduced.create(parent)
+    payload=copy.deepcopy(original['record']['entries'][0]['payload'])
+    payload['decision_qualification']='New unqualified assertion; not the retained decision.'
+    record=trust.new_record(original['record']['subject']);trust.append_entry(record,'note',payload=payload)
+    forged=dict(schema=reduced.SCHEMA,record=record,checkpoint=profile._checkpoint(record))
+    # A newly hashed assertion can be internally intact; that grants no parent proof.
+    own=reduced.verify(forged,forged['checkpoint'])
+    assert own['child_integrity'] and own['correspondence'] is None
+    assert not reduced.verify(forged,original['checkpoint'])['child_integrity']
+    supplied=reduced.verify(forged,forged['checkpoint'],parent=parent)
+    assert supplied['child_integrity'] and supplied['correspondence'] is False

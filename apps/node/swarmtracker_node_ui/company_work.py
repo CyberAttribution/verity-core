@@ -270,3 +270,59 @@ class CompanyWorkStore:
         if not research_record.verify(bundle,bundle["checkpoint"]):
             raise ValueError("Research evidence integrity failed")
         return bundle
+
+    @staticmethod
+    def _correction_rows(db, work_id):
+        return [json.loads(row[0]) for row in db.execute(
+            "SELECT detail FROM research_events WHERE work_id=? AND action='research_correction' ORDER BY seq",(work_id,))]
+
+    def corrections(self,work_id):
+        from verity_core.trust import evidence_profile
+        decision=self.receipt(work_id)
+        with self._db() as db:items=self._correction_rows(db,work_id)
+        return evidence_profile.validate_corrections(decision,items)
+
+    def correct(self,work_id,text,*,kind,expected_binding,expected_head):
+        from verity_core.trust import evidence_profile
+        label(work_id)
+        with self._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            work=self.get(work_id);decision=self.receipt(work_id)
+            if work.get('proposal_binding')!=expected_binding or 'intake_identity' not in work:
+                raise ValueError('Bound reviewed intake required')
+            previous=self._correction_rows(db,work_id)
+            evidence_profile.validate_corrections(decision,previous)
+            head=previous[-1]['checkpoint']['head_hash'] if previous else ''
+            if expected_head!=head:raise ValueError('Correction history changed; review current history')
+            if len(previous)>=20:raise ValueError('Correction history allowance exceeded')
+            bundle=evidence_profile.correction(decision,previous,text,kind=kind)
+            db.execute("INSERT INTO research_events(work_id,at,action,detail) VALUES (?,?,?,?)",
+                (work_id,time.time(),'research_correction',canonical(bundle)))
+        return bundle
+
+    def prepare_profile(self,work_id,denial):
+        from verity_core.trust import evidence_profile
+        label(work_id)
+        with self._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            decision=self.receipt(work_id);corrections=self._correction_rows(db,work_id)
+            bundle=evidence_profile.assemble(decision,denial,corrections)
+            rows=db.execute("SELECT detail FROM research_events WHERE work_id=? AND action='provisional_profile_exported' ORDER BY seq",(work_id,)).fetchall()
+            # Repeated export of unchanged inputs returns the same checkpoint.
+            wanted=bundle['record']['entries'][0]['payload']
+            for row in rows:
+                old=json.loads(row[0])
+                if not evidence_profile.verify(old,old['checkpoint']):raise ValueError('Retained profile integrity differs')
+                if old['record']['entries'][0]['payload']==wanted:return old
+            if len(rows)>=20:raise ValueError('Profile export allowance exceeded')
+            db.execute("INSERT INTO research_events(work_id,at,action,detail) VALUES (?,?,?,?)",
+                (work_id,time.time(),'provisional_profile_exported',canonical(bundle)))
+        return bundle
+
+    def profiles(self,work_id):
+        from verity_core.trust import evidence_profile
+        label(work_id)
+        with self._db() as db:
+            items=[json.loads(row[0]) for row in db.execute("SELECT detail FROM research_events WHERE work_id=? AND action='provisional_profile_exported' ORDER BY seq",(work_id,))]
+        if any(not evidence_profile.verify(b,b['checkpoint']) for b in items):raise ValueError('Retained profile integrity differs')
+        return items

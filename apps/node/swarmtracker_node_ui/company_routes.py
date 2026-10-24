@@ -29,6 +29,19 @@ def decision_refusal(request,message):
     raise HTTPException(409,message)
 
 
+def profile_context(works):
+    from . import workbench_routes
+    data=database();runs=workbench_routes.runs().recent()
+    corrections={};profiles={};denials={}
+    for work in works:
+        if 'article' not in work:continue
+        corrections[work['id']]=data.corrections(work['id'])
+        profiles[work['id']]=data.profiles(work['id'])
+        identity=work.get('intake_identity',{})
+        denials[work['id']]=[run for run in runs if run['state']=='denied' and all(run.get(k)==identity.get(k) for k in ('agent_id','resource_id','session_id'))]
+    return dict(research_corrections=corrections,research_profiles=profiles,research_denials=denials)
+
+
 def install(app,render,base_ctx):
     @app.get("/company-work")
     def page(request:Request):
@@ -40,6 +53,8 @@ def install(app,render,base_ctx):
             ctx["evidence_checks"]={w["id"]: database().checks(w["id"]) for w in ctx["company_work_records"]}
         except (ValueError,TypeError,sqlite3.Error):
             raise HTTPException(503,"Evidence integrity or storage unavailable") from None
+        try:ctx.update(profile_context(ctx["company_work_records"]))
+        except (ValueError,KeyError,TypeError,sqlite3.Error):raise HTTPException(503,"Correction/profile evidence unavailable") from None
         ctx["operator_token"]=decision_routes.TOKEN
         from . import workbench_routes
         from .research_journey import ResearchJourney
@@ -72,6 +87,8 @@ def install(app,render,base_ctx):
             raise HTTPException(503,"Research evidence integrity or storage unavailable") from None
         ctx.update(company_work_records=[work],evidence_checks={work_id:checks},
                    operator_token=decision_routes.TOKEN,research_choices=[],research_intakes=[],research_detail=True)
+        try:ctx.update(profile_context([work]))
+        except (ValueError,KeyError,TypeError,sqlite3.Error):raise HTTPException(503,"Correction/profile evidence unavailable") from None
         response=render("company_work.html",ctx)
         response.headers["Cache-Control"]="no-store"
         return response
@@ -117,6 +134,35 @@ def install(app,render,base_ctx):
         except KeyError:raise HTTPException(404,"Research receipt unavailable") from None
         except (ValueError,sqlite3.Error):raise HTTPException(503,"Research integrity unavailable") from None
         return JSONResponse(bundle if artifact=="bundle" else bundle["checkpoint"],headers={"Cache-Control":"no-store","Content-Disposition":f'attachment; filename="research.{artifact}.json"'})
+
+    @app.post('/company-work/{work_id}/correction')
+    async def correct_research(request:Request,work_id:str):
+        local_peer(request);form=await decision_routes.operator_form(request)
+        if set(form)!={'operator_token','text','kind','expected_binding','expected_head'}:raise HTTPException(422,'Exact correction fields required')
+        try:database().correct(work_id,form['text'],kind=form['kind'],expected_binding=form['expected_binding'],expected_head=form['expected_head'])
+        except (KeyError,ValueError,TypeError,sqlite3.Error):return decision_refusal(request,'Correction refused: review the retained decision and current correction history. No original decision or authority changed.')
+        return RedirectResponse('/company-work/'+work_id,status_code=303)
+
+    @app.post('/company-work/{work_id}/profile')
+    async def prepare_profile(request:Request,work_id:str):
+        local_peer(request);form=await decision_routes.operator_form(request)
+        if set(form)!={'operator_token','denied_request_id'}:raise HTTPException(422,'Exact related denied request required')
+        from . import workbench_routes
+        try:database().prepare_profile(work_id,workbench_routes.runs().request_export(form['denied_request_id']))
+        except (KeyError,ValueError,TypeError,sqlite3.Error):return decision_refusal(request,'Profile refused: an intact bound decision, correction history and separate denial in the same agent/resource/session are required.')
+        return RedirectResponse('/company-work/'+work_id,status_code=303)
+
+    @app.get('/company-work/{work_id}/profile/{head}/{artifact}.json')
+    def export_profile(request:Request,work_id:str,head:str,artifact:str):
+        local_peer(request)
+        if artifact not in ('bundle','checkpoint'):raise HTTPException(404,'Unknown profile artifact')
+        try:
+            items=[b for b in database().profiles(work_id) if b['checkpoint']['head_hash']==head]
+            if len(items)!=1:raise KeyError(head)
+            bundle=items[0]
+        except KeyError:raise HTTPException(404,'Retained profile unavailable') from None
+        except (ValueError,TypeError,sqlite3.Error):raise HTTPException(503,'Profile integrity unavailable') from None
+        return JSONResponse(bundle if artifact=='bundle' else bundle['checkpoint'],headers={'Cache-Control':'no-store','Content-Disposition':'attachment; filename="internal-evidence-profile.'+artifact+'.json"'})
 
     @app.post("/company-work/{work_id}/decision")
     async def decide(request:Request,work_id:str):

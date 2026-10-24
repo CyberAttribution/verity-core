@@ -12,6 +12,7 @@ struct DesktopConfig: Codable {
     let repo: String
     let library_path: String?
     let bundled: Bool?
+    let data_home: String?
 }
 
 func loadConfig() -> DesktopConfig? {
@@ -24,7 +25,7 @@ func loadConfig() -> DesktopConfig? {
         let resources = bundleURL.appendingPathComponent("Contents/Resources")
         return DesktopConfig(python: resources.appendingPathComponent(cfg.python).path,
             worker: resources.appendingPathComponent(cfg.worker).path,
-            repo: resources.path, library_path: nil, bundled: true)
+            repo: resources.path, library_path: nil, bundled: true, data_home: cfg.data_home)
     }
     return cfg
 }
@@ -64,6 +65,12 @@ class WorkerProcess {
         p.executableURL = URL(fileURLWithPath: config.python)
         p.arguments = config.bundled == true ? ["--bundled"] : [config.worker, "--repo", config.repo]
         var env = ProcessInfo.processInfo.environment
+        // A designated development installation retains its explicit profile
+        // when opened from Finder, Dock, or Launch Services without shell env.
+        if let home = config.data_home {
+            guard home.hasPrefix("/"), FileManager.default.fileExists(atPath: home) else { return false }
+            env["VERITY_DATA_HOME"] = home
+        }
         env["PATH"] = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
         if let library = config.library_path, !library.isEmpty { env["DYLD_LIBRARY_PATH"] = library }
         env["PYTHONUNBUFFERED"] = "1"

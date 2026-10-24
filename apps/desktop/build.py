@@ -45,7 +45,7 @@ def build(output, repo, python, icon=None, overwrite=False, library_path=None):
         (resources/"verity-development.json").write_text(json.dumps({"identifier":IDENTIFIER}))
         info = {"CFBundleIdentifier":IDENTIFIER,"CFBundleName":"Verity",
                 "CFBundleDisplayName":"Verity","CFBundleExecutable":"Verity",
-                "CFBundlePackageType":"APPL","CFBundleShortVersionString":"0.1.0",
+                "CFBundlePackageType":"APPL","CFBundleShortVersionString":"0.3.0-dev",
                 "LSMinimumSystemVersion":"12.0","NSHighResolutionCapable":True}
         if icon:
             shutil.copy2(icon,resources/"AppIcon.icns"); info["CFBundleIconFile"]="AppIcon"

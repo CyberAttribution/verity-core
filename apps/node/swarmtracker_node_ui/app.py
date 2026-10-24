@@ -55,10 +55,13 @@ def render(name: str, ctx: dict):
 
 
 def base_ctx(request: Request, page: str) -> dict:
+    from verity_core.desktop_version import DESKTOP_VERSION
     ctx = {
         "request": request,
         "page": page,
         "cfg": {
+            "app_version": os.environ.get("VERITY_APP_VERSION", DESKTOP_VERSION),
+            "source_revision": os.environ.get("VERITY_SOURCE_REVISION", "development checkout; revision not supplied"),
             "node": config.NODE_NAME,
             "mode": config.MODE,
             "policy": config.KEEL_POLICY,

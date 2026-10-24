@@ -84,6 +84,11 @@ def main(argv=None):
             os.environ["VERITY_REQUIRE_ACTIVATION"] = "1"
             os.environ["VERITY_ACTIVATION_PUBLIC_KEY"] = str(Path(sys.executable).parent.parent / "activation-public.pem")
             os.environ["VERITY_APP_VERSION"] = bundled_version(sys.executable)
+            build_file = Path(sys.executable).parent.parent / "pilot-build.json"
+            if build_file.is_file():
+                build = json.loads(build_file.read_text())
+                revision = build.get("source_commit", "unknown")
+                os.environ["VERITY_SOURCE_REVISION"] = revision + (" (modified tree)" if build.get("source_tree_dirty") else "")
             os.environ.setdefault("NODE_UI_NODE", socket.gethostname())
             os.environ.setdefault("NODE_UI_HARDWARE", platform.machine() + " Mac")
             os.environ.setdefault("NODE_UI_HARDWARE_NEXT", "Not configured")

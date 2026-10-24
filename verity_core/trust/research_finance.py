@@ -124,3 +124,14 @@ def disagreements(observations):
         if len({number(o['value']) for o in claims})<=1:continue
         result.append(dict(scope=dict(zip(('subject_id','category','currency','territory','period'),key)),claims=[dict(id=o['id'],value=o['value'],publisher=o['source']['publisher'],url=o['source']['url'],dependence=o['dependence']) for o in claims],status='Unresolved disagreement; all reported values retained. No averaging, truth selection, independence or financial materiality established.'))
     return result
+
+
+def source_origins(observations):
+    """Read-only view of recorded provenance; never an independence verdict."""
+    groups={};unverified=[]
+    for item in observations:
+        o=validate_observation(item);d=o['dependence'];origin=d['origin'].strip()
+        if d['status'] in ('asserted','observed') and origin.casefold() not in ('unknown','not recorded','not applicable','n/a'):
+            groups.setdefault(origin,[]).append(o)
+        else:unverified.append(o)
+    return dict(groups=[dict(origin=origin,claims=groups[origin],shared=len(groups[origin])>1) for origin in sorted(groups)],unverified=unverified,limitation='These are recorded origin references and qualifications, not verified dependence or independence. Exact reference matches only; different publishers and human acceptance do not establish independent reporting. Unknown and inferred origins remain unverified. Claims, historical hashes and calculations are unchanged.')

@@ -185,3 +185,29 @@ def test_correction_prefill_effective_escaped_readonly_and_stale(setup,tmp_path)
     assert effective_observations(after['record']['entries'])[0]['value']=='7000000'
     assert client.post('/company-work/pilot/pilot-1/action',data=data).status_code==409
     assert db.get_assignment('pilot-1')==after and calls==[]
+
+
+def test_recorded_source_origins_do_not_imply_independence():
+    from verity_core.trust.research_finance import source_origins
+    a=observation();a['dependence']=dict(status='observed',origin='wire-item-7',basis='Fixture passage explicitly attributes this origin')
+    b=copy.deepcopy(a);b['id']='copy';b['source']['publisher']='Different publisher';b['value']='6000000'
+    unknown=copy.deepcopy(a);unknown['id']='unknown';unknown['dependence']['origin']='UNKNOWN'
+    inferred=copy.deepcopy(a);inferred['id']='hypothesis';inferred['dependence']['status']='inferred'
+    solo=copy.deepcopy(a);solo['id']='solo';solo['dependence']['origin']='another-reference'
+    observations=[a,b,unknown,inferred,solo];before=copy.deepcopy(observations);r=source_origins(observations)
+    assert observations==before
+    shared=next(g for g in r['groups'] if g['shared']);assert shared['claims']==[a,b]
+    assert {o['id'] for o in r['unverified']}=={'unknown','hypothesis'}
+    assert any(not g['shared'] and g['claims']==[solo] for g in r['groups'])
+    assert 'not verified dependence or independence' in r['limitation']
+
+
+def test_source_origin_report_escapes_and_preserves_checkpoint(setup,tmp_path):
+    cfg,j,calls,client,form=setup;db=PilotStore(j.path);b=db.create_assignment(assignment(cfg,context(tmp_path)))
+    o=observation();o['dependence']=dict(status='asserted',origin='<script>shared</script>',basis='Synthetic attribution fixture, not verified copying')
+    b=append(db,b,'observation',o);other=copy.deepcopy(o);other['id']='copy';other['source']['publisher']='Second publisher';b=append(db,b,'observation',other)
+    before=copy.deepcopy(b);r=client.get('/company-work/pilot/pilot-1/report')
+    assert r.status_code==200 and 'Shared recorded origin' in r.text and '&lt;script&gt;shared&lt;/script&gt;' in r.text
+    assert '<script>shared</script>' not in r.text and 'Second publisher' in r.text
+    assert 'not verified dependence or independence' in r.text
+    assert db.get_assignment('pilot-1')==before and calls==[]

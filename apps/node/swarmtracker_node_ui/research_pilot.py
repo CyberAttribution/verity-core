@@ -25,6 +25,11 @@ def text(value,limit=2000):
 def digest(value):return hashlib.sha256(canonical(value).encode()).hexdigest()
 
 
+def subject_selections(entries):
+    """Recorded local planning judgments, never authenticated approval or authority."""
+    return {e['payload']['body']['subject_id']:dict(e['payload']['body'],revision=e['seq']) for e in entries if e['payload']['kind']=='subject_selection'}
+
+
 def verify(bundle,anchor):
     try:
         record=bundle['record'];entries=record['entries'];identity=entries[0]['payload']['assignment']['task_id']
@@ -95,15 +100,15 @@ class PilotStore(CompanyWorkStore):
         return bundle
 
     def append(self,task_id,kind,body,expected_head):
-        if kind not in ('observation','correction','calculation','pause','resume','request_intent','request_reconciled','denial','subject_added','human_review'):raise ValueError('Unsupported research action')
+        if kind not in ('observation','correction','calculation','pause','resume','request_intent','request_reconciled','denial','subject_added','human_review','subject_selection'):raise ValueError('Unsupported research action')
         with self._db() as db:
             db.execute('BEGIN IMMEDIATE');bundle=self._load(db,task_id);record=bundle['record'];entries=record['entries'];a=entries[0]['payload']['assignment']
             if bundle['checkpoint']['head_hash']!=expected_head:raise ValueError('Assignment changed; review current evidence')
             if len(canonical(body))>250000:raise ValueError('Research event payload too large')
             if len(entries)>=300:raise ValueError('Assignment event allowance exhausted')
-            if time.time()>=a['limits']['expires_at']:raise ValueError('Assignment expired')
+            if time.time()>=a['limits']['expires_at'] and kind not in ('human_review','denial','request_reconciled'):raise ValueError('Assignment expired; no new work. Retained recovery, refusal and qualified export review remain available')
             paused=next((e['payload']['kind']=='pause' for e in reversed(entries) if e['payload']['kind'] in ('pause','resume')),False)
-            if paused and kind not in ('resume','denial','request_reconciled','human_review'):raise ValueError('Assignment paused; no new work')
+            if paused and kind not in ('resume','denial','request_reconciled','human_review','subject_selection'):raise ValueError('Assignment paused; no new work')
             if kind=='observation':
                 from verity_core.trust.research_finance import validate_observation
                 body=validate_observation(body)
@@ -126,6 +131,12 @@ class PilotStore(CompanyWorkStore):
                 if any(replacement[k]!=originals[0][k] for k in ('id','subject_id','category','currency','territory','period')):raise ValueError('Correction must preserve financial identity')
                 from urllib.parse import urlsplit
                 if urlsplit(replacement['source']['url']).hostname not in a['source_hosts']:raise ValueError('Correction source outside assignment')
+            elif kind=='subject_selection':
+                if not isinstance(body,dict) or set(body)!={'subject_id','tier','reason'}:raise ValueError('Exact subject selection fields required')
+                subjects={s['id'] for s in a['subjects']}|{e['payload']['body']['id'] for e in entries if e['payload']['kind']=='subject_added'}
+                if body['subject_id'] not in subjects:raise ValueError('Selection subject outside assignment')
+                if body['tier'] not in ('provisional','core','secondary','exclude'):raise ValueError('Supported planning selection required')
+                text(body['reason'],1000)
             elif kind=='subject_added':
                 if set(body)!={'id','title','rationale'}:raise ValueError('Subject fields required')
                 label(body['id']);text(body['title'],200);text(body['rationale'],1000)

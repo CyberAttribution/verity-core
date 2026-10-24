@@ -251,3 +251,44 @@ def test_latest_scenarios_precede_collapsed_history_without_mutation(setup,tmp_p
     assert before['record']['entries'][-1]['payload']['body']['input_head'] in response.text
     assert before['record']['entries'][-2]['payload']['body']['input_head'] in older[0].text
     assert db.get_assignment('pilot-1')==before and calls==[]
+
+
+def test_subject_selection_is_planning_not_approval_and_retains_history(setup,tmp_path):
+    from swarmtracker_node_ui.research_pilot import subject_selections
+    from swarmtracker_node_ui import decision_routes
+    cfg,j,calls,client,form=setup;db=PilotStore(j.path);b=db.create_assignment(assignment(cfg,context(tmp_path)))
+    assert subject_selections(b['record']['entries'])=={}
+    assert 'Planning selection: provisional' in client.get('/company-work/pilot/pilot-1/report').text
+    b=append(db,b,'pause',dict(reason='No inference during selection review'))
+    f=dict(operator_token=decision_routes.TOKEN,expected_head=b['checkpoint']['head_hash'],action='subject_selection',subject_id='film1',tier='core',reason='Synthetic operator planning fixture; not Kevin approval')
+    assert client.post('/company-work/pilot/pilot-1/action',data=dict(f,approval='true')).status_code==409
+    assert client.post('/company-work/pilot/pilot-1/action',data=dict(f,subject_id='unknown')).status_code==409
+    assert client.post('/company-work/pilot/pilot-1/action',data=dict(f,reason=' ')).status_code==409
+    assert client.post('/company-work/pilot/pilot-1/action',data=f,follow_redirects=False).status_code==303
+    b=db.get_assignment('pilot-1');assert subject_selections(b['record']['entries'])['film1']['tier']=='core'
+    assert client.post('/company-work/pilot/pilot-1/action',data=f).status_code==409
+    assert client.get('/company-work/pilot/pilot-1/export/bundle.json').status_code==409
+    b=append(db,b,'subject_selection',dict(subject_id='film1',tier='provisional',reason='Return to unresolved planning'))
+    restored=PilotStore(j.path).get_assignment('pilot-1');assert subject_selections(restored['record']['entries'])['film1']['tier']=='provisional'
+    assert any(e['payload']['kind']=='subject_selection' and e['payload']['body']['tier']=='core' for e in restored['record']['entries'])
+    assert restored['record']['entries'][0]['payload']['assignment']==b['record']['entries'][0]['payload']['assignment'] and calls==[]
+
+
+def test_expiry_preserves_retained_recovery_and_qualified_export_not_new_work(setup,tmp_path,monkeypatch):
+    from swarmtracker_node_ui import research_pilot,decision_routes
+    cfg,j,calls,client,form=setup;c=context(tmp_path);db=PilotStore(j.path);b=db.create_assignment(assignment(cfg,c));expires=b['record']['entries'][0]['payload']['assignment']['limits']['expires_at']
+    reconcile=db.reconcile
+    def interrupt(*args,**kwargs):raise RuntimeError('Fixture after completed inference, before reconcile')
+    monkeypatch.setattr(db,'reconcile',interrupt)
+    with pytest.raises(RuntimeError):db.analyze('pilot-1',j.runs,c,b['checkpoint']['head_hash'])
+    assert len(calls)==1
+    monkeypatch.setattr(db,'reconcile',reconcile);monkeypatch.setattr(research_pilot.time,'time',lambda:expires+1)
+    b=db.reconcile('pilot-1',j.runs);assert len(calls)==1
+    with pytest.raises(ValueError,match='expired'):append(db,b,'observation',observation())
+    with pytest.raises(ValueError,match='expired'):append(db,b,'resume',dict(reason='No expiry extension'))
+    with pytest.raises(ValueError,match='expired'):append(db,b,'subject_selection',dict(subject_id='film1',tier='core',reason='Too late for planning changes'))
+    b=append(db,b,'denial',dict(reason='Expired assignment refuses new work'))
+    f=dict(operator_token=decision_routes.TOKEN,expected_head=b['checkpoint']['head_hash'],action='human_review',reason='Qualified retrospective private export; expiry grants no new authority')
+    assert client.post('/company-work/pilot/pilot-1/action',data=f,follow_redirects=False).status_code==303
+    b=db.get_assignment('pilot-1');assert verify(client.get('/company-work/pilot/pilot-1/export/bundle.json').json(),b['checkpoint'])
+    assert len(calls)==1

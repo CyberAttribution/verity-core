@@ -5,7 +5,7 @@ import time
 from fastapi import Request,HTTPException
 from fastapi.responses import RedirectResponse,JSONResponse,HTMLResponse
 from . import company_routes,customer_routes,context_routes,decision_routes,store,workbench_routes
-from .research_pilot import PilotStore,digest
+from .research_pilot import PilotStore,digest,subject_selections
 from verity_core.trust.research_finance import effective_observations
 
 
@@ -59,7 +59,7 @@ def install(app,render,base_ctx):
                 matches=[o for o in observations if o['id']==selected]
                 if len(matches)!=1:raise ValueError('Unknown or ambiguous observation; no correction prefilled')
                 correction=matches[0]
-            ctx=base_ctx(request,'company_work');ctx.update(bundle=b,assignment=a,observations=observations,correction=correction,operator_token=decision_routes.TOKEN,subjects=a['subjects']+[e['payload']['body'] for e in entries if e['payload']['kind']=='subject_added'])
+            ctx=base_ctx(request,'company_work');ctx.update(bundle=b,assignment=a,selections=subject_selections(entries),observations=observations,correction=correction,operator_token=decision_routes.TOKEN,subjects=a['subjects']+[e['payload']['body'] for e in entries if e['payload']['kind']=='subject_added'])
             response=render('research_pilot_detail.html',ctx);response.headers['Cache-Control']='no-store';return response
         except (ValueError,KeyError,TypeError,sqlite3.Error) as e:return refuse(str(e))
 
@@ -89,7 +89,7 @@ def install(app,render,base_ctx):
                 view=dict(e)
                 view['inputs_current']=len(intended)==1 and effective_observations(entries[:intended[0]])==effective_observations(entries)
                 request_views.append(view)
-            ctx=base_ctx(request,'company_work');ctx.update(assignment=a,bundle=b,rows=rows,summary=summary,source_origins=source_origins(effective_observations(entries)),disagreements=disagreements(effective_observations(entries)),export_ready=entries[-1]['payload']['kind']=='human_review',observations_used=sum(e['payload']['kind']=='observation' for e in entries),requests_used=sum(e['payload']['kind']=='request_intent' for e in entries),assignment_expired=time.time()>=a['limits']['expires_at'],calculations=calculations,calculations_current=current,corrections=[e for e in entries if e['payload']['kind']=='correction'],requests=request_views)
+            ctx=base_ctx(request,'company_work');ctx.update(assignment=a,bundle=b,selections=subject_selections(entries),rows=rows,summary=summary,source_origins=source_origins(effective_observations(entries)),disagreements=disagreements(effective_observations(entries)),export_ready=entries[-1]['payload']['kind']=='human_review',observations_used=sum(e['payload']['kind']=='observation' for e in entries),requests_used=sum(e['payload']['kind']=='request_intent' for e in entries),assignment_expired=time.time()>=a['limits']['expires_at'],calculations=calculations,calculations_current=current,corrections=[e for e in entries if e['payload']['kind']=='correction'],requests=request_views)
             response=render('research_pilot_report.html',ctx);response.headers['Cache-Control']='no-store';return response
         except (ValueError,KeyError,TypeError,sqlite3.Error) as e:return refuse(str(e))
 
@@ -119,6 +119,9 @@ def install(app,render,base_ctx):
                         a={k:f[k] or None for k in ('exhibitor_share','distribution_fee','marketing_distribution','ancillary_producer_receipts')}
                         a.update(name=case+' / '+budget.strip(),production_budget=budget.strip(),theatrical_gross=f[case+'_gross'] or None,currency=f['currency'],basis=f['basis']);assumptions.append(a)
                 db.calculate(task_id,assumptions,head)
+            elif kind=='subject_selection':
+                if set(f)!={'operator_token','expected_head','action','subject_id','tier','reason'}:raise ValueError('Exact subject selection fields required')
+                db.append(task_id,kind,{k:f[k] for k in ('subject_id','tier','reason')},head)
             elif kind=='subject_added':
                 if set(f)!={'operator_token','expected_head','action','id','title','rationale'}:raise ValueError('Exact subject fields required')
                 db.append(task_id,kind,{k:f[k] for k in ('id','title','rationale')},head)

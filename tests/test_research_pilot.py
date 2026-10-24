@@ -125,3 +125,22 @@ def test_missing_ledger_recovery_does_not_adopt_other_request(setup,tmp_path):
     with pytest.raises(ValueError,match='no retained ledger entry'):db.reconcile('pilot-1',j.runs)
     with pytest.raises(ValueError,match='Unreconciled'):db.analyze('pilot-1',j.runs,c,b['checkpoint']['head_hash'])
     assert calls==[] and j.runs.recent()==[]
+
+
+def test_valid_rehashed_receipt_with_changed_actual_configuration_refused(setup,tmp_path):
+    from verity_core.trust import inference_receipt,record as trust,research_record
+    cfg,j,calls,client,form=setup;c=context(tmp_path);db=PilotStore(j.path);b=db.create_assignment(assignment(cfg,c));b=db.analyze('pilot-1',j.runs,c,b['checkpoint']['head_hash'])
+    entries=b['record']['entries'];body=copy.deepcopy(entries[-1]['payload']['body']);r=body['receipt'];p=copy.deepcopy(r['record']['entries'][0]['payload']);p['configuration']['connection_hash']='0'*64
+    record=trust.new_record(dict(kind='inference_receipt',identifier=p['run_id']));trust.append_entry(record,'note',payload=p);body['receipt']=dict(schema=r['schema'],record=record,checkpoint=research_record.checkpoint(record))
+    assert inference_receipt.verify(body['receipt'],body['receipt']['checkpoint'])
+    with pytest.raises(ValueError,match='Actual receipt configuration'):PilotStore._validate_reconciliation(entries[:-1],body)
+    assert len(calls)==1
+
+
+def test_readable_report_retains_cited_claims_and_marks_stale_calculations(setup,tmp_path):
+    cfg,j,calls,client,form=setup;db=PilotStore(j.path);b=db.create_assignment(assignment(cfg,context(tmp_path)));o=observation();b=append(db,b,'observation',o)
+    a=dict(name='base',production_budget='3000000',theatrical_gross='10000000',exhibitor_share='0.5',distribution_fee='0.25',marketing_distribution='2000000',ancillary_producer_receipts='0',currency='USD',basis='Synthetic explicit assumptions')
+    b=db.calculate('pilot-1',[a],b['checkpoint']['head_hash']);r=client.get('/company-work/pilot/pilot-1/report')
+    assert r.status_code==200 and r.headers['cache-control']=='no-store' and 'Fixture publisher' in r.text and 'https://example.com/film' in r.text and 'Comparable inputs match the current dataset' in r.text
+    b=append(db,b,'correction',dict(observation_id='o1',replacement=dict(o,value='6000000'),reason='Synthetic correction reason'))
+    r=client.get('/company-work/pilot/pilot-1/report');assert 'outdated relative to current observations' in r.text and 'Synthetic correction reason' in r.text and 'Historical results; inputs have changed' in r.text and calls==[]

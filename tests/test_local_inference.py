@@ -485,10 +485,10 @@ def test_context_capture_lock_spans_durable_run_reservation(tmp_path,monkeypatch
         context.withdraw("fixture-org",1,proposal["sha256"],actor="fixture",reason="Concurrent withdrawal")
         with sqlite3.connect(runs.path) as con:reserved.append(con.execute("SELECT task_id FROM runs").fetchall())
         done.set()
-    def effective(*args):
+    def effective(*args, **kwargs):
         if first[0]:
             first[0]=False;start.set();assert not done.wait(.05)
-        return original(*args)
+        return original(*args, **kwargs)
     monkeypatch.setattr(config,"effective",effective)
     def dispatch(cfg,*_):
         assert done.wait(3)  # Context lock released before inference, not held across model call.

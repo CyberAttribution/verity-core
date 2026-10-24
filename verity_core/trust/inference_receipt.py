@@ -52,14 +52,18 @@ def validate(payload):
     return payload
 
 
-def export(run):
+def configuration_snapshot(configuration):
     metadata={'agent_id','agent_version','agent_hash','connection_id','connection_version','connection_hash',
               'model','model_revision','provider','instructions_sha256','allowed_tools','external_sharing',
               'resource_id','resource_version','resource_hash','executor_id','machine_id','machine_version','machine_hash',
               'adapter_kind','runtime_version','service_identity','identity_status','daily_request_limit',
               'session_request_limit','require_fresh_connection_observation','transport_summary','fallback_id','fallback_version',
               'fallback_model','fallback_revision','provenance','primary_connection_id','selected_connection_id','selection_reason','routing_enabled'}
-    cfg={k:copy.deepcopy(v) for k,v in run['configuration'].items() if k in metadata}
+    return {k:copy.deepcopy(v) for k,v in configuration.items() if k in metadata}
+
+
+def export(run):
+    cfg=configuration_snapshot(run['configuration'])
     payload={k:copy.deepcopy(run[k]) for k in ('task_id','agent_id','resource_id','purpose','session_id','state','decision','reason','model','model_revision','prompt_sha256','result')}
     payload.update(schema=SCHEMA,run_id=run['id'],configuration=cfg,requested_configuration_sha256=run.get('requested_configuration_sha256'),limitations=LIMITATIONS)
     validate(payload)

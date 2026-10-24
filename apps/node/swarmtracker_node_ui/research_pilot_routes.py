@@ -58,6 +58,20 @@ def install(app,render,base_ctx):
             response=render('research_pilot_detail.html',ctx);response.headers['Cache-Control']='no-store';return response
         except (ValueError,KeyError,TypeError,sqlite3.Error) as e:return refuse(str(e))
 
+    @app.get('/company-work/pilot/{task_id}/report')
+    def report(request:Request,task_id:str):
+        company_routes.local_peer(request)
+        try:
+            from verity_core.trust.research_finance import comparisons
+            b=database().get_assignment(task_id);entries=b['record']['entries'];a=entries[0]['payload']['assignment']
+            subjects=a['subjects']+[e['payload']['body'] for e in entries if e['payload']['kind']=='subject_added']
+            rows=comparisons(effective_observations(entries),subjects)
+            calculations=[e for e in entries if e['payload']['kind']=='calculation']
+            current=bool(calculations and calculations[-1]['payload']['body']['comparables']==rows)
+            ctx=base_ctx(request,'company_work');ctx.update(assignment=a,bundle=b,rows=rows,calculations=calculations,calculations_current=current,corrections=[e for e in entries if e['payload']['kind']=='correction'],requests=[e for e in entries if e['payload']['kind']=='request_reconciled'])
+            response=render('research_pilot_report.html',ctx);response.headers['Cache-Control']='no-store';return response
+        except (ValueError,KeyError,TypeError,sqlite3.Error) as e:return refuse(str(e))
+
     @app.post('/company-work/pilot/{task_id}/action')
     async def action(request:Request,task_id:str):
         company_routes.local_peer(request);f=await decision_routes.operator_form(request,max_fields=30)

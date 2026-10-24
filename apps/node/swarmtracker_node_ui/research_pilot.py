@@ -226,6 +226,8 @@ class PilotStore(CompanyWorkStore):
         i=intents[0];r=body['receipt']
         if not inference_receipt.verify(r,r['checkpoint']):raise ValueError('Request receipt invalid')
         p=r['record']['entries'][0]['payload']
+        assignment=entries[0]['payload']['assignment']
+        if p['configuration']!=inference_receipt.configuration_snapshot(assignment['configuration']):raise ValueError('Actual receipt configuration differs from reviewed assignment')
         if p['run_id']!=i['request_id'] or p['state']!=body['state'] or body['state'] not in ('completed','denied','failed') or any(p[k]!=i[k] for k in ('task_id','agent_id','resource_id','session_id','purpose')):raise ValueError('Receipt identity differs')
         from verity_core.trust import context_analysis
         context=body['context']

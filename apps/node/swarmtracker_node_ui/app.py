@@ -2405,6 +2405,9 @@ setup_routes.install(app, render, base_ctx)
 from . import customer_routes
 customer_routes.install(app, render, base_ctx)
 
+from . import research_pilot_routes
+research_pilot_routes.install(app, render, base_ctx)
+
 from . import company_routes
 company_routes.install(app, render, base_ctx)
 

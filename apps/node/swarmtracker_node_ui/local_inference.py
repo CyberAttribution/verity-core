@@ -74,7 +74,8 @@ class LocalInference:
 
     def run(self, *, agent_id, task_id, resource_id, purpose, prompt,
             requested_model="", requested_connection_id="", session_id="", dispatch=None,
-            context_profile_id="", context_store=None, expected_configuration_sha256="", request_id=None):
+            context_profile_id="", context_store=None, expected_configuration_sha256="", request_id=None,
+            expected_context_identity=None):
         if request_id is not None:
             if str(uuid.UUID(request_id)) != request_id:
                 raise ValueError("Invalid request identity")
@@ -99,6 +100,9 @@ class LocalInference:
         guard = context_store.capture_guard(context_profile_id) if context_profile_id else nullcontext(None)
         specimen = prompt
         with guard as capture:
+            if expected_context_identity is not None:
+                if capture is None or {k:capture['snapshot'][k] for k in ('profile_id','version','generation','sha256')} != expected_context_identity:
+                    raise ValueError('Approved context changed since assignment; review a new assignment before dispatch')
             if capture is not None:
                 prompt = context_analysis.compose_prompt(capture, specimen)
             cfg = self.configuration.effective(agent_id, resource_id)

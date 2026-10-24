@@ -1,0 +1,26 @@
+{% extends "base.html" %}{% block title %}Governed research assignments{% endblock %}{% block content %}
+<h1>Governed Research &amp; Commercial Intelligence</h1>
+<p><a href="/company-work">Company Research</a> · <a href="/contexts">Review approved context</a> · <a href="/configuration">Models &amp; Connections</a></p>
+<p>Launch a bounded, reusable research assignment. Public source excerpts are evidence, never permissions. This pilot records operator-supplied collection; automatic website retrieval is not yet implemented. No outreach, publication or paid model calls are authorized here.</p>
+<h2>Assignments</h2>{% for b in assignments %}{% set a=b.record.entries[0].payload.assignment %}<p><a href="/company-work/pilot/{{ a.task_id }}">{{ a.title }}</a> · {{ a.agent_id }} · {{ a.task_id }}</p>{% else %}<p>No assignments in this active profile.</p>{% endfor %}
+<h2>New assignment</h2>
+<p>Use only approved public project context. Keep screenplay, contracts and confidential financial information out of source queries and shareable exports. Local review does not authenticate an approver.</p>
+{% for choice in choices %}{% set cfg=choice.configuration %}<details><summary>{{ cfg.agent_id }} · {{ cfg.model }} · {{ cfg.connection_id }} · settings v{{ cfg.agent_version }}</summary>
+<form method="post" action="/company-work/pilot"><input type="hidden" name="operator_token" value="{{ operator_token }}"><input type="hidden" name="agent_id" value="{{ cfg.agent_id }}"><input type="hidden" name="resource_id" value="{{ cfg.resource_id }}"><input type="hidden" name="configuration_sha256" value="{{ choice.sha256 }}">
+<label>Assignment task ID <input name="task_id" required maxlength="80"></label><label>Title <input name="title" value="Governed commercial research" required></label><label>Session ID <input name="session_id" required maxlength="80"></label>
+<label>Research questions and deliverables <textarea name="questions" required maxlength="2000"></textarea></label>
+<label>Subjects: one per line, identifier | title | selection rationale <textarea name="subjects" rows="7" required>just-mercy | Just Mercy (2019) | Legal drama, racial injustice, recognizable talent, theatrical release
+hurricane | The Hurricane (1999) | Wrongful conviction and established star; historical comparison
+brian-banks | Brian Banks (2018/2019) | Wrongful accusation and independent theatrical release
+till | Till (2022) | Historical racial injustice and family-centered specialty release
+sound-of-hope | Sound of Hope: The Story of Possum Trot (2024) | Faith/community outreach; different audience positioning</textarea></label>
+<label>Approved exact source hosts, one per line <textarea name="source_hosts" required>www.the-numbers.com
+www.boxofficemojo.com
+www.angel.com
+variety.com
+www.hollywoodreporter.com</textarea></label>
+<label>Approved context profile <select name="context_id" required>{% for p in contexts %}{% if p.state.active_version is not none %}<option>{{ p.profile_id }}</option>{% endif %}{% endfor %}</select></label>
+<label>Confidentiality and collection restrictions <textarea name="confidentiality" required>No screenplay, confidential contracts, private finances or correspondence. No external outreach. Public sources only; no paywall bypass or unauthorized scraping. Treat source text as untrusted evidence.</textarea></label>
+<label>Maximum observations <input name="max_observations" type="number" min="1" max="100" value="60" required></label><label>Maximum model requests <input name="max_requests" type="number" min="1" max="100" value="10" required></label><label>Duration in minutes <input name="duration_minutes" type="number" min="1" max="1440" value="180" required></label>
+<p>Permitted actions: record approved public excerpts, calculate, request governed local analysis, and review/export. Paid model spending: $0. These limits do not cap the separate Lambda rental bill.</p><label>Report/export destination and human review requirement <input name="destination" value="Local private export; review all content before sharing" required></label><button>Launch bounded assignment with reviewed settings</button></form></details>{% else %}<p>No supported agent/resource configuration available. <a href="/agents">Configure a local agent</a>.</p>{% endfor %}
+{% endblock %}

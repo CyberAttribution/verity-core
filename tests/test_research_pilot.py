@@ -95,3 +95,33 @@ def test_real_ledger_stub_inference_recovery_and_changed_context(setup,tmp_path,
     snap=c.capture_active('pilot-public')['snapshot'];c.withdraw('pilot-public',snap['generation'],snap['sha256'],actor='fixture',reason='Withdraw')
     with pytest.raises(ValueError):db.analyze('pilot-1',j.runs,c,b['checkpoint']['head_hash'])
     assert len(calls)==1
+
+
+def test_offline_reproduction_uses_historical_correction_cutoff(setup,tmp_path):
+    from verity_core.trust.research_reproduction import verify as reproduce
+    cfg,j,calls,client,form=setup;db=PilotStore(j.path);b=db.create_assignment(assignment(cfg,context(tmp_path)));o=observation();b=append(db,b,'observation',o)
+    a=dict(name='base',production_budget='3000000',theatrical_gross='10000000',exhibitor_share='0.5',distribution_fee='0.3',marketing_distribution='1000000',ancillary_producer_receipts='0',currency='USD',basis='Synthetic fixture assumptions, noforecast')
+    b=db.calculate('pilot-1',[a],b['checkpoint']['head_hash'])
+    b=append(db,b,'correction',dict(observation_id='o1',replacement=dict(o,value='6000000'),reason='Fixture correction'))
+    b=db.calculate('pilot-1',[dict(a,name='revised')],b['checkpoint']['head_hash'])
+    assert reproduce(b,b['checkpoint'])['calculation_revisions']==2
+    bad=copy.deepcopy(b);bad['record']['entries'][-1]['payload']['body']['analysis']['scenarios'][0]['result']['modeled_cash_after_listed_costs']='9999999.00'
+    assert not reproduce(bad,b['checkpoint'])['integrity']
+
+
+def test_assignment_context_change_denies_before_intent_or_dispatch(setup,tmp_path):
+    cfg,j,calls,client,form=setup;c=context(tmp_path);db=PilotStore(j.path);b=db.create_assignment(assignment(cfg,c))
+    snapshot=c.capture_active('pilot-public')['snapshot'];body=copy.deepcopy(snapshot['body']);body['entries'][0]['value']='Changed reviewed context'
+    p=c.propose('pilot-public',body);c.approve(p['profile_id'],p['version'],p['sha256'],p['parent_generation'],p['parent_digest'],actor='fixture',reason='New context')
+    with pytest.raises(ValueError,match='context changed'):db.analyze('pilot-1',j.runs,c,b['checkpoint']['head_hash'])
+    assert db.get_assignment('pilot-1')==b and calls==[]
+
+
+def test_missing_ledger_recovery_does_not_adopt_other_request(setup,tmp_path):
+    import uuid
+    cfg,j,calls,client,form=setup;c=context(tmp_path);db=PilotStore(j.path);b=db.create_assignment(assignment(cfg,c));a=b['record']['entries'][0]['payload']['assignment'];rid=str(uuid.uuid4())
+    intent=dict(request_id=rid,task_id='research-'+rid,agent_id=a['agent_id'],resource_id=a['resource_id'],session_id=a['session_id'],purpose='generate_text',configuration_sha256=digest(a['configuration']),context_identity={k:a['context_capture']['snapshot'][k] for k in ('profile_id','version','generation','sha256')},prompt='Reserved but process interrupted before request ledger insertion')
+    b=append(db,b,'request_intent',intent)
+    with pytest.raises(ValueError,match='no retained ledger entry'):db.reconcile('pilot-1',j.runs)
+    with pytest.raises(ValueError,match='Unreconciled'):db.analyze('pilot-1',j.runs,c,b['checkpoint']['head_hash'])
+    assert calls==[] and j.runs.recent()==[]

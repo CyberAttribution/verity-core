@@ -27,7 +27,7 @@ def install(app,render,base_ctx):
                     selected=cfg.resolve_pre_dispatch(agent['id'],resource,'generate_text');choices.append(dict(configuration=selected,sha256=digest(selected)))
                 except (ValueError,KeyError):pass
         ctx.update(assignments=database().assignments(),choices=choices,contexts=context_routes.database().profiles(),operator_token=decision_routes.TOKEN)
-        return render('research_pilot.html',ctx)
+        response=render('research_pilot.html',ctx);response.headers['Cache-Control']='no-store';return response
 
     @app.post('/company-work/pilot')
     async def create(request:Request):
@@ -55,7 +55,7 @@ def install(app,render,base_ctx):
         try:
             b=database().get_assignment(task_id);a=b['record']['entries'][0]['payload']['assignment'];entries=b['record']['entries']
             ctx=base_ctx(request,'company_work');ctx.update(bundle=b,assignment=a,observations=effective_observations(entries),operator_token=decision_routes.TOKEN,subjects=a['subjects']+[e['payload']['body'] for e in entries if e['payload']['kind']=='subject_added'])
-            return render('research_pilot_detail.html',ctx)
+            response=render('research_pilot_detail.html',ctx);response.headers['Cache-Control']='no-store';return response
         except (ValueError,KeyError,TypeError,sqlite3.Error) as e:return refuse(str(e))
 
     @app.post('/company-work/pilot/{task_id}/action')
@@ -88,10 +88,10 @@ def install(app,render,base_ctx):
                 if set(f)!={'operator_token','expected_head','action','id','title','rationale'}:raise ValueError('Exact subject fields required')
                 db.append(task_id,kind,{k:f[k] for k in ('id','title','rationale')},head)
             elif kind in ('analyze','recover'):
-                if set(f)!={'operator_token','expected_head','action'}:raise ValueError('Exact request fields required')
+                if set(f)!={'operator_token','expected_head','action','subject_id'}:raise ValueError('Exact request fields required')
                 if db.get_assignment(task_id)['checkpoint']['head_hash']!=head:raise ValueError('Assignment changed; reload')
-                if kind=='analyze':db.analyze(task_id,workbench_routes.runs(),context_routes.database(),head)
-                else:db.reconcile(task_id,workbench_routes.runs())
+                if kind=='analyze':db.analyze(task_id,workbench_routes.runs(),context_routes.database(),head,f['subject_id'])
+                else:db.reconcile(task_id,workbench_routes.runs(),expected_head=head)
             else:
                 # Record harmless boundary refusal; never execute submitted action text.
                 db.append(task_id,'denial',dict(reason='Out-of-scope requested action refused: '+kind[:100]),head)

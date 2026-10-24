@@ -102,7 +102,7 @@ class CompanyWorkStore:
         db.row_factory=sqlite3.Row
         return db
 
-    def create(self, work_id, source_url, source_claim, run, *, article=None, request_bundle=None):
+    def create(self, work_id, source_url, source_claim, run, *, article=None, request_bundle=None, intake_identity=None):
         label(work_id)
         if not isinstance(source_url,str) or len(source_url)>1000:
             raise ValueError("HTTPS source URL required")
@@ -141,6 +141,8 @@ class CompanyWorkStore:
             record["request_id"] = run["id"]
             record["configuration"] = cfg
             record["request_bundle"] = request_bundle
+            if intake_identity is not None:
+                record["intake_identity"] = intake_identity
             record["proposal_binding"] = research_record.binding(record)
             bundle = research_record.propose(record)
         with self._db() as db:

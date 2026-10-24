@@ -74,7 +74,10 @@ class LocalInference:
 
     def run(self, *, agent_id, task_id, resource_id, purpose, prompt,
             requested_model="", requested_connection_id="", session_id="", dispatch=None,
-            context_profile_id="", context_store=None, expected_configuration_sha256=""):
+            context_profile_id="", context_store=None, expected_configuration_sha256="", request_id=None):
+        if request_id is not None:
+            if str(uuid.UUID(request_id)) != request_id:
+                raise ValueError("Invalid request identity")
         label(agent_id); label(task_id); label(resource_id)
         if session_id:
             label(session_id)
@@ -130,7 +133,7 @@ class LocalInference:
                 reason = "Only the local OpenClaw adapter is supported"
             elif not cfg["endpoint"].startswith(("http://127.0.0.1:", "http://[::1]:", "http://localhost:")):
                 reason = "OpenClaw endpoint must be loopback"
-            rid = str(uuid.uuid4())
+            rid = request_id or str(uuid.uuid4())
             record = dict(id=rid, task_id=task_id, at=time.time(), agent_id=agent_id,
                           purpose=purpose, resource_id=resource_id, session_id=session_id or None, decision="denied" if reason else "allowed",
                           state="denied" if reason else "reserved", reason=reason,

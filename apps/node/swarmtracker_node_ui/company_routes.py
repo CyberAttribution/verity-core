@@ -105,7 +105,8 @@ def install(app,render,base_ctx):
         from .research_journey import ResearchJourney
         from . import workbench_routes
         try:ResearchJourney(store.DB_PATH.with_name("company-work.db"),workbench_routes.runs()).recover(work_id)
-        except (KeyError,ValueError,sqlite3.Error):raise HTTPException(409,"Recovery not confirmed; inspect retained request. No inference was dispatched.") from None
+        except (KeyError,ValueError,TypeError,sqlite3.Error):
+            return decision_refusal(request,"Recovery refused: the retained request is missing, unfinished, historical, or does not match this intake and its intended agent/configuration. No inference was dispatched and no decision was recorded.")
         return RedirectResponse("/company-work",status_code=303)
 
     @app.get("/company-work/{work_id}/record/{artifact}.json")

@@ -6,6 +6,7 @@ not source truth or origin. Same-user filesystem bypass remains open.
 """
 import copy
 import hashlib
+import json
 import re
 from . import record as trust, inference_receipt
 
@@ -27,7 +28,8 @@ def digest(value):
 
 
 def proposal(work):
-    return {k:copy.deepcopy(work[k]) for k in ('id','article','source_claim','agent_interpretation','configuration','request_id','request_bundle')}
+    keys=('id','article','source_claim','agent_interpretation','configuration','request_id','request_bundle')
+    return {k:copy.deepcopy(work[k]) for k in keys + (('intake_identity',) if 'intake_identity' in work else ())}
 
 
 def binding(work):
@@ -46,6 +48,19 @@ def validate(p):
     if not inference_receipt.verify(receipt,receipt['checkpoint']):raise ValueError('Request evidence invalid')
     run=receipt['record']['entries'][0]['payload']
     interp=p['agent_interpretation'];cfg=p['configuration']
+    if 'intake_identity' in p:
+        identity=p['intake_identity']
+        expected=dict(request_id=run['run_id'],task_id=run['task_id'],agent_id=run['agent_id'],
+            resource_id=run['resource_id'],session_id=run['session_id'],purpose=run['purpose'],
+            expected_configuration_sha256=run['requested_configuration_sha256'],
+            requested_connection_id=identity.get('requested_connection_id',''),context_ref=None)
+        if identity!=expected or p['id']!=run['task_id']:
+            raise ValueError('Research intake identity binding differs')
+        if hashlib.sha256(json.dumps(cfg,sort_keys=True,separators=(',', ':'),allow_nan=False).encode()).hexdigest()!=identity['expected_configuration_sha256']:
+            raise ValueError('Research intake configuration binding differs')
+        if identity['requested_connection_id'] and identity['requested_connection_id']!=cfg.get('connection_id'):
+            raise ValueError('Research requested connection binding differs')
+
     if run['state']!='completed' or run['run_id']!=p['request_id'] or run['task_id']!=interp['task_id']:raise ValueError('Completed request binding required')
     if run['result']['response']!=interp['response'] or run['result']['response_sha256']!=interp['response_sha256']:raise ValueError('Output differs from routed request')
     if run['model']!=interp['model'] or run['agent_id']!=interp['agent_id']:raise ValueError('Agent/model binding mismatch')

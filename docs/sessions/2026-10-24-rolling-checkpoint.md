@@ -75,3 +75,10 @@ Research remains development-assisted: original model drafts and errors are reta
 
 ### Model provenance packet (20:08 UTC)
 Actual reported-claim packets now retain recorded dependence status/origin/basis rather than status alone. Seventeen focused pilot checks pass: the dispatch capture contains both shared-origin references/bases, missing figures remain missing, historical entries are unchanged, and a provenance-heavy oversized packet refuses before intent reservation or dispatch. GLM40 completed source review with no supported defect; the coordinator ran the tests. This is context preservation, not proof of correct source-independence reasoning. Retained prior model failures remain evaluation cases.
+
+### Native prefill and scenario readability (20:13 UTC)
+Actual ce30077 native control selected hurricane-budget and prefilled the retained amount38000000 and exact financial period. Screenshot saved privately; no new correction was submitted in this check. The prior Brian Banks correction/recalculation remains preserved. Dock verification still pending; Finder icon acceptance passed.
+
+Latest scenario calculations now appear first, with earlier revisions in native HTML disclosure controls. All prior assumptions, input hashes, missing-result explanations and limitations remain rendered. Eighteen focused pilot tests pass, including zero-versus-missing presentation, collapsed historical rows and unchanged durable records. Broader native acceptance and full final regression remain pending.
+
+The coordinator-edited preliminary HTML research report and source/model binding manifest are private development-assisted outputs, not imported inference receipts. Original drafts and a new Till source-independence failure are preserved. Two secondary publishers showing budget claims do not establish independent origins; same-page20M/33M conflict remains unverified. Existing assignment source-host authority does not cover those new research sources; no silent import or authority expansion occurred.

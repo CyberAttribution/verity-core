@@ -235,3 +235,19 @@ def test_provenance_packet_limit_refuses_before_reservation(setup,tmp_path):
     before=copy.deepcopy(b)
     with pytest.raises(ValueError,match='exceeds supported request size'):db.analyze('pilot-1',j.runs,c,b['checkpoint']['head_hash'])
     assert db.get_assignment('pilot-1')==before and calls==[] and j.runs.recent()==[]
+
+
+def test_latest_scenarios_precede_collapsed_history_without_mutation(setup,tmp_path):
+    from bs4 import BeautifulSoup
+    cfg,j,calls,client,form=setup;db=PilotStore(j.path);b=db.create_assignment(assignment(cfg,context(tmp_path)))
+    assert 'No calculations recorded.' in client.get('/company-work/pilot/pilot-1/report').text
+    a=dict(name='low',production_budget='3000000',theatrical_gross='5000000',exhibitor_share='0.5',distribution_fee='0.25',marketing_distribution='0',ancillary_producer_receipts=None,currency='USD',basis='Synthetic explicit assumptions')
+    b=db.calculate('pilot-1',[a],b['checkpoint']['head_hash']);b=db.calculate('pilot-1',[dict(a,name='revised',ancillary_producer_receipts='0')],b['checkpoint']['head_hash']);before=copy.deepcopy(b)
+    response=client.get('/company-work/pilot/pilot-1/report');soup=BeautifulSoup(response.text,'html.parser');older=soup.select('details.historical-calculation')
+    assert len(older)==1 and not older[0].has_attr('open')
+    assert 'Unavailable: missing ancillary_producer_receipts' in older[0].text
+    assert 'marketing 0' in older[0].text and 'Earlier revision retained' in older[0].text
+    assert response.text.index('Latest scenario matrix')<response.text.index('Earlier calculation revision')
+    assert before['record']['entries'][-1]['payload']['body']['input_head'] in response.text
+    assert before['record']['entries'][-2]['payload']['body']['input_head'] in older[0].text
+    assert db.get_assignment('pilot-1')==before and calls==[]

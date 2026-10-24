@@ -160,3 +160,28 @@ def test_readable_report_marks_model_interpretation_historical_after_new_evidenc
     b=append(db,b,'observation',observation())
     page=client.get('/company-work/pilot/pilot-1/report').text
     assert 'Historical interpretation: newer evidence or corrections differ' in page and len(calls)==1
+
+
+def test_correction_prefill_effective_escaped_readonly_and_stale(setup,tmp_path):
+    from bs4 import BeautifulSoup
+    cfg,j,calls,client,form=setup;db=PilotStore(j.path);b=db.create_assignment(assignment(cfg,context(tmp_path)))
+    o=observation();o['source']['publisher']='<script>unsafe</script>';b=append(db,b,'observation',o)
+    corrected=copy.deepcopy(o);corrected['value']='6000000';b=append(db,b,'correction',dict(observation_id='o1',replacement=corrected,reason='Prior correction'))
+    before=copy.deepcopy(b);r=client.get('/company-work/pilot/pilot-1?correct=o1')
+    assert r.status_code==200 and r.headers['cache-control']=='no-store'
+    assert '&lt;script&gt;unsafe&lt;/script&gt;' in r.text and '<script>unsafe</script>' not in r.text
+    soup=BeautifulSoup(r.text,'html.parser');f=soup.select_one('#evidence-form form');data={}
+    for el in f.select('input[name],textarea[name],select[name]'):
+        if el.name=='select':
+            option=el.select_one('option[selected]') or el.select_one('option');data[el['name']]=option.get('value',option.text)
+        else:data[el['name']]=el.get('value',el.text)
+    assert data['value']=='6000000' and data['action']=='correction' and data['period']==o['period']
+    assert data['publisher']==o['source']['publisher'] and data['collection']=='synthetic_fixture'
+    assert db.get_assignment('pilot-1')==before
+    assert client.get('/company-work/pilot/pilot-1?correct=unknown').status_code==409
+    data.update(value='7000000',reason='Correction submitted from prefill')
+    assert client.post('/company-work/pilot/pilot-1/action',data=data,follow_redirects=False).status_code==303
+    after=db.get_assignment('pilot-1');assert after['record']['entries'][1]['payload']['body']==o
+    assert effective_observations(after['record']['entries'])[0]['value']=='7000000'
+    assert client.post('/company-work/pilot/pilot-1/action',data=data).status_code==409
+    assert db.get_assignment('pilot-1')==after and calls==[]

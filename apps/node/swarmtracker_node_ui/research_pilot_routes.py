@@ -54,7 +54,12 @@ def install(app,render,base_ctx):
         company_routes.local_peer(request)
         try:
             b=database().get_assignment(task_id);a=b['record']['entries'][0]['payload']['assignment'];entries=b['record']['entries']
-            ctx=base_ctx(request,'company_work');ctx.update(bundle=b,assignment=a,observations=effective_observations(entries),operator_token=decision_routes.TOKEN,subjects=a['subjects']+[e['payload']['body'] for e in entries if e['payload']['kind']=='subject_added'])
+            observations=effective_observations(entries);selected=request.query_params.get('correct');correction=None
+            if selected is not None:
+                matches=[o for o in observations if o['id']==selected]
+                if len(matches)!=1:raise ValueError('Unknown or ambiguous observation; no correction prefilled')
+                correction=matches[0]
+            ctx=base_ctx(request,'company_work');ctx.update(bundle=b,assignment=a,observations=observations,correction=correction,operator_token=decision_routes.TOKEN,subjects=a['subjects']+[e['payload']['body'] for e in entries if e['payload']['kind']=='subject_added'])
             response=render('research_pilot_detail.html',ctx);response.headers['Cache-Control']='no-store';return response
         except (ValueError,KeyError,TypeError,sqlite3.Error) as e:return refuse(str(e))
 

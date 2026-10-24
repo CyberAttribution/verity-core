@@ -55,6 +55,9 @@ async def main(root):
     restored=ra.Store(root/'report-actions.db',root/'output',cfg);assert restored.get(written['id'])==written
     bundle=ra.export(written['record']);anchor=ra.checkpoint(written['record']);assert ra.verify(bundle,anchor)
     (root/'report.bundle.json').write_text(json.dumps(bundle,indent=2));(root/'report.checkpoint.json').write_text(json.dumps(anchor,indent=2))
+    request_bundle=runs.request_export(run['id'])
+    (root/'request.bundle.json').write_text(json.dumps(request_bundle,indent=2))
+    (root/'request.checkpoint.json').write_text(json.dumps(request_bundle['checkpoint'],indent=2))
     summary=dict(state='real ADK disposable workflow passed',adk_version=importlib.metadata.version('google-adk'),request_id=run['id'],proposal_id=written['id'],model=run['model'],configuration=run['configuration'],response=run['result'],output_sha256=hashlib.sha256(data).hexdigest(),durable_requests=2,model_requests=1,broker_attempts=written['attempts'],exact_recovery=True,denied_request=denied['request_id'],restart=True,observed='Real ADK Runner/BaseAgent events and local Ollama response',mediated='Existing Verity LocalInference and fixed-target approval/attempt broker',containment_tested=False,limits='Same-user disposable process; direct DB/runtime/filesystem bypass remains possible. No protected OS boundary or general external exactly-once claim.',native='pending closeout',independent='pending another Mac')
     (root/'summary.json').write_text(json.dumps(summary,indent=2));print(json.dumps(summary,indent=2))
 

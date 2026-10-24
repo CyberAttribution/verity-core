@@ -342,6 +342,12 @@ def install(app,render,base_ctx):
         db=database();entry=db.latest("connection",identifier)
         if not entry:raise HTTPException(404,"Unknown connection")
         if db.connection_disabled(identifier):raise HTTPException(409,"Connection was disabled")
+        if entry['body'].get('transport'):
+            from .managed_ssh_tunnel import require_connection,TunnelError
+            try:require_connection(identifier,entry['digest'])
+            except (OSError,ValueError):
+                db.observe('connection',identifier,'unknown','Authenticated SSH transport unavailable; explicitly start this connection before model health checks',expected_digest=entry['digest'],expected_version=entry['version'])
+                raise HTTPException(409,'Authenticated transport unavailable. Start the SSH connection in Models & Connections, then recheck model health.') from None
         if entry["body"]["scope"]=="external":
             observed_state="unknown"
             detail="External endpoint was not contacted; per-job data-sharing authorization and protected credentials are required"

@@ -57,7 +57,7 @@ def export(run):
               'model','model_revision','provider','instructions_sha256','allowed_tools','external_sharing',
               'resource_id','resource_version','resource_hash','executor_id','machine_id','machine_version','machine_hash',
               'adapter_kind','runtime_version','service_identity','identity_status','daily_request_limit',
-              'session_request_limit','require_fresh_connection_observation','fallback_id','fallback_version',
+              'session_request_limit','require_fresh_connection_observation','transport_summary','fallback_id','fallback_version',
               'fallback_model','fallback_revision','provenance','primary_connection_id','selected_connection_id','selection_reason','routing_enabled'}
     cfg={k:copy.deepcopy(v) for k,v in run['configuration'].items() if k in metadata}
     payload={k:copy.deepcopy(run[k]) for k in ('task_id','agent_id','resource_id','purpose','session_id','state','decision','reason','model','model_revision','prompt_sha256','result')}

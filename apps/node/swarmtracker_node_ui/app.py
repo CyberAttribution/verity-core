@@ -2419,3 +2419,5 @@ environment_routes.install(app, render, base_ctx)
 
 from . import model_connection_routes
 model_connection_routes.install(app, render, base_ctx)
+from . import ssh_tunnel_routes
+ssh_tunnel_routes.install(app, render, base_ctx)

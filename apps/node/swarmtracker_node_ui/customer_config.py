@@ -82,7 +82,8 @@ class CustomerConfig:
         if kind not in {"machine","connection","agent","resource","link"} or not isinstance(body,dict):
             raise ValueError("Unsupported configuration")
         if kind=="connection":
-            if set(body)!={"provider","endpoint","model","revision","scope","credential_ref"}:
+            required={"provider","endpoint","model","revision","scope","credential_ref"}
+            if set(body) not in (required,required|{'transport'}):
                 raise ValueError("Invalid connection fields")
             for key in ("provider","model","scope"):_text(body[key],160)
             if body["scope"] not in {"local","external"}:raise ValueError("Invalid connection scope")
@@ -99,6 +100,10 @@ class CustomerConfig:
             # export credentials, or silently dispatch to external endpoints.
             if body["credential_ref"] not in ("none", "separately-managed"):
                 raise ValueError("Secrets cannot be entered in configuration")
+            if 'transport' in body:
+                from .managed_ssh_tunnel import validate_transport
+                if body['scope']!='local':raise ValueError('SSH forward must terminate on loopback')
+                validate_transport(body['transport'],body['endpoint'])
         elif kind=="agent":
             required={"connection_id","instructions","allowed_tools","resources","external_sharing","fallback_id"}
             if not required <= set(body) or set(body)-required-{"daily_request_limit","session_request_limit","adapter_kind","runtime_version","service_identity","require_fresh_connection_observation","permitted_connection_ids","routing_enabled"}:
@@ -182,6 +187,10 @@ class CustomerConfig:
                         raise ValueError("Declared adapter cannot be removed or changed; use a new agent ID")
             if kind == "connection" and db.execute("SELECT 1 FROM disabled_connections WHERE id=?", (identifier,)).fetchone():
                 raise ValueError("Disabled connection IDs cannot be reused")
+            if kind=='connection':
+                old=db.execute("SELECT body FROM versions WHERE kind='connection' AND id=? ORDER BY version DESC LIMIT 1",(identifier,)).fetchone()
+                if old and 'transport' in json.loads(old['body']) and 'transport' not in body:
+                    raise ValueError('Managed SSH transport cannot be silently removed; use a new direct connection ID')
             if kind == "link":
                 from verity_core.link_binding import validate_snapshot
                 endpoints=[]
@@ -328,6 +337,9 @@ class CustomerConfig:
                           identity_status="unverified; operator-declared",
                           runtime_version=agent["body"].get("runtime_version", ""),
                           service_identity=agent["body"].get("service_identity", ""))
+        if 'transport' in conn['body']:
+            t=conn['body']['transport']
+            result['transport_summary']={k:t[k] for k in ('kind','host','login','ssh_port','remote_port','local_port','known_hosts_sha256')}
         for key in ("daily_request_limit","session_request_limit","require_fresh_connection_observation","routing_enabled"):
             if key in agent["body"]:
                 result[key]=agent["body"][key]

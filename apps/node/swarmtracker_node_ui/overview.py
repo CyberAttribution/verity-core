@@ -16,6 +16,13 @@ def connection_rows(configuration, *, now=None):
         if observation and not 0<=now-observation['at']<=300:
             state='stale';detail='Observation is older than five minutes; current availability is unknown. Recheck this connection.'
         if configuration.connection_disabled(item['id']):state='disabled';detail='Connection disabled. Select another permitted connection.'
+        elif item['body'].get('transport'):
+            from .managed_ssh_tunnel import MANAGED
+            import subprocess
+            tunnel=MANAGED.get(item['id'])
+            try:authenticated=tunnel is not None and tunnel.healthy()
+            except (OSError,ValueError,subprocess.SubprocessError):authenticated=False
+            if not authenticated:state='unknown';detail='Authenticated SSH forward is not verified in this app process. Start/recheck this connection in Models & Connections; saved model health is insufficient.'
         hosts=[x['body']['from_id'] for x in items if x['kind']=='link' and x['body']['to_kind']=='connection' and x['body']['to_id']==item['id'] and x['body']['permission']=='hosts' and configuration.relationship(x)['binding_state']=='declared_current']
         machine=hosts[0]+' (current declaration; identity unverified)' if len(hosts)==1 else 'Machine unassigned or ambiguous; execution host unverified'
         rows.append(dict(id=item['id'],model=item['body']['model'],machine=machine,endpoint=item['body']['endpoint'],state=state,detail=detail,

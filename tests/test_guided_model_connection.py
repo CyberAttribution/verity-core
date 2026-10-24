@@ -13,7 +13,7 @@ def environment(tmp_path,monkeypatch):
 def test_guided_local_connection_continues_to_preselected_agent_without_readiness_claim(tmp_path,monkeypatch):
     client,cfg,form=environment(tmp_path,monkeypatch)
     cfg.save('resource','report',dict(description='Synthetic resource',provenance='operator-entered',status='unknown'))
-    assert 'Connect an existing local OpenClaw model' in client.get('/models/connect').text
+    assert 'Connect an existing local model' in client.get('/models/connect').text
     response=client.post('/models/connect',data=form,follow_redirects=False)
     assert response.status_code==303 and response.headers['location']=='/agents/add?connection_id=guided-model'
     page=client.get(response.headers['location']);assert page.status_code==200

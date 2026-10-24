@@ -66,7 +66,7 @@ def validate(manifest):
                   "resource_hash","provenance","machine_id","machine_version","machine_hash","executor_id"}
         expanded={"instructions","resources","fallback_model","fallback_revision"}
         adapter={"adapter_kind","identity_status","runtime_version","service_identity"}
-        if not isinstance(cfg,dict) or not required <= set(cfg) or set(cfg)-required-expanded-adapter-{"daily_request_limit","session_request_limit","routing_enabled","require_fresh_connection_observation"} or cfg["agent_id"]!=manifest["agent_id"] or cfg["model"]!=manifest["model"] or cfg["provider"]!=manifest["provider"] or cfg["resource_id"]!=TARGET or cfg["executor_id"]!="verity-report-broker":
+        if not isinstance(cfg,dict) or not required <= set(cfg) or set(cfg)-required-expanded-adapter-{"daily_request_limit","session_request_limit","routing_enabled","require_fresh_connection_observation","transport_summary"} or cfg["agent_id"]!=manifest["agent_id"] or cfg["model"]!=manifest["model"] or cfg["provider"]!=manifest["provider"] or cfg["resource_id"]!=TARGET or cfg["executor_id"]!="verity-report-broker":
             raise ValueError("Action configuration mismatch")
         if "require_fresh_connection_observation" in cfg and type(cfg["require_fresh_connection_observation"]) is not bool:
             raise ValueError("Invalid declared health requirement")

@@ -67,6 +67,7 @@ def base_ctx(request: Request, page: str) -> dict:
             "hardware": config.HARDWARE,
             "hardware_next": config.HARDWARE_NEXT,
             "runtime": "Ollama (direct local)" if config.RUNTIME_KIND == "ollama" else config.RUNTIME_LABEL,
+            "runtime_kind": config.RUNTIME_KIND,
             "openclaw_url": config.OPENCLAW_URL,
             "ollama_url": config.OLLAMA_URL,
             "ledger_path": str(config.LEDGER_PATH),

@@ -50,3 +50,26 @@ def test_native_overview_scope_branding_and_no_cache(setup,monkeypatch):
     for text in ('Verity by SwarmTracker','Overview','Application health','Selected workflow','Individual connection observations','Optional analysis runtime setup','not governed requests or company decisions','Organization context in this profile'):
         assert text in page.text
     assert 'Not connected yet' not in page.text and 'Node Dashboard' not in page.text
+
+
+def test_analyze_adapter_health_and_ollama_inventory_have_distinct_scope(setup,monkeypatch):
+    cfg,j,calls,c,form=setup
+    from swarmtracker_node_ui import app as app_module
+    monkeypatch.setattr(app_module.config,'RUNTIME_KIND','openclaw')
+    monkeypatch.setattr(app_module.config,'OPENCLAW_URL','http://127.0.0.1:8090')
+    monkeypatch.setattr(app_module.config,'OLLAMA_URL','http://127.0.0.1:11434')
+    monkeypatch.setattr(app_module,'node_status',lambda:dict(runtime_online=False,model_online=True))
+    page=c.get('/')
+    assert page.status_code==200
+    assert 'Analyze dispatch adapter: <strong>openclaw</strong>' in page.text
+    assert 'http://127.0.0.1:8090' in page.text and 'http://127.0.0.1:11434' in page.text
+    assert 'Adapter unavailable; Analyze dispatch readiness is unconfirmed' in page.text
+    assert 'configured default model listed' in page.text
+    assert 'Inventory presence does not prove' in page.text
+    assert 'not a paired peer' in page.text and calls==[]
+    monkeypatch.setattr(app_module.config,'RUNTIME_KIND','ollama')
+    monkeypatch.setattr(app_module,'node_status',lambda:dict(runtime_online=True,model_online=False))
+    page=c.get('/')
+    assert 'Analyze dispatch adapter: <strong>ollama</strong>' in page.text
+    assert 'Adapter health responded; this alone does not verify a request' in page.text
+    assert 'configured default model inventory unconfirmed' in page.text and calls==[]

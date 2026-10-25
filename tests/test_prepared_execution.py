@@ -32,6 +32,8 @@ def endpoints():
             data=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             name=data['messages'][1]['content'].splitlines()[0].rsplit(' ',1)[-1]
             calls.append(dict(name=name,request_id=self.headers['X-Request-ID'],payload=data,at=time.monotonic(),port=self.server.server_port))
+            if name=='Refusal':
+                self.send_response(400);self.end_headers();self.wfile.write(b'{"error":"unsupported request profile"}');return
             self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Connection','close');self.end_headers()
             try:
                 time.sleep(.1)
@@ -40,8 +42,9 @@ def endpoints():
                     for _ in range(100):self.wfile.write(b': alive\n');self.wfile.flush();time.sleep(.05)
                     return
                 def send(x):self.wfile.write(('data: '+json.dumps(x)+'\n\n').encode());self.wfile.flush()
-                send(dict(id='server-'+name,model='fixture-model',choices=[dict(delta={'reasoning_content':'fixture reasoning'})]))
-                send(dict(model='fixture-model',choices=[dict(delta={'content':'Result '+name},finish_reason='stop')],usage={'completion_tokens':3}))
+                model='qwen2.5:7b-instruct' if name=='QwenProfile' else 'fixture-model'
+                send(dict(id='server-'+name,model=model,choices=[dict(delta={'reasoning_content':'fixture reasoning'})]))
+                send(dict(model=model,choices=[dict(delta={'content':'Result '+name},finish_reason='stop')],usage={'completion_tokens':3}))
                 self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
             except (BrokenPipeError,ConnectionResetError):pass
     for _ in range(2):
@@ -51,7 +54,7 @@ def endpoints():
     for s in servers:s.shutdown();s.server_close()
 
 
-def prepared(tmp_path, endpoints, names, *, max_seconds=3):
+def prepared(tmp_path, endpoints, names, *, max_seconds=3, runtime_profile=None):
     repo=tmp_path/'source';repo.mkdir();(repo/'fixture.txt').write_text('Immutable source fixture')
     for argv in [['init','-q'],['add','.'],['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture']]:
         subprocess.run(['git','-C',str(repo),*argv],check=True)
@@ -62,7 +65,7 @@ def prepared(tmp_path, endpoints, names, *, max_seconds=3):
     for name,lane,deps in names:
         spec=task(name,deps);c.create_operator_task(spec)
         assignments.append(dict(task_id=name,agent_id=f'lane{lane}',session_id='synthetic-session',task_hash=c._spec_hash(spec),
-            runtime=dict(endpoint=endpoints[lane],model='fixture-model',provider='synthetic-acceptance',configuration_version='fixture-v1',provenance='two synthetic loopback acceptance endpoints'),
+            runtime=dict(endpoint=endpoints[lane],model=(runtime_profile or {}).get('model','fixture-model'),provider=(runtime_profile or {}).get('provider','synthetic-acceptance'),configuration_version='fixture-v1',provenance='two synthetic loopback acceptance endpoints'),
             source_repo=str(repo),source_commit=rev,input_path=str(p),input_sha256=hashlib.sha256(p.read_bytes()).hexdigest(),
             context_version='fixture-context-v1',configuration_version='fixture-configuration-v1',purpose=spec['purpose'],expires_at=time.time()+25,
             max_seconds=max_seconds,acceptance_responsibility='Separate fixture evaluator; no product or research acceptance'))
@@ -136,6 +139,27 @@ def test_clean_exit_releases_lease_for_immediate_successor_flow(tmp_path,endpoin
     assert time.monotonic()-started<3
     assert sorted(submissions)==['A1','A2','B1']
     assert len(calls)==3 and all(t['attempts']==1 for t in c.snapshot()['tasks'])
+
+
+def test_explicit_qwen_profile_and_retained_refusal(tmp_path,endpoints):
+    urls,calls=endpoints
+    c,b=prepared(tmp_path,urls,[('QwenProfile',0,()),('Refusal',1,())],runtime_profile=dict(provider='ollama-qwen2.5-7b',model='qwen2.5:7b-instruct'))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        run_loop(str(c.path),lambda *x:pool.submit(_execute,*x),poll_seconds=.02)
+    assert states(c)=={'QwenProfile':'completed','Refusal':'unresolved'}
+    assert len(calls)==2
+    assert all('reasoning_effort' not in x['payload'] and 'chat_template_kwargs' not in x['payload'] for x in calls)
+    with c.db() as db:
+        assert db.execute("SELECT COUNT(*) FROM execution_chunks WHERE kind='request_payload'").fetchone()[0]==2
+        refusal=json.loads(db.execute("SELECT content FROM execution_chunks WHERE kind='runtime_refusal'").fetchone()[0])
+        assert refusal['status']==400 and 'unsupported request profile' in refusal['body']
+        assert '400' in db.execute("SELECT content FROM execution_chunks WHERE kind='diagnostic'").fetchone()[0]
+    assert all(t['attempts']==1 for t in c.snapshot()['tasks'])
+
+
+def test_qwen_profile_cannot_strip_glm_reasoning_settings(tmp_path,endpoints):
+    with pytest.raises(ValueError,match='cannot substitute'):
+        prepared(tmp_path,endpoints[0],[('A1',0,())],runtime_profile=dict(provider='ollama-qwen2.5-7b',model=MODEL))
 
 
 @pytest.mark.parametrize('change,reason',[

@@ -39,6 +39,9 @@ def setup_environment(repo, pilot=False):
         os.environ[key] = (os.environ.get("VERITY_READONLY_RUNTIME_LEDGER", str(base / name))
                            if key == "NODE_UI_LEDGER" else str(base / name))
     os.environ["NODE_UI_DATA_DIR"] = str(base)
+    # Finder launches may inherit '/' as cwd. Keep the product queue with this
+    # profile, while retaining an explicitly configured coordinator database.
+    os.environ.setdefault("NODE_UI_PRODUCT_DB", os.environ.get("NODE_UI_COORDINATOR_DB", str(base / "product-work.db")))
     sys.path[:0] = [str(repo), str(repo / "apps/node")]
 
 def emit_ready(url):

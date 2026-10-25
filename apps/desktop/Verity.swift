@@ -74,6 +74,11 @@ class WorkerProcess {
                 return false
             }
             env["VERITY_DATA_HOME"] = home
+            // Also supports older bundled workers that used a cwd-relative
+            // product queue. Preserve explicit queue bindings.
+            if env["NODE_UI_PRODUCT_DB"] == nil {
+                env["NODE_UI_PRODUCT_DB"] = env["NODE_UI_COORDINATOR_DB"] ?? URL(fileURLWithPath: home).appendingPathComponent("product-work.db").path
+            }
         }
         env["PATH"] = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
         if let library = config.library_path, !library.isEmpty { env["DYLD_LIBRARY_PATH"] = library }

@@ -35,7 +35,7 @@ def _load_worker():
 @pytest.fixture()
 def worker():
     before_path = list(sys.path)
-    keys = ("NODE_UI_DB", "NODE_UI_MEDIA_LEDGER", "NODE_UI_LEDGER", "NODE_UI_DATA_DIR")
+    keys = ("NODE_UI_DB", "NODE_UI_MEDIA_LEDGER", "NODE_UI_LEDGER", "NODE_UI_DATA_DIR", "NODE_UI_PRODUCT_DB")
     before_env = {key: os.environ.get(key) for key in keys}
     yield _load_worker()
     sys.path[:] = before_path
@@ -109,6 +109,28 @@ def test_setup_environment_paths_before_app_import(worker, tmp_path, monkeypatch
 
 
 # ---------------------------------------------------------- integration
+
+def test_profile_queue_survives_finder_launch_directory(worker, tmp_path, monkeypatch):
+    monkeypatch.chdir("/")
+    monkeypatch.setenv("VERITY_DATA_HOME", str(tmp_path / "retained"))
+    monkeypatch.delenv("NODE_UI_PRODUCT_DB", raising=False)
+    monkeypatch.delenv("NODE_UI_COORDINATOR_DB", raising=False)
+    worker.setup_environment(REPO)
+    assert os.environ["NODE_UI_PRODUCT_DB"] == str(tmp_path / "retained/product-work.db")
+    from swarmtracker_node_ui.session_coordinator import Coordinator
+    Coordinator(os.environ["NODE_UI_PRODUCT_DB"]).snapshot()
+    assert (tmp_path / "retained/product-work.db").is_file()
+
+
+@pytest.mark.parametrize("binding", ["NODE_UI_PRODUCT_DB", "NODE_UI_COORDINATOR_DB"])
+def test_profile_queue_preserves_explicit_binding(worker, tmp_path, monkeypatch, binding):
+    monkeypatch.setenv("VERITY_DATA_HOME", str(tmp_path / "retained"))
+    monkeypatch.delenv("NODE_UI_PRODUCT_DB", raising=False)
+    monkeypatch.delenv("NODE_UI_COORDINATOR_DB", raising=False)
+    expected = str(tmp_path / "existing-queue.db")
+    monkeypatch.setenv(binding, expected)
+    worker.setup_environment(REPO)
+    assert os.environ["NODE_UI_PRODUCT_DB"] == expected
 
 uvicorn = pytest.importorskip("uvicorn")
 

@@ -106,3 +106,11 @@ owned labels, and disables automatic loading. Inactive alternatives remain
 stopped until explicit handover. Do not stop an unrelated listener to free 4200.
 Host ownership transfer and SQLite online checkpoint operations remain those in
 `prefect_session.py`; never use service start to bypass them or copy a live DB.
+
+For handover-ready deployments, add `--quiesce-on-pause` to `run` or `deploy`
+(or the flow parameter `quiesce_on_pause=True`). Pausing then drains current
+requests and exits the coordinator cleanly, retaining queued assignments,
+acceptance holds and host ownership. It does not cancel in-flight inference or
+terminal-stop the session. Wait for an absent coordinator and no uncertain
+attempts before the explicit handover/checkpoint. The ordinary pause behavior
+remains available without this option.

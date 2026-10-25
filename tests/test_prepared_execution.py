@@ -141,6 +141,25 @@ def test_clean_exit_releases_lease_for_immediate_successor_flow(tmp_path,endpoin
     assert len(calls)==3 and all(t['attempts']==1 for t in c.snapshot()['tasks'])
 
 
+def test_quiesce_pauses_without_discarding_queue_or_ownership(tmp_path,endpoints):
+    urls,calls=endpoints
+    c,b=prepared(tmp_path,urls,[('A1',0,()),('Dependent',0,('A1',))])
+    with ThreadPoolExecutor(max_workers=2) as pool,ThreadPoolExecutor(max_workers=1) as supervisor:
+        future=supervisor.submit(run_loop,str(c.path),lambda *x:pool.submit(_execute,*x),poll_seconds=.02,quiesce_on_pause=True)
+        wait(lambda:states(c)['A1']=='completed')
+        c.control('paused')
+        assert future.result(5)['reason'].startswith('paused and quiescent')
+    assert states(c)=={'A1':'completed','Dependent':'queued'}
+    assert c.execution_status()['host']['host']==socket.gethostname()
+    assert c.worker_status()['state']=='absent' and c.snapshot()['control']['owner'] is None
+    assert len(calls)==1
+    c.verify('A1','separate fixture evaluator','Literal fixture response and exact identity checked independently')
+    c.control('running')
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        run_loop(str(c.path),lambda *x:pool.submit(_execute,*x),poll_seconds=.02)
+    assert states(c)['Dependent']=='completed' and len(calls)==2
+
+
 def test_explicit_qwen_profile_and_retained_refusal(tmp_path,endpoints):
     urls,calls=endpoints
     c,b=prepared(tmp_path,urls,[('QwenProfile',0,()),('Refusal',1,())],runtime_profile=dict(provider='ollama-qwen2.5-7b',model='qwen2.5:7b-instruct'))

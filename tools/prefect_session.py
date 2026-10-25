@@ -23,7 +23,7 @@ def _execute(db_path, owner, instance_id, task_id, assignment_hash):
     return dict(r)  # No private source, response or reasoning in Prefect results.
 
 
-def run_loop(db_path, submit, *, poll_seconds=1, stop_when_exhausted=True):
+def run_loop(db_path, submit, *, poll_seconds=1, stop_when_exhausted=True, quiesce_on_pause=False):
     """Prefect is the concurrency executor; Verity selects eligible assignments."""
     c=Coordinator(db_path);owner=uuid.uuid4().hex;c.claim_execution_host()
     c.register_worker(owner,os.getpid());active={}
@@ -47,6 +47,8 @@ def run_loop(db_path, submit, *, poll_seconds=1, stop_when_exhausted=True):
                     c.execution_checkpoint(Path(db_path).parent/'execution-checkpoints'/uuid.uuid4().hex)
                     del active[lane]
             status=c.execution_status();gate=c.dispatch_gate(status['control'])
+            if gate=='paused' and not active and quiesce_on_pause:
+                return {'reason':'paused and quiescent; ownership retained for explicit handover','status':status}
             if gate and gate!='paused' and not active:return {'reason':gate,'status':status}
             if not gate:
                 for a in status['assignments']:
@@ -70,14 +72,14 @@ def make_flow():
     from prefect.task_runners import ThreadPoolTaskRunner
     dispatch=task(name='verity-governed-attempt',retries=0,cache_policy=NO_CACHE,persist_result=False,log_prints=False)(_execute)
     @flow(name='verity-prepared-batch',retries=0,task_runner=ThreadPoolTaskRunner(max_workers=2),persist_result=False,log_prints=False)
-    def prepared(db_path:str,poll_seconds:float=1,stop_when_exhausted:bool=True):
-        return run_loop(db_path,dispatch.submit,poll_seconds=poll_seconds,stop_when_exhausted=stop_when_exhausted)
+    def prepared(db_path:str,poll_seconds:float=1,stop_when_exhausted:bool=True,quiesce_on_pause:bool=False):
+        return run_loop(db_path,dispatch.submit,poll_seconds=poll_seconds,stop_when_exhausted=stop_when_exhausted,quiesce_on_pause=quiesce_on_pause)
     return prepared
 
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',choices=['run','status','load','pause','resume','stop','checkpoint','deploy','handover']);p.add_argument('--db',required=True);p.add_argument('--file');p.add_argument('--target');a=p.parse_args();c=Coordinator(a.db)
-    if a.action=='run':print(json.dumps(make_flow()(a.db),indent=2))
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',choices=['run','status','load','pause','resume','stop','checkpoint','deploy','handover']);p.add_argument('--db',required=True);p.add_argument('--file');p.add_argument('--target');p.add_argument('--quiesce-on-pause',action='store_true');a=p.parse_args();c=Coordinator(a.db)
+    if a.action=='run':print(json.dumps(make_flow()(a.db,quiesce_on_pause=a.quiesce_on_pause),indent=2))
     elif a.action=='load':c.load_prepared_batch(json.loads(Path(a.file).read_text()))
     elif a.action in {'pause','resume','stop'}:c.control({'pause':'paused','resume':'running','stop':'stopped'}[a.action])
     elif a.action=='checkpoint':print(json.dumps(c.execution_checkpoint(a.file),indent=2))
@@ -85,7 +87,7 @@ def main():
     elif a.action=='deploy':
         from prefect import flow
         f=flow.from_source(source=str(Path(__file__).resolve().parents[1]),entrypoint='tools/prefect_session.py:prefect_entrypoint')
-        print(f.deploy(name='verity-local',work_pool_name='verity-local-process',build=False,push=False,parameters={'db_path':str(Path(a.db).resolve())}))
+        print(f.deploy(name='verity-local',work_pool_name='verity-local-process',build=False,push=False,parameters={'db_path':str(Path(a.db).resolve()),'quiesce_on_pause':a.quiesce_on_pause}))
     else:print(json.dumps(c.execution_status(),indent=2))
 
 

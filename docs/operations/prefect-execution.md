@@ -66,3 +66,12 @@ The portable coordinator, adapter, process worker and SQLite checkpoints can run
 ## October 24 acceptance checkpoint
 
 Source `8600479` passed 1,327 tests with two skips and one dependency warning. The actual M2 self-hosted process path completed nine synthetic requests, held dependency acceptance and uncertain work, and survived owned worker/coordinator restarts. Independent restoration on the M1 checked 360 hashes and 172 databases, including intermediate checkpoints and the Prefect metadata snapshot. A clean-exit lease defect found during that restoration was repaired and rerun through the actual process path on the M1: nine requests, eight incremental checkpoints rather than repeated no-op executor churn. These are scheduling results, not accepted research or dual-GLM rental evidence. Later request-profile changes require their own final-source checks. Screen lock, literal chat network loss, sleep/reboot, native remote operator switch and complete handover acceptance remain open.
+
+Desktop profile binding: Finder/Launch Services may start Verity with `/` as
+its working directory. The desktop worker and designated native shell bind the
+product coordinator to `product-work.db` within the retained data home. Explicit
+`NODE_UI_PRODUCT_DB` or legacy `NODE_UI_COORDINATOR_DB` bindings take precedence.
+This avoids a read-only `session-data` failure on Agents without replacing the
+profile, activation, governed-request stores or connection records. Existing
+external queue databases remain explicit bindings; this is not an automatic
+migration or a cross-host queue handover.

@@ -75,3 +75,34 @@ This avoids a read-only `session-data` failure on Agents without replacing the
 profile, activation, governed-request stores or connection records. Existing
 external queue databases remain explicit bindings; this is not an automatic
 migration or a cross-host queue handover.
+
+## Persistent macOS process services
+
+`tools/prefect_services.py` installs two **user launchd services** around the
+existing Prefect server and process worker. It introduces no task scheduler or
+queue. Supply absolute `--root`, `--source` and `--venv` paths to `install`.
+Installation records the clean source revision, writes private plists under
+`~/Library/LaunchAgents`, and leaves both jobs disabled/inactive. Retain each
+host's full dependency lock and its hash beside `user-services.json`.
+
+Start the chosen host with `start --root ROOT --service server`, then `start
+--root ROOT --service worker`. `status --root ROOT` reports actual launchd state,
+PIDs, loopback health and log locations. Labels are
+`ai.swarmtracker.verity.prefect-server` and
+`ai.swarmtracker.verity.prefect-worker`. Logs live under `ROOT/logs` and Prefect
+metadata under `ROOT/prefect-home`. Jobs are owned by launchd, independent of the
+launching Terminal and chat. A logged-out user, sleeping host or untested reboot
+is a separate availability question. Unexpected service failures restart with
+launchd throttling; this does **not** authorize retrying a flow/model request.
+
+The process worker polls existing Prefect deployments. The Verity coordinator
+flow advances only its approved prepared batch and stops at exhaustion or gates.
+Creating another batch, accepting findings and changing code remain separate
+operator/coordinator work. Pending acceptance does not imply an active request.
+
+Before `stop --root ROOT --db QUEUE`, pause and quiesce that exact Verity queue.
+Stop refuses a running coordinator or in-flight attempts, boots out only these
+owned labels, and disables automatic loading. Inactive alternatives remain
+stopped until explicit handover. Do not stop an unrelated listener to free 4200.
+Host ownership transfer and SQLite online checkpoint operations remain those in
+`prefect_session.py`; never use service start to bypass them or copy a live DB.

@@ -3,6 +3,7 @@
 {% block content %}
 {% include "_routed_requests.html" %}
 <h1>Sessions</h1><p><a href="/sessions/new">Record manual session inventory</a></p>
+{% include '_prepared_execution.html' %}
 <p>Provider observations and append-only operator declarations for sessions and local work. Unknown means no fresh observation was received.</p>
 {% for identity, view in sessions %}
 <section class="panel"><div class="panel-head"><h2><a href="/sessions/{{ identity.id }}">{{ identity.id }}</a></h2></div>

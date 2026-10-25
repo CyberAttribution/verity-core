@@ -15,6 +15,7 @@ import re
 import hashlib
 from contextlib import contextmanager
 from pathlib import Path
+from .session_batch import PreparedExecution
 
 MODEL = "glm-5.3-flash"  # Served alias; pinned weights: wtdcode/GLM-5.3-Flash-AWQ-W4A16
 STATES = {"queued", "submitted", "acknowledged", "completed", "independently_verified", "failed", "unresolved", "cancelled"}
@@ -28,7 +29,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
 
 
-class Coordinator:
+class Coordinator(PreparedExecution):
     def __init__(self, path, adapter=None, clock=time.time, telemetry=None, session_id=None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -107,6 +108,7 @@ class Coordinator:
                       PRIMARY KEY(workflow_id,task_id));
                     INSERT INTO work_sources SELECT workflow_id,task_id FROM work_sources_legacy;
                     DROP TABLE work_sources_legacy;""")
+        self.prepare_execution_schema()
 
     @contextmanager
     def db(self):
@@ -122,7 +124,7 @@ class Coordinator:
             db.close()
 
     def configure(self, *, rate, start, ceiling, margin=5, deadline=None):
-        if not (0 < rate < 100000 and 0 < start < self.clock()+60 and 0 < ceiling <= 1e8 and 0 <= margin < ceiling):
+        if not (0 <= rate < 100000 and 0 < start < self.clock()+60 and 0 < ceiling <= 1e8 and 0 <= margin < ceiling):
             raise ValueError("Invalid fixed rental budget")
         if deadline is not None and not (self.clock() < deadline < float('inf')):
             raise ValueError('A finite future deadline is required')
@@ -593,7 +595,7 @@ class Coordinator:
             db.execute("UPDATE control SET owner=NULL,heartbeat=NULL WHERE id=1")
             return True
 
-    def claim(self, owner):
+    def claim(self, owner, *, task_id=None, assignment_hash=None):
         owner = owner + ":" + self._instance_id
         with self.db() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -612,9 +614,18 @@ class Coordinator:
             db.execute("UPDATE control SET owner=?,heartbeat=? WHERE id=1",(owner,self.clock()))
             for row in db.execute("SELECT t.* FROM tasks t LEFT JOIN task_controls p ON p.task_id=t.id WHERE t.state='queued' "
                                   "ORDER BY COALESCE(p.priority,0) DESC,t.seq"):
+                binding=db.execute('SELECT * FROM execution_assignments WHERE task_id=?',(row['id'],)).fetchone()
+                if task_id is None and binding or task_id is not None and row['id'] != task_id:
+                    continue
+                if task_id is not None and (not binding or binding['hash'] != assignment_hash):
+                    raise ValueError('Prepared assignment binding mismatch')
                 if db.execute("SELECT 1 FROM task_supersessions WHERE predecessor=?",(row["id"],)).fetchone():
                     continue
                 spec=json.loads(row["spec"])
+                if binding:
+                    blocker=self.assignment_gate(db,binding,spec)
+                    db.execute('UPDATE execution_assignments SET blocker=? WHERE task_id=?',(blocker,row['id']))
+                    if blocker:continue
                 ctl=db.execute("SELECT * FROM task_controls WHERE task_id=?",(row["id"],)).fetchone()
                 if ctl and (ctl["paused"] or ctl["cancelled"] or ctl["authorization_hash"]!=self._spec_hash(spec)):
                     continue
@@ -629,6 +640,8 @@ class Coordinator:
                     request_id=uuid.uuid4().hex
                     db.execute("UPDATE tasks SET request_id=?,attempts=attempts+1 WHERE id=?",(request_id,row["id"]))
                     self._transition(db,row["id"],"submitted","Request persisted before dispatch: "+request_id)
+                    if binding:
+                        db.execute('UPDATE execution_assignments SET started=?,last_progress=?,ended=NULL WHERE task_id=?',(self.clock(),self.clock(),row['id']))
                     db.execute("INSERT INTO review_policy_decisions(task_id,at,policy_hash,allowed,reason) VALUES (?,?,?,?,?)",
                                (row["id"],self.clock(),policy_hash,1,"Allowed at dispatch; subsequent policy changes cannot recall request"))
                     db.execute("UPDATE worker_process SET current_task=? WHERE token=?",(row["id"],owner.split(":")[0]))
@@ -666,6 +679,10 @@ class Coordinator:
         item=self.claim(owner)
         if not item:
             return None
+        return self.execute_claimed(owner,item)
+
+    def execute_claimed(self, owner, item, adapter=None):
+        """One persisted attempt; both legacy and prepared workers share this boundary."""
         task_id=item["spec"]["id"]
         # Recheck pause and budget immediately before the network boundary.
         if not self.heartbeat(owner):
@@ -680,7 +697,7 @@ class Coordinator:
         beat.start()
         started=time.monotonic()
         try:
-            response=self.adapter(item["spec"],item["request_id"])
+            response=(adapter or self.adapter)(item["spec"],item["request_id"])
             if not isinstance(response,dict) or response.get("request_id") != item["request_id"]:
                 raise ValueError("Missing matching response identity")
             finish=response.get("finish_reason")
@@ -701,6 +718,8 @@ class Coordinator:
         finally:
             done.set()
             beat.join(timeout=6)
+            with self.db() as db:
+                db.execute('UPDATE execution_assignments SET ended=?,last_progress=? WHERE task_id=?',(self.clock(),self.clock(),task_id))
         return task_id
 
     def _observe(self, task_id, request_id, finish, usage, latency, error):

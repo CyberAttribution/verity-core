@@ -68,7 +68,11 @@ class WorkerProcess {
         // A designated development installation retains its explicit profile
         // when opened from Finder, Dock, or Launch Services without shell env.
         if let home = config.data_home {
-            guard home.hasPrefix("/"), FileManager.default.fileExists(atPath: home) else { return false }
+            guard home.hasPrefix("/"), FileManager.default.fileExists(atPath: home) else {
+                StartupErrorWindow.show(title: "Verity profile unavailable",
+                    message: "The designated profile is missing or inaccessible. Restore access to its folder before relaunching. Existing work has not been replaced.")
+                return false
+            }
             env["VERITY_DATA_HOME"] = home
         }
         env["PATH"] = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")

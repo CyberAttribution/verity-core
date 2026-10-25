@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Overview{% endblock %}
 {% block content %}
+{% include '_prepared_execution.html' %}
 
 <div class="cards">
   <div class="card"><div class="card-label">Application health</div><div class="card-value">{{ application_health }}</div><div class="card-sub">App responding · technical node {{ cfg.node }}. Model connections are observed separately.</div></div>

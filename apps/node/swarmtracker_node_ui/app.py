@@ -123,6 +123,8 @@ def dashboard(request: Request):
     if any(ctx[name]['state']=='unknown' for name in ('primary_inventory','request_inventory','company_inventory')):
         ctx['application_health']='Responding; evidence storage needs attention'
     ctx['context_inventory']=overview.context_inventory(store.DB_PATH.with_name('organization-context.db'))
+    from .sessions import configured_execution_view
+    ctx['prepared_execution']=configured_execution_view()
     ctx['ledger_scope']='not created' if not config.LEDGER_PATH.exists() else 'readable' if config.LEDGER_PATH.is_file() and __import__('os').access(config.LEDGER_PATH,__import__('os').R_OK) else 'unknown'
     ctx["ledger_count"] = ledger.count_events()
     events = ledger.read_events(limit=25)

@@ -423,8 +423,15 @@ def install(app, render, base_ctx):
     @app.get("/sessions")
     def sessions_page(request: Request):
         ctx = base_ctx(request, "sessions")
+        ctx['prepared_execution']=configured_execution_view()
         ctx["sessions"] = [(record["identity"], configured_view(record)) for sid in database.list() for record in [database.get(sid)]]
         return render("sessions.html", ctx)
+
+    @app.get('/sessions/queue/status')
+    def prepared_execution_status(request:Request):
+        from .customer_routes import local_peer
+        local_peer(request)
+        return JSONResponse(configured_execution_view(),headers={'Cache-Control':'no-store'})
 
     @app.get("/sessions/{session_id}")
     def session_page(session_id: str, request: Request):
@@ -495,3 +502,13 @@ def coordinator_view(session_id):
         return None
     from .session_coordinator import Coordinator
     return Coordinator(path).snapshot()
+
+
+def configured_execution_view():
+    """Observe only the explicitly selected existing queue; never start a worker."""
+    path=os.environ.get('NODE_UI_COORDINATOR_DB')
+    if not path:return None
+    if not Path(path).is_file():return {'unavailable':'Configured queue is missing; coordinator status is unknown'}
+    from .session_coordinator import Coordinator
+    try:return Coordinator(path).execution_status()
+    except (OSError,ValueError,sqlite3.Error):return {'unavailable':'Configured queue cannot be read; inspect its path and permissions'}

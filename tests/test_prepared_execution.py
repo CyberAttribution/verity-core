@@ -117,6 +117,27 @@ def test_lost_ack_blocks_lane_without_replay_other_lane_progresses(tmp_path,endp
         assert 'uncertain' in fresh.assignment_gate(db,row,task('A2'))
 
 
+def test_clean_exit_releases_lease_for_immediate_successor_flow(tmp_path,endpoints):
+    urls,calls=endpoints
+    c,b=prepared(tmp_path,urls,[('A1',0,()),('B1',1,())])
+    submissions=[]
+    def run():
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            def submit(*args):
+                submissions.append(args[3]);return pool.submit(_execute,*args)
+            return run_loop(str(c.path),submit,poll_seconds=.02)
+    run()
+    assert c.snapshot()['control']['owner'] is None
+    # Reuse the authorized fixture's identities/configuration for a fresh task.
+    spec=task('A2');c.create_operator_task(spec)
+    assignment=dict(b['assignments'][0],task_id='A2',task_hash=c._spec_hash(spec),purpose=spec['purpose'])
+    c.load_prepared_batch(dict(id='successor',authorization=b['authorization'],assignments=[assignment]))
+    started=time.monotonic();run()
+    assert time.monotonic()-started<3
+    assert sorted(submissions)==['A1','A2','B1']
+    assert len(calls)==3 and all(t['attempts']==1 for t in c.snapshot()['tasks'])
+
+
 @pytest.mark.parametrize('change,reason',[
     ('input','Source/input'),('source','Source revision'),('connection','Connection routing'),
     ('pause','Task paused'),('policy','Active review policy'),('expiry','expired'),('deadline','deadline reached'),('budget','budget reserve'),

@@ -581,7 +581,13 @@ class Coordinator(PreparedExecution):
 
     def unregister_worker(self, token):
         with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
             db.execute("DELETE FROM worker_process WHERE id=1 AND token=?",(token,))
+            # A clean, quiescent exit must release the dispatch lease as well
+            # as the supervisor registry. An in-flight/uncertain attempt keeps
+            # its durable identity and is never made eligible by this cleanup.
+            db.execute("UPDATE control SET owner=NULL,heartbeat=NULL WHERE owner=? AND NOT EXISTS (SELECT 1 FROM tasks WHERE state IN ('submitted','acknowledged'))",
+                       (token+":"+self._instance_id,))
 
     def recover_stale(self):
         """Classify stale in-flight work without lifting pause or budget gates."""

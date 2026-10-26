@@ -219,7 +219,7 @@ class PreparedExecution:
         with self.db() as db:
             control=db.execute('SELECT * FROM control WHERE id=1').fetchone();rows=[]
             _,policy=self._active_review_policy(db)
-            for row in db.execute('SELECT a.*,t.state,t.spec AS task_spec,t.request_id,t.updated FROM execution_assignments a JOIN tasks t ON t.id=a.task_id ORDER BY t.seq'):
+            for row in db.execute('SELECT a.*,t.state,t.spec AS task_spec,t.request_id,t.updated,t.verifier,t.evidence FROM execution_assignments a JOIN tasks t ON t.id=a.task_id ORDER BY t.seq'):
                 r=dict(row);spec=json.loads(r.pop('task_spec'));reason=None
                 if r['state']=='queued':
                     reason=self.dispatch_gate(dict(control) if control else None) or self.assignment_gate(db,row,spec)
@@ -230,7 +230,7 @@ class PreparedExecution:
                     if not reason and any(db.execute('SELECT state FROM tasks WHERE id=?',(x,)).fetchone()[0]!='independently_verified' for x in spec['dependencies']):reason='Dependency requires independent verification'
                 a=json.loads(r.pop('spec'))
                 r.update(model=a['runtime']['model'],endpoint=a['runtime']['endpoint'],source_commit=a['source_commit'],session_id=a['session_id'])
-                r['blocker']=reason;r['ready']=r['state']=='queued' and reason is None;r['awaiting_review']=r['state']=='completed';rows.append(r)
+                r['blocker']=reason;r['ready']=r['state']=='queued' and reason is None;r['awaiting_review']=r['state']=='completed' and not (r['verifier'] and r['evidence'] and r['evidence'].startswith('Rejected: '));rows.append(r)
             chunks=db.execute("SELECT MAX(at) FROM execution_chunks WHERE kind IN ('content','reasoning_content','reasoning')").fetchone()[0]
             last=max([r['last_progress'] or 0 for r in rows]+[0]) or None
             active=any(r['state'] in {'submitted','acknowledged'} for r in rows)

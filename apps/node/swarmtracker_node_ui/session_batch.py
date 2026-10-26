@@ -29,7 +29,7 @@ def endpoint(value):
 
 
 class PreparedExecution:
-    def authorize_execution_session(self, *, session_id, authorization, rate, start, ceiling, margin, deadline):
+    def authorize_execution_session(self, *, session_id, authorization, rate, start, ceiling, margin, deadline, preserve_prior_tasks=None):
         """Explicit new allocation authority in the same ledger; never an automatic top-up."""
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}',session_id) or not isinstance(authorization,str) or not 20<=len(authorization)<=1000:
             raise ValueError('Named session and explicit allocation authorization required')
@@ -40,14 +40,31 @@ class PreparedExecution:
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
             old=db.execute('SELECT * FROM control WHERE id=1').fetchone()
-            if not old or old['mode']!='paused' or not old['deadline'] or old['deadline']>now:
+            if not old or old['mode'] not in {'paused','stopped'} or not old['deadline'] or old['deadline']>now:
                 raise RuntimeError('Pause an expired prior session before authorizing a distinct allocation')
-            if db.execute("SELECT 1 FROM tasks WHERE state IN ('queued','submitted','acknowledged','unresolved')").fetchone():
-                raise RuntimeError('Resolve prior queued or uncertain work before authorizing another session')
+            pending=db.execute("SELECT * FROM tasks WHERE state IN ('queued','submitted','acknowledged','unresolved') ORDER BY id").fetchall()
+            preserved=[]
+            if pending:
+                if (not isinstance(preserve_prior_tasks,list) or
+                    any(not isinstance(x,str) for x in preserve_prior_tasks) or
+                    len(set(preserve_prior_tasks))!=len(preserve_prior_tasks) or
+                    set(preserve_prior_tasks)!={r['id'] for r in pending} or
+                    any(r['state'] in {'submitted','acknowledged'} for r in pending)):
+                    raise RuntimeError('Resolve prior queued or uncertain work, or explicitly preserve the exact inactive task set')
+                db.execute('CREATE TABLE IF NOT EXISTS execution_preserved_tasks(session_id TEXT NOT NULL,task_id TEXT NOT NULL,snapshot TEXT NOT NULL,PRIMARY KEY(session_id,task_id))')
+                for row in pending:
+                    preserved.append(dict(row))
+                    db.execute('INSERT INTO execution_preserved_tasks VALUES (?,?,?)',(session_id,row['id'],json.dumps(dict(row),sort_keys=True)))
+                    # Retain state, request identity, output and dependencies. Revoke
+                    # queued dispatch authority without reconciling or replaying uncertainty.
+                    db.execute('UPDATE task_controls SET paused=1,authorization_hash=NULL WHERE task_id=?',(row['id'],))
+                    db.execute('INSERT INTO task_audit(task_id,at,action,detail) VALUES (?,?,?,?)',(row['id'],now,'preserved_prior_session',authorization))
+            elif preserve_prior_tasks:
+                raise RuntimeError('Preservation set does not match prior pending tasks')
             db.execute('CREATE TABLE IF NOT EXISTS execution_session_authorizations(id TEXT PRIMARY KEY,at REAL NOT NULL,evidence TEXT NOT NULL,previous_control TEXT NOT NULL,new_control TEXT NOT NULL)')
-            limits=dict(rate=rate,start=start,ceiling=ceiling,margin=margin,deadline=deadline)
+            limits=dict(rate=rate,start=start,ceiling=ceiling,margin=margin,deadline=deadline,preserved_task_ids=[r['id'] for r in preserved])
             db.execute('INSERT INTO execution_session_authorizations VALUES (?,?,?,?,?)',(session_id,now,authorization,json.dumps(dict(old),sort_keys=True),json.dumps(limits,sort_keys=True)))
-            db.execute('UPDATE control SET rate=?,start=?,ceiling=?,margin=?,deadline=? WHERE id=1',(rate,start,ceiling,margin,deadline))
+            db.execute("UPDATE control SET mode='paused',rate=?,start=?,ceiling=?,margin=?,deadline=? WHERE id=1",(rate,start,ceiling,margin,deadline))
 
     def prepare_execution_schema(self):
         with self.db() as db:
@@ -129,9 +146,10 @@ class PreparedExecution:
                 r=a['runtime']
                 if set(r)!={'endpoint','model','provider','configuration_version','provenance'} or not all(isinstance(v,str) and v for v in r.values()):raise ValueError('Exact approved runtime configuration required')
                 endpoint(r['endpoint'])
-                if r['provider'] not in {'local-openai-compatible','ollama-openai-compatible','ollama-qwen2.5-7b','transformers-qwen3.5-4b','synthetic-acceptance'}:raise ValueError('No paid/cloud runtime authorized')
+                if r['provider'] not in {'local-openai-compatible','ollama-openai-compatible','ollama-qwen2.5-7b','transformers-qwen3.5-4b','llamacpp-glm47-flash-q4km','synthetic-acceptance'}:raise ValueError('No paid/cloud runtime authorized')
                 if r['provider']=='ollama-qwen2.5-7b' and r['model']!='qwen2.5:7b-instruct':raise ValueError('Qwen request profile cannot substitute another model')
                 if r['provider']=='transformers-qwen3.5-4b' and r['model']!='Qwen/Qwen3.5-4B':raise ValueError('Qwen3.5 request profile cannot substitute another model')
+                if r['provider']=='llamacpp-glm47-flash-q4km' and (r['model']!='GLM-4.7-Flash-Q4_K_M' or r['configuration_version']!='glm47-q4km-reasoning512-output1536-v1'):raise ValueError('GLM4.7 Flash profile cannot substitute model or configuration')
                 task=db.execute('SELECT spec,state FROM tasks WHERE id=?',(a['task_id'],)).fetchone()
                 ctl=db.execute('SELECT * FROM task_controls WHERE task_id=?',(a['task_id'],)).fetchone()
                 if not task or task['state']!='queued' or not ctl or ctl['cancelled']:raise ValueError('An existing queued operator task is required')
@@ -247,8 +265,15 @@ class PreparedExecution:
                 payload.pop('reasoning_effort');payload.pop('chat_template_kwargs')
             elif a['runtime']['provider']=='transformers-qwen3.5-4b':
                 payload.pop('reasoning_effort')
-                payload['chat_template_kwargs']={'enable_thinking':False}
-                payload['max_tokens']=min(payload['max_tokens'],384)
+                profile=a['runtime']['configuration_version']
+                comparison_profiles={'qwen35-bf16-thinking-1536-v1':True,'qwen35-bf16-no-thinking-1536-v1':False}
+                payload['chat_template_kwargs']={'enable_thinking':comparison_profiles.get(profile,False)}
+                payload['max_tokens']=min(payload['max_tokens'],1536 if profile in comparison_profiles else 384)
+            if a['runtime']['provider']=='llamacpp-glm47-flash-q4km':
+                payload.pop('reasoning_effort');payload.pop('chat_template_kwargs')
+                payload.update(max_tokens=min(payload['max_tokens'],1536),temperature=1.0,top_p=0.95,min_p=0.01,repeat_penalty=1.0,seed=102626)
+                # Reasoning is configured and evidenced at server startup. Do not
+                # send GLM5.3's historical effort fields to llama.cpp.
             with self.db() as db:
                 db.execute('INSERT INTO execution_chunks(task_id,request_id,at,kind,content) VALUES (?,?,?,?,?)',(a['task_id'],request_id,self.clock(),'request_payload',json.dumps(payload,sort_keys=True)))
             c.request('POST','/v1/chat/completions',body=json.dumps(payload).encode(),headers={'Content-Type':'application/json','X-Request-ID':request_id})

@@ -14,6 +14,7 @@ import pytest
 
 from swarmtracker_node_ui.session_coordinator import Coordinator, MODEL
 from tools.prefect_session import _execute, run_loop
+from swarmtracker_node_ui.session_batch import digest
 
 
 def task(name, deps=()):
@@ -42,7 +43,7 @@ def endpoints():
                     for _ in range(100):self.wfile.write(b': alive\n');self.wfile.flush();time.sleep(.05)
                     return
                 def send(x):self.wfile.write(('data: '+json.dumps(x)+'\n\n').encode());self.wfile.flush()
-                model={'QwenProfile':'qwen2.5:7b-instruct','Qwen35Profile':'Qwen/Qwen3.5-4B'}.get(name,'fixture-model')
+                model={'QwenProfile':'qwen2.5:7b-instruct','Qwen35Profile':'Qwen/Qwen3.5-4B','GLMFlash':'GLM-4.7-Flash-Q4_K_M'}.get(name,'fixture-model')
                 send(dict(id='server-'+name,model=model,choices=[dict(delta={'reasoning_content':'fixture reasoning'})]))
                 send(dict(model=model,choices=[dict(delta={'content':'Result '+name},finish_reason='stop')],usage={'completion_tokens':3}))
                 self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
@@ -65,7 +66,7 @@ def prepared(tmp_path, endpoints, names, *, max_seconds=3, runtime_profile=None)
     for name,lane,deps in names:
         spec=task(name,deps);c.create_operator_task(spec)
         assignments.append(dict(task_id=name,agent_id=f'lane{lane}',session_id='synthetic-session',task_hash=c._spec_hash(spec),
-            runtime=dict(endpoint=endpoints[lane],model=(runtime_profile or {}).get('model','fixture-model'),provider=(runtime_profile or {}).get('provider','synthetic-acceptance'),configuration_version='fixture-v1',provenance='two synthetic loopback acceptance endpoints'),
+            runtime=dict(endpoint=endpoints[lane],model=(runtime_profile or {}).get('model','fixture-model'),provider=(runtime_profile or {}).get('provider','synthetic-acceptance'),configuration_version=('glm47-q4km-reasoning512-output1536-v1' if (runtime_profile or {}).get('provider')=='llamacpp-glm47-flash-q4km' else 'fixture-v1'),provenance='two synthetic loopback acceptance endpoints'),
             source_repo=str(repo),source_commit=rev,input_path=str(p),input_sha256=hashlib.sha256(p.read_bytes()).hexdigest(),
             context_version='fixture-context-v1',configuration_version='fixture-configuration-v1',purpose=spec['purpose'],expires_at=time.time()+25,
             max_seconds=max_seconds,acceptance_responsibility='Separate fixture evaluator; no product or research acceptance'))
@@ -291,3 +292,52 @@ def test_ui_observes_configured_queue_without_dispatch(tmp_path,endpoints,monkey
     text=Environment(loader=FileSystemLoader(template),autoescape=select_autoescape()).get_template('_prepared_execution.html').render(prepared_execution=view)
     assert 'GPU activity unknown' in text and 'Independent acceptance' not in text and 'fixture-model' in text
     assert not calls and c.snapshot()['tasks'][0]['attempts']==0
+
+
+def test_new_session_preserves_exact_uncertain_set_without_replay(tmp_path,endpoints):
+    urls,calls=endpoints
+    c,b=prepared(tmp_path,urls,[('LostAck',0,()),('Held',0,())])
+    owner='preserve-test';c.register_worker(owner,os.getpid())
+    c.control('running');c.run_prepared(owner,'LostAck',b['assignments'][0]['hash'] if 'hash' in b['assignments'][0] else digest(b['assignments'][0]))
+    c.unregister_worker(owner);c.control('stopped')
+    with c.db() as db:
+        db.execute('UPDATE control SET deadline=?',(time.time()-1,))
+        before=dict(db.execute("SELECT * FROM tasks WHERE id='LostAck'").fetchone())
+    args=dict(session_id='renewal',authorization='Operator permits new allocation preserving lost acknowledgement without any replay',rate=1,start=time.time()-1,ceiling=15,margin=2,deadline=time.time()+300)
+    with pytest.raises(RuntimeError):c.authorize_execution_session(**args)
+    with pytest.raises(RuntimeError):c.authorize_execution_session(**args,preserve_prior_tasks=['Held'])
+    c.authorize_execution_session(**args,preserve_prior_tasks=['LostAck','Held'])
+    with c.db() as db:
+        assert dict(db.execute("SELECT * FROM tasks WHERE id='LostAck'").fetchone())==before
+        assert db.execute('SELECT count(*) FROM execution_preserved_tasks').fetchone()[0]==2
+        assert db.execute("SELECT paused,authorization_hash FROM task_controls WHERE task_id='Held'").fetchone()[:]==(1,None)
+    c.control('running')
+    assert not any(a['ready'] for a in c.execution_status()['assignments'])
+    assert len(calls)==1
+
+
+@pytest.mark.parametrize('profile,thinking', [('qwen35-bf16-thinking-1536-v1',True),('qwen35-bf16-no-thinking-1536-v1',False)])
+def test_qwen_matched_profiles_have_explicit_template_and_equal_cap(tmp_path,endpoints,profile,thinking):
+    urls,calls=endpoints
+    c,b=prepared(tmp_path,urls,[('Qwen35Profile',0,())],runtime_profile=dict(provider='transformers-qwen3.5-4b',model='Qwen/Qwen3.5-4B'))
+    # Bind a fresh immutable configuration before loading, using a separate fixture.
+    with c.db() as db:
+        a=b['assignments'][0];a['runtime']['configuration_version']=profile
+        db.execute('UPDATE execution_assignments SET hash=?,spec=? WHERE task_id=?',(digest(a),json.dumps(a,sort_keys=True),a['task_id']))
+        db.execute('UPDATE agent_registrations SET provenance=? WHERE id=?',(json.dumps(a['runtime'],sort_keys=True),a['agent_id']))
+    owner='profile-test';c.register_worker(owner,os.getpid());c.control('running')
+    c.run_prepared(owner,'Qwen35Profile',digest(a));c.unregister_worker(owner)
+    assert calls[0]['payload']['chat_template_kwargs']=={'enable_thinking':thinking}
+    assert calls[0]['payload']['max_tokens']==1536
+    assert 'reasoning_effort' not in calls[0]['payload']
+
+
+def test_glm47_llamacpp_has_model_specific_wire_contract(tmp_path,endpoints):
+    urls,calls=endpoints
+    c,b=prepared(tmp_path,urls,[('GLMFlash',0,())],runtime_profile=dict(provider='llamacpp-glm47-flash-q4km',model='GLM-4.7-Flash-Q4_K_M'))
+    owner='glm-test';c.register_worker(owner,os.getpid());c.control('running')
+    c.run_prepared(owner,'GLMFlash',digest(b['assignments'][0]));c.unregister_worker(owner)
+    payload=calls[0]['payload']
+    assert 'reasoning_effort' not in payload and 'chat_template_kwargs' not in payload
+    assert payload['max_tokens']==1536 and payload['min_p']==0.01 and payload['repeat_penalty']==1.0
+    assert c.snapshot()['tasks'][0]['state']=='completed'

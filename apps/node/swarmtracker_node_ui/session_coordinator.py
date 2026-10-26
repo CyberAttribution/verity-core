@@ -707,13 +707,18 @@ class Coordinator(PreparedExecution):
             if not isinstance(response,dict) or response.get("request_id") != item["request_id"]:
                 raise ValueError("Missing matching response identity")
             finish=response.get("finish_reason")
+            native_call=False
+            if response.get('tool_calls'):
+                from .structured_tools import normalize_call
+                if not isinstance(response['tool_calls'],list) or len(response['tool_calls'])!=1:raise ValueError('One retained native call required')
+                normalize_call(response['tool_calls'][0]);native_call=finish in {'stop','tool_calls'}
             with self.db() as db:
                 db.execute("BEGIN IMMEDIATE")
                 if db.execute("SELECT state FROM tasks WHERE id=?",(task_id,)).fetchone()[0] != "submitted":
                     return task_id
                 self._transition(db,task_id,"acknowledged","Matching response observed")
                 db.execute("UPDATE tasks SET response=?,finish_reason=? WHERE id=?",(json.dumps(response,sort_keys=True),finish,task_id))
-                self._transition(db,task_id,"completed" if finish == "stop" and response.get("content") else "failed", "finish_reason="+str(finish))
+                self._transition(db,task_id,"completed" if (finish == "stop" and response.get("content")) or native_call else "failed", "finish_reason="+str(finish))
             self._observe(task_id,item["request_id"],finish,response.get("usage"),time.monotonic()-started,None)
         except Exception as exc:
             # A timeout or exception after send has ambiguous remote status.

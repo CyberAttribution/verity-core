@@ -1,0 +1,6 @@
+{
+  "repository": "vllm-project/recipes",
+  "commit": "0511d96d97551a8b0db969b9b179e6f6d198071d",
+  "path": "models/Qwen/Qwen3.8-27B.yaml",
+  "sha256": "3876aa94eefed23ad770fd4112700190f5481d2037e39dffbe894b61a72eb98b"
+}

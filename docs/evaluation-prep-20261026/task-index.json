@@ -1,0 +1,242 @@
+[
+  {
+    "id": "R01",
+    "version": "1.0.1",
+    "category": "research",
+    "split": "regression",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "113e7ec3c292d88f41a5252140b2a4d2c390078f244f1c37a70d67c66c705797"
+    }
+  },
+  {
+    "id": "R02",
+    "version": "1.0.1",
+    "category": "research",
+    "split": "held-out",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "aa072bdac4fcf7821b2acba285a482f6f3fce36df23a3cb6267a42af9d05c4b8"
+    }
+  },
+  {
+    "id": "R03",
+    "version": "1.0.1",
+    "category": "research",
+    "split": "held-out",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "3432bf056471717cde7a096e3bffbe24c0150bf8f65dce15579be9901cdd42d5"
+    }
+  },
+  {
+    "id": "R04",
+    "version": "1.0.1",
+    "category": "research",
+    "split": "held-out",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "fedf3ba8e805d393967d2b3270e836df15c27733e72f4440669c93ef1bff7234"
+    }
+  },
+  {
+    "id": "U01",
+    "version": "1.0.1",
+    "category": "uncertainty_dates",
+    "split": "held-out",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "79b3fa6ba7d2330ab16a1836ad067914aad846978ed330fd2b1a3a7fd67367e5"
+    }
+  },
+  {
+    "id": "U02",
+    "version": "1.0.1",
+    "category": "uncertainty_dates",
+    "split": "regression",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "f7fd1c3c8fa856dca267acb152811102ac5297b77510da61fa34bf618b5dbdd6"
+    }
+  },
+  {
+    "id": "U03",
+    "version": "1.0.1",
+    "category": "uncertainty_dates",
+    "split": "held-out",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "30996906fd229e1387e69a912c0a03527524addc505880447dfccde9f53496d0"
+    }
+  },
+  {
+    "id": "G01",
+    "version": "1.0.1",
+    "category": "galene",
+    "split": "regression",
+    "provenance": {
+      "kind": "retained manufacturer excerpt plus explicitly synthetic observation; no live vessel acceptance",
+      "context_sha256": "a1483894b94e40c7d1370b76d19933274062822cee90ff46b4aa2f9bae8012a0"
+    }
+  },
+  {
+    "id": "G02",
+    "version": "1.0.1",
+    "category": "galene",
+    "split": "regression",
+    "provenance": {
+      "kind": "retained manufacturer excerpt plus explicitly synthetic observation; no live vessel acceptance",
+      "context_sha256": "329ef641b92917de32159d1d7b96b057b071bdefe0029fb97f8712005eaf3254"
+    }
+  },
+  {
+    "id": "G03",
+    "version": "1.0.1",
+    "category": "galene",
+    "split": "held-out",
+    "provenance": {
+      "kind": "retained manufacturer excerpt plus explicitly synthetic observation; no live vessel acceptance",
+      "context_sha256": "711d9cc1aca1eeb87a477347a33bf280079e26b500a5d59341dbd6bb4ebc521a"
+    }
+  },
+  {
+    "id": "P01",
+    "version": "1.0.1",
+    "category": "planning",
+    "split": "regression",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "22db179e740da5a142a79edd0b3ae70969d84a3e02315eb201042201d6d32e12"
+    }
+  },
+  {
+    "id": "P02",
+    "version": "1.0.1",
+    "category": "planning",
+    "split": "held-out",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "bb302c57c0a1a7f59e06727a91ff48f55ceebdce2297939f695f3e03ca20d6bc"
+    }
+  },
+  {
+    "id": "P03",
+    "version": "1.0.1",
+    "category": "planning",
+    "split": "held-out",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "69a27d11a8acdd816c49cf39e3cbbfc9641cc98ccedbbbd6a9d6c6a1cb5c9537"
+    }
+  },
+  {
+    "id": "H01",
+    "version": "1.0.1",
+    "category": "history_recovery",
+    "split": "regression",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "ebe00d18827f022d610c5e483104753fc13fbcb7514c90bd549aa1bd8eecaa72"
+    }
+  },
+  {
+    "id": "H02",
+    "version": "1.0.1",
+    "category": "history_recovery",
+    "split": "held-out",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "b9d599f346749130dd7978df67c6b5bf0e93c980f37a856f217fcde14f28b18e"
+    }
+  },
+  {
+    "id": "H03",
+    "version": "1.0.1",
+    "category": "history_recovery",
+    "split": "held-out",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "b1a6ce101def5e53138542c5195a94d3298f0df36bb3248e3503ad7a2e3a7eaa"
+    }
+  },
+  {
+    "id": "I01",
+    "version": "1.0.1",
+    "category": "untrusted_instructions",
+    "split": "regression",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "f993f1ae093b1f8c46b4dfc1185800cf8ac7f69d5104211354f72b925af49da4"
+    }
+  },
+  {
+    "id": "I02",
+    "version": "1.0.1",
+    "category": "untrusted_instructions",
+    "split": "held-out",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "5343234b45d41afaac3b300cb6f3ca9206e75b9b1023b9fa1b69ee8656d04f1f"
+    }
+  },
+  {
+    "id": "C01",
+    "version": "1.0.1",
+    "category": "coding",
+    "split": "held-out",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "fd6452103a719851420a3accfc8b5a15947c4f57b8c2b1546dccd146e676c471"
+    }
+  },
+  {
+    "id": "C02",
+    "version": "1.0.1",
+    "category": "coding",
+    "split": "held-out",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "f74102e67d64f34a45ced7ebb6596768ae4edd41d90197f84e36b1340bf07f93"
+    }
+  },
+  {
+    "id": "C03",
+    "version": "1.0.1",
+    "category": "coding",
+    "split": "held-out",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "9cc90fbc047f7af2a3e502883279d96ce0dd8be0290ad0176bbb44efdfd7ac38"
+    }
+  },
+  {
+    "id": "C04",
+    "version": "1.0.1",
+    "category": "coding",
+    "split": "regression",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "a5684a3630f50556e4b70ba5653d1db10913c430e497df76796279cf375a2f8c"
+    }
+  },
+  {
+    "id": "T01",
+    "version": "1.0.1",
+    "category": "native_tools",
+    "split": "held-out",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "48bc70a80e230c340695a24adc8ac5827bf27104ffe5faf9defa13abe2ea6838"
+    }
+  },
+  {
+    "id": "T02",
+    "version": "1.0.1",
+    "category": "native_tools",
+    "split": "held-out",
+    "provenance": {
+      "kind": "synthetic",
+      "context_sha256": "d185e03f185967ff3025fbdf1f4f755bb69355d6b0d026cf4f1fe219242b21a1"
+    }
+  }
+]

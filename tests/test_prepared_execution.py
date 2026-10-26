@@ -43,6 +43,10 @@ def endpoints():
                     for _ in range(100):self.wfile.write(b': alive\n');self.wfile.flush();time.sleep(.05)
                     return
                 def send(x):self.wfile.write(('data: '+json.dumps(x)+'\n\n').encode());self.wfile.flush()
+                if name=='NativeToolStream':
+                    send(dict(id='server-native',model='fixture-model',choices=[dict(index=0,delta={'tool_calls':[dict(index=0,id='call_native',type='function',function={'name':'read_fixture','arguments':'{"fixture_'})]})]))
+                    send(dict(model='fixture-model',choices=[dict(index=0,delta={'tool_calls':[dict(index=0,function={'arguments':'id":"manual"}'})]},finish_reason='tool_calls')],usage={'completion_tokens':9}))
+                    self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
                 model={'QwenProfile':'qwen2.5:7b-instruct','Qwen35Profile':'Qwen/Qwen3.5-4B','GLMFlash':'GLM-4.7-Flash-Q4_K_M','DevstralProfile':'mistralai/Devstral-Small-2-24B-Instruct-2512','QwenCoderProfile':'Qwen3-Coder-Next-Q5_K_M','KolibriProfile':'Kolibri-1-Q5_K_M','KolibriGeneralProfile':'Kolibri-1-Q5_K_M','Qwen38General':'Qwen3.8-27B','GPTOSSProfile':'openai/gpt-oss-120b'}.get(name,'fixture-model')
                 send(dict(id='server-'+name,model=model,choices=[dict(delta={'reasoning_content':'fixture reasoning'})]))
                 send(dict(model=model,choices=[dict(delta={'content':'Result '+name},finish_reason='stop')],usage={'completion_tokens':3}))
@@ -438,3 +442,10 @@ def test_explicit_ceiling_amendment_keeps_same_start_and_uncertainty(tmp_path):
     with c.db() as db:assert tuple(db.execute("SELECT state,request_id,attempts FROM tasks WHERE id='Lost'").fetchone())==('unresolved','lost-id',1)
     with pytest.raises(RuntimeError):c.amend_execution_allocation('existing','Repeated old ceiling authority must be rejected',expected_ceiling=15,ceiling=17)
     c.resume_execution_allocation('existing','Operator continues authorized bounded experiment on same allocation');assert c.snapshot()['control']['mode']=='paused'
+
+
+def test_native_sse_call_retained_without_automatic_acceptance(tmp_path,endpoints):
+    urls,calls=endpoints;c,b=prepared(tmp_path,urls,[('NativeToolStream',0,())]);owner='native-test';c.register_worker(owner,os.getpid());c.run_prepared(owner,'NativeToolStream',digest(b['assignments'][0]));c.unregister_worker(owner)
+    row=c.snapshot()['tasks'][0];assert row['state']=='completed' and row['finish_reason']=='tool_calls' and not row['verifier']
+    response=json.loads(row['response']);assert response['tool_calls'][0]['function']['arguments']=='{"fixture_id":"manual"}' and response['response_kind']=='native_tool_call'
+    with c.db() as db:assert db.execute("SELECT COUNT(*) FROM execution_chunks WHERE kind='tool_call_delta'").fetchone()[0]==2

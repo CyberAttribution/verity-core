@@ -44,7 +44,7 @@ def _label(value, name, limit=240):
 def validate(manifest):
     keys = {"schema", "agent_id", "task_id", "model", "provider", "source_name",
             "source_sha256", "runtime_event_id", "proposal", "action", "policy"}
-    if not isinstance(manifest, dict) or not keys <= set(manifest) or set(manifest) - keys - {"activity_run_id", "response_sha256", "effective_configuration"} or manifest["schema"] != SCHEMA:
+    if not isinstance(manifest, dict) or not keys <= set(manifest) or set(manifest) - keys - {"activity_run_id", "response_sha256", "effective_configuration", "tool_call_binding"} or manifest["schema"] != SCHEMA:
         raise ValueError("Invalid report proposal")
     for k in ("agent_id", "task_id", "model", "provider", "source_name", "runtime_event_id"):
         _label(manifest[k], k)
@@ -99,6 +99,13 @@ def validate(manifest):
                 raise ValueError("Invalid machine linkage")
         if not isinstance(cfg["allowed_tools"],list) or any(x not in ("generate_text","draft_text") for x in cfg["allowed_tools"]):
             raise ValueError("Unsupported tool assertion")
+    if "tool_call_binding" in manifest:
+        b=manifest['tool_call_binding']
+        if not isinstance(b,dict) or set(b)!={'task_id','request_id','call_id','contract_sha256','response_sha256'} or b['task_id']!=manifest['task_id']:
+            raise ValueError('Invalid native tool-call binding')
+        for key in ('task_id','request_id','call_id'):_label(b[key],key,120)
+        for key in ('contract_sha256','response_sha256'):
+            if not isinstance(b[key],str) or len(b[key])!=64 or any(c not in '0123456789abcdef' for c in b[key]):raise ValueError('Invalid call digest')
     proposal = manifest["proposal"]
     if not isinstance(proposal, str) or not proposal.strip() or len(proposal.encode()) > MAX_OUTPUT:
         raise ValueError("Invalid proposed output")
@@ -323,6 +330,24 @@ class Store:
                 raise Conflict('Configuration changed; renewed proposal required')
             record=new(manifest)
             con.execute('INSERT INTO report_actions VALUES (?,?)',(record['record_id'],trust.canonical_json(record)))
+        return inspect(record)
+
+    def create_tool_proposal(self, manifest):
+        """Idempotent retained native-call proposal; existing approval remains required."""
+        validate(manifest)
+        if self.config_store is None or 'effective_configuration' not in manifest or 'tool_call_binding' not in manifest:
+            raise ValueError('Authoritative configuration and native call binding required')
+        cfg=manifest['effective_configuration']
+        if self.config_store.for_snapshot(manifest['agent_id'],TARGET,cfg)!=cfg:raise Conflict('Configuration changed')
+        b=manifest['tool_call_binding']
+        with self.connection() as con:
+            con.execute('BEGIN IMMEDIATE')
+            for (rid,) in con.execute('SELECT id FROM report_actions'):
+                view=self._get(con,rid)[1];old=view['manifest'].get('tool_call_binding')
+                if old and (old['task_id'],old['request_id'],old['call_id'])==(b['task_id'],b['request_id'],b['call_id']):
+                    if view['manifest']!=manifest:raise Conflict('Native call already has another proposal')
+                    return view
+            record=new(manifest);con.execute('INSERT INTO report_actions VALUES (?,?)',(record['record_id'],trust.canonical_json(record)))
         return inspect(record)
 
     def recent(self, limit=50):

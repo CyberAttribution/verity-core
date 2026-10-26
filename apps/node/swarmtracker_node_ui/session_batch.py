@@ -203,7 +203,7 @@ class PreparedExecution:
                 r=a['runtime']
                 if set(r)!={'endpoint','model','provider','configuration_version','provenance'} or not all(isinstance(v,str) and v for v in r.values()):raise ValueError('Exact approved runtime configuration required')
                 endpoint(r['endpoint'])
-                if r['provider'] not in {'local-openai-compatible','ollama-openai-compatible','ollama-qwen2.5-7b','transformers-qwen3.5-4b','llamacpp-glm47-flash-q4km','vllm-devstral-small2-fp8','llamacpp-qwen3-coder-next-q5km','llamacpp-kolibri1-q5km','llamacpp-kolibri1-q5km-general','vllm-qwen38-27b-bf16-general','vllm-gptoss120b-mxfp4-low','synthetic-acceptance'}:raise ValueError('No paid/cloud runtime authorized')
+                if r['provider'] not in {'local-openai-compatible','ollama-openai-compatible','ollama-qwen2.5-7b','transformers-qwen3.5-4b','llamacpp-glm47-flash-q4km','vllm-devstral-small2-fp8','llamacpp-qwen3-coder-next-q5km','llamacpp-kolibri1-q5km','llamacpp-kolibri1-q5km-general','vllm-qwen38-27b-bf16-general','vllm-gptoss120b-mxfp4-low','vllm-qwen38-27b-bf16-tools','vllm-qwen38-27b-fp8-tools','vllm-qwen38-27b-fp8-general','synthetic-acceptance'}:raise ValueError('No paid/cloud runtime authorized')
                 if r['provider']=='ollama-qwen2.5-7b' and r['model']!='qwen2.5:7b-instruct':raise ValueError('Qwen request profile cannot substitute another model')
                 if r['provider']=='transformers-qwen3.5-4b' and r['model']!='Qwen/Qwen3.5-4B':raise ValueError('Qwen3.5 request profile cannot substitute another model')
                 if r['provider']=='llamacpp-glm47-flash-q4km' and (r['model']!='GLM-4.7-Flash-Q4_K_M' or r['configuration_version']!='glm47-q4km-reasoning512-output1536-v1'):raise ValueError('GLM4.7 Flash profile cannot substitute model or configuration')
@@ -213,6 +213,9 @@ class PreparedExecution:
                 if r['provider']=='llamacpp-kolibri1-q5km-general' and (r['model'],r['configuration_version'])!=('Kolibri-1-Q5_K_M','kolibri1-q5km-low-16k-output4096-general-v1'):raise ValueError('Kolibri general profile cannot substitute model or configuration')
                 if r['provider']=='vllm-qwen38-27b-bf16-general' and (r['model'],r['configuration_version'])!=('Qwen3.8-27B','qwen38-27b-bf16-low-16k-output4096-general-v1'):raise ValueError('Qwen3.8 general profile cannot substitute model or configuration')
                 if r['provider']=='vllm-gptoss120b-mxfp4-low' and (r['model'],r['configuration_version'])!=('openai/gpt-oss-120b','gptoss120b-mxfp4-low-16k-output4096-v1'):raise ValueError('GPT-OSS profile cannot substitute model or configuration')
+                if r['provider']=='vllm-qwen38-27b-fp8-general' and (r['model'],r['configuration_version'])!=('Qwen3.8-27B-FP8','qwen38-27b-fp8-low-16k-output4096-general-v1'):raise ValueError('FP8 general profile cannot substitute model or configuration')
+                tool_profiles={'vllm-qwen38-27b-bf16-tools':('Qwen3.8-27B','qwen38-27b-bf16-low-16k-output4096-tools-v1'),'vllm-qwen38-27b-fp8-tools':('Qwen3.8-27B-FP8','qwen38-27b-fp8-low-16k-output4096-tools-v1')}
+                if r['provider'] in tool_profiles and (r['model'],r['configuration_version'])!=tool_profiles[r['provider']]:raise ValueError('Tool profile cannot substitute model or configuration')
                 task=db.execute('SELECT spec,state FROM tasks WHERE id=?',(a['task_id'],)).fetchone()
                 ctl=db.execute('SELECT * FROM task_controls WHERE task_id=?',(a['task_id'],)).fetchone()
                 if not task or task['state']!='queued' or not ctl or ctl['cancelled']:raise ValueError('An existing queued operator task is required')
@@ -348,7 +351,7 @@ class PreparedExecution:
                 # and verified with its rendered template before dispatch.
                 limit=4096 if a['runtime']['provider']=='llamacpp-kolibri1-q5km-general' else 2048
                 payload.update(max_tokens=min(payload['max_tokens'],limit),temperature=0.6,top_p=0.95,top_k=40,min_p=0.0,seed=102626)
-            if a['runtime']['provider']=='vllm-qwen38-27b-bf16-general':
+            if a['runtime']['provider'] in {'vllm-qwen38-27b-bf16-general','vllm-qwen38-27b-fp8-general','vllm-qwen38-27b-bf16-tools','vllm-qwen38-27b-fp8-tools'}:
                 # Qwen3.8's own published template explicitly supports this low
                 # branch. Bind the observed template mechanism, not a legacy
                 # assumption about GLM request-level effort handling.
@@ -358,6 +361,9 @@ class PreparedExecution:
             if a['runtime']['provider']=='vllm-gptoss120b-mxfp4-low':
                 payload.pop('chat_template_kwargs')
                 payload.update(reasoning_effort='low',max_tokens=min(payload['max_tokens'],4096),temperature=1.0,top_p=1.0,seed=102626)
+            if a['runtime']['provider'] in {'vllm-qwen38-27b-bf16-tools','vllm-qwen38-27b-fp8-tools'}:
+                from .structured_tools import FUNCTION_TOOLS
+                payload.update(tools=FUNCTION_TOOLS,tool_choice='auto',parallel_tool_calls=False)
             with self.db() as db:
                 db.execute('INSERT INTO execution_chunks(task_id,request_id,at,kind,content) VALUES (?,?,?,?,?)',(a['task_id'],request_id,self.clock(),'request_payload',json.dumps(payload,sort_keys=True)))
             c.request('POST','/v1/chat/completions',body=json.dumps(payload).encode(),headers={'Content-Type':'application/json','X-Request-ID':request_id})
@@ -367,6 +373,8 @@ class PreparedExecution:
                 with self.db() as db:
                     db.execute('INSERT INTO execution_chunks(task_id,request_id,at,kind,content) VALUES (?,?,?,?,?)',(a['task_id'],request_id,self.clock(),'runtime_refusal',json.dumps(dict(status=response.status,body=body[:4096].decode('utf-8',errors='replace'),truncated=len(body)>4096))))
                 raise ValueError('Runtime HTTP refusal '+str(response.status))
+            from .structured_tools import ToolCallAccumulator
+            tool_calls=ToolCallAccumulator()
             content=[];reasoning=[];usage={};finish=None;server_id=None;total=0;matched=False;done=False
             while True:
                 if time.monotonic()-started>=seconds:raise TimeoutError('Overall request deadline')
@@ -392,9 +400,16 @@ class PreparedExecution:
                             acc.append(value)
                             with self.db() as db:
                                 db.execute('INSERT INTO execution_chunks(task_id,request_id,at,kind,content) VALUES (?,?,?,?,?)',(a['task_id'],request_id,self.clock(),key,value));db.execute('UPDATE execution_assignments SET last_progress=? WHERE task_id=?',(self.clock(),a['task_id']))
+                    if 'tool_calls' in delta:
+                        if a['runtime']['provider'] not in {'vllm-qwen38-27b-bf16-tools','vllm-qwen38-27b-fp8-tools','vllm-qwen38-27b-fp8-general','synthetic-acceptance'}:raise ValueError('Native tools not enabled for this profile')
+                        with self.db() as db:db.execute('INSERT INTO execution_chunks(task_id,request_id,at,kind,content) VALUES (?,?,?,?,?)',(a['task_id'],request_id,self.clock(),'tool_call_delta',json.dumps(delta['tool_calls'])))
+                        tool_calls.add(delta['tool_calls'])
                     finish=choice.get('finish_reason') or finish
             if not matched or not done:raise ValueError('Incomplete or unbound response stream')
-            return dict(request_id=request_id,server_request_id=server_id,model=a['runtime']['model'],content=''.join(content),reasoning_content=''.join(reasoning),finish_reason=finish,usage=usage,assignment_hash=digest(a),elapsed_seconds=time.monotonic()-started)
+            result=dict(request_id=request_id,server_request_id=server_id,model=a['runtime']['model'],content=''.join(content),reasoning_content=''.join(reasoning),finish_reason=finish,usage=usage,assignment_hash=digest(a),elapsed_seconds=time.monotonic()-started)
+            calls=tool_calls.finish()
+            if calls:result.update(tool_calls=calls,response_kind='native_tool_call')
+            return result
         except Exception as exc:
             with self.db() as db:
                 db.execute('INSERT INTO execution_chunks(task_id,request_id,at,kind,content) VALUES (?,?,?,?,?)',(a['task_id'],request_id,self.clock(),'diagnostic',json.dumps(dict(error_class=type(exc).__name__,message=str(exc)[:500]))))

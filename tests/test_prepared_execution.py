@@ -43,7 +43,7 @@ def endpoints():
                     for _ in range(100):self.wfile.write(b': alive\n');self.wfile.flush();time.sleep(.05)
                     return
                 def send(x):self.wfile.write(('data: '+json.dumps(x)+'\n\n').encode());self.wfile.flush()
-                model={'QwenProfile':'qwen2.5:7b-instruct','Qwen35Profile':'Qwen/Qwen3.5-4B','GLMFlash':'GLM-4.7-Flash-Q4_K_M','DevstralProfile':'mistralai/Devstral-Small-2-24B-Instruct-2512','QwenCoderProfile':'Qwen3-Coder-Next-Q5_K_M','KolibriProfile':'Kolibri-1-Q5_K_M','KolibriGeneralProfile':'Kolibri-1-Q5_K_M'}.get(name,'fixture-model')
+                model={'QwenProfile':'qwen2.5:7b-instruct','Qwen35Profile':'Qwen/Qwen3.5-4B','GLMFlash':'GLM-4.7-Flash-Q4_K_M','DevstralProfile':'mistralai/Devstral-Small-2-24B-Instruct-2512','QwenCoderProfile':'Qwen3-Coder-Next-Q5_K_M','KolibriProfile':'Kolibri-1-Q5_K_M','KolibriGeneralProfile':'Kolibri-1-Q5_K_M','Qwen38General':'Qwen3.8-27B'}.get(name,'fixture-model')
                 send(dict(id='server-'+name,model=model,choices=[dict(delta={'reasoning_content':'fixture reasoning'})]))
                 send(dict(model=model,choices=[dict(delta={'content':'Result '+name},finish_reason='stop')],usage={'completion_tokens':3}))
                 self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
@@ -65,10 +65,10 @@ def prepared(tmp_path, endpoints, names, *, max_seconds=3, runtime_profile=None)
     assignments=[]
     for name,lane,deps in names:
         spec=task(name,deps)
-        if (runtime_profile or {}).get('provider')=='llamacpp-kolibri1-q5km-general':spec['model_settings']['max_tokens']=4096
+        if (runtime_profile or {}).get('provider') in {'llamacpp-kolibri1-q5km-general','vllm-qwen38-27b-bf16-general'}:spec['model_settings']['max_tokens']=4096
         c.create_operator_task(spec)
         assignments.append(dict(task_id=name,agent_id=f'lane{lane}',session_id='synthetic-session',task_hash=c._spec_hash(spec),
-            runtime=dict(endpoint=endpoints[lane],model=(runtime_profile or {}).get('model','fixture-model'),provider=(runtime_profile or {}).get('provider','synthetic-acceptance'),configuration_version=('glm47-q4km-reasoning512-output1536-v1' if (runtime_profile or {}).get('provider')=='llamacpp-glm47-flash-q4km' else {'vllm-devstral-small2-fp8':'devstral-fp8-16k-output2048-v1','llamacpp-qwen3-coder-next-q5km':'qwen-coder-next-q5km-16k-output2048-v1','llamacpp-kolibri1-q5km':'kolibri1-q5km-low-16k-output2048-v1','llamacpp-kolibri1-q5km-general':'kolibri1-q5km-low-16k-output4096-general-v1'}.get((runtime_profile or {}).get('provider'),'fixture-v1')),provenance='two synthetic loopback acceptance endpoints'),
+            runtime=dict(endpoint=endpoints[lane],model=(runtime_profile or {}).get('model','fixture-model'),provider=(runtime_profile or {}).get('provider','synthetic-acceptance'),configuration_version=('glm47-q4km-reasoning512-output1536-v1' if (runtime_profile or {}).get('provider')=='llamacpp-glm47-flash-q4km' else {'vllm-devstral-small2-fp8':'devstral-fp8-16k-output2048-v1','llamacpp-qwen3-coder-next-q5km':'qwen-coder-next-q5km-16k-output2048-v1','llamacpp-kolibri1-q5km':'kolibri1-q5km-low-16k-output2048-v1','llamacpp-kolibri1-q5km-general':'kolibri1-q5km-low-16k-output4096-general-v1','vllm-qwen38-27b-bf16-general':'qwen38-27b-bf16-low-16k-output4096-general-v1'}.get((runtime_profile or {}).get('provider'),'fixture-v1')),provenance='two synthetic loopback acceptance endpoints'),
             source_repo=str(repo),source_commit=rev,input_path=str(p),input_sha256=hashlib.sha256(p.read_bytes()).hexdigest(),
             context_version='fixture-context-v1',configuration_version='fixture-configuration-v1',purpose=spec['purpose'],expires_at=time.time()+25,
             max_seconds=max_seconds,acceptance_responsibility='Separate fixture evaluator; no product or research acceptance'))
@@ -405,3 +405,12 @@ def test_same_allocation_explicit_resume_preserves_budget_and_uncertainty(tmp_pa
         with c.db() as db:
             assert tuple(db.execute("SELECT state,request_id,attempts FROM tasks WHERE id='Lost'").fetchone())==('unresolved','lost-id',1)
             assert db.execute('SELECT COUNT(*) FROM execution_allocation_continuations').fetchone()[0]==1
+
+
+def test_qwen38_uses_its_verified_low_template_contract(tmp_path,endpoints):
+    urls,calls=endpoints;c,b=prepared(tmp_path,urls,[('Qwen38General',0,())],runtime_profile=dict(provider='vllm-qwen38-27b-bf16-general',model='Qwen3.8-27B'))
+    owner='qwen38-test';c.register_worker(owner,os.getpid());c.run_prepared(owner,'Qwen38General',digest(b['assignments'][0]));c.unregister_worker(owner)
+    payload=calls[0]['payload'];assert payload['model']=='Qwen3.8-27B' and payload['max_tokens']==4096
+    assert 'reasoning_effort' not in payload and payload['chat_template_kwargs']==dict(reasoning_effort='low',enable_thinking=True,preserve_thinking=False)
+    assert payload['temperature']==1.0 and payload['top_k']==20 and payload['repetition_penalty']==1.0
+    assert c.snapshot()['tasks'][0]['state']=='completed'

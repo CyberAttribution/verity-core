@@ -179,7 +179,7 @@ class PreparedExecution:
                 r=a['runtime']
                 if set(r)!={'endpoint','model','provider','configuration_version','provenance'} or not all(isinstance(v,str) and v for v in r.values()):raise ValueError('Exact approved runtime configuration required')
                 endpoint(r['endpoint'])
-                if r['provider'] not in {'local-openai-compatible','ollama-openai-compatible','ollama-qwen2.5-7b','transformers-qwen3.5-4b','llamacpp-glm47-flash-q4km','vllm-devstral-small2-fp8','llamacpp-qwen3-coder-next-q5km','llamacpp-kolibri1-q5km','llamacpp-kolibri1-q5km-general','synthetic-acceptance'}:raise ValueError('No paid/cloud runtime authorized')
+                if r['provider'] not in {'local-openai-compatible','ollama-openai-compatible','ollama-qwen2.5-7b','transformers-qwen3.5-4b','llamacpp-glm47-flash-q4km','vllm-devstral-small2-fp8','llamacpp-qwen3-coder-next-q5km','llamacpp-kolibri1-q5km','llamacpp-kolibri1-q5km-general','vllm-qwen38-27b-bf16-general','synthetic-acceptance'}:raise ValueError('No paid/cloud runtime authorized')
                 if r['provider']=='ollama-qwen2.5-7b' and r['model']!='qwen2.5:7b-instruct':raise ValueError('Qwen request profile cannot substitute another model')
                 if r['provider']=='transformers-qwen3.5-4b' and r['model']!='Qwen/Qwen3.5-4B':raise ValueError('Qwen3.5 request profile cannot substitute another model')
                 if r['provider']=='llamacpp-glm47-flash-q4km' and (r['model']!='GLM-4.7-Flash-Q4_K_M' or r['configuration_version']!='glm47-q4km-reasoning512-output1536-v1'):raise ValueError('GLM4.7 Flash profile cannot substitute model or configuration')
@@ -187,6 +187,7 @@ class PreparedExecution:
                 if r['provider'] in coding_profiles and (r['model'],r['configuration_version'])!=coding_profiles[r['provider']]:raise ValueError('Coding profile cannot substitute model or configuration')
                 if r['provider']=='llamacpp-kolibri1-q5km' and (r['model'],r['configuration_version'])!=('Kolibri-1-Q5_K_M','kolibri1-q5km-low-16k-output2048-v1'):raise ValueError('Kolibri profile cannot substitute model or configuration')
                 if r['provider']=='llamacpp-kolibri1-q5km-general' and (r['model'],r['configuration_version'])!=('Kolibri-1-Q5_K_M','kolibri1-q5km-low-16k-output4096-general-v1'):raise ValueError('Kolibri general profile cannot substitute model or configuration')
+                if r['provider']=='vllm-qwen38-27b-bf16-general' and (r['model'],r['configuration_version'])!=('Qwen3.8-27B','qwen38-27b-bf16-low-16k-output4096-general-v1'):raise ValueError('Qwen3.8 general profile cannot substitute model or configuration')
                 task=db.execute('SELECT spec,state FROM tasks WHERE id=?',(a['task_id'],)).fetchone()
                 ctl=db.execute('SELECT * FROM task_controls WHERE task_id=?',(a['task_id'],)).fetchone()
                 if not task or task['state']!='queued' or not ctl or ctl['cancelled']:raise ValueError('An existing queued operator task is required')
@@ -322,6 +323,13 @@ class PreparedExecution:
                 # and verified with its rendered template before dispatch.
                 limit=4096 if a['runtime']['provider']=='llamacpp-kolibri1-q5km-general' else 2048
                 payload.update(max_tokens=min(payload['max_tokens'],limit),temperature=0.6,top_p=0.95,top_k=40,min_p=0.0,seed=102626)
+            if a['runtime']['provider']=='vllm-qwen38-27b-bf16-general':
+                # Qwen3.8's own published template explicitly supports this low
+                # branch. Bind the observed template mechanism, not a legacy
+                # assumption about GLM request-level effort handling.
+                payload.pop('reasoning_effort')
+                payload['chat_template_kwargs']={'reasoning_effort':'low','enable_thinking':True,'preserve_thinking':False}
+                payload.update(max_tokens=min(payload['max_tokens'],4096),temperature=1.0,top_p=0.95,top_k=20,min_p=0.0,presence_penalty=0.0,repetition_penalty=1.0,seed=102626)
             with self.db() as db:
                 db.execute('INSERT INTO execution_chunks(task_id,request_id,at,kind,content) VALUES (?,?,?,?,?)',(a['task_id'],request_id,self.clock(),'request_payload',json.dumps(payload,sort_keys=True)))
             c.request('POST','/v1/chat/completions',body=json.dumps(payload).encode(),headers={'Content-Type':'application/json','X-Request-ID':request_id})

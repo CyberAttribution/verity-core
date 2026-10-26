@@ -341,3 +341,16 @@ def test_glm47_llamacpp_has_model_specific_wire_contract(tmp_path,endpoints):
     assert 'reasoning_effort' not in payload and 'chat_template_kwargs' not in payload
     assert payload['max_tokens']==1536 and payload['min_p']==0.01 and payload['repeat_penalty']==1.0
     assert c.snapshot()['tasks'][0]['state']=='completed'
+
+
+@pytest.mark.parametrize('mode,expected',[('stopped',None),('paused',10),('running',10)])
+def test_stopped_session_does_not_report_allocation_idle_seconds(tmp_path,endpoints,mode,expected):
+    c,b=prepared(tmp_path,endpoints[0],[('Finished',0,())])
+    now=time.time()
+    c.clock=lambda:now
+    with c.db() as db:
+        db.execute("UPDATE tasks SET state='completed' WHERE id='Finished'")
+        db.execute("UPDATE execution_assignments SET last_progress=?,ended=? WHERE task_id='Finished'",(now-10,now-10))
+        db.execute('UPDATE control SET mode=?',(mode,))
+    assert c.execution_status()['worker']['state']=='absent'
+    assert c.execution_status()['idle_seconds']==expected

@@ -29,6 +29,30 @@ def endpoint(value):
 
 
 class PreparedExecution:
+    def amend_execution_allocation(self, session_id, authorization, *, expected_ceiling, ceiling):
+        """Explicit operator ceiling amendment; same allocation accounting anchor."""
+        if not isinstance(authorization,str) or not 20<=len(authorization)<=1000:
+            raise ValueError('Explicit allocation amendment authority required')
+        if not isinstance(ceiling,(int,float)) or not expected_ceiling<ceiling<=1e8:
+            raise ValueError('Finite increased cumulative ceiling required')
+        if self.worker_status()['state']!='absent':raise RuntimeError('Quiesce worker before amendment')
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            old=db.execute('SELECT * FROM control WHERE id=1').fetchone()
+            bound=db.execute('SELECT new_control FROM execution_session_authorizations WHERE id=?',(session_id,)).fetchone()
+            if not old or old['mode'] not in {'stopped','paused'} or not bound:raise RuntimeError('Named inactive allocation required')
+            limits=json.loads(bound['new_control'])
+            if old['ceiling']!=expected_ceiling or any(old[k]!=limits[k] for k in ('rate','start','ceiling','margin','deadline')):
+                raise RuntimeError('Original allocation binding changed')
+            if old['deadline']<=self.clock() or old['rate']<=0:raise RuntimeError('Unexpired paid allocation required')
+            if db.execute("SELECT 1 FROM tasks WHERE state IN ('submitted','acknowledged')").fetchone():raise RuntimeError('Active submission prevents amendment')
+            deadline=old['deadline']+(ceiling-expected_ceiling)*3600/old['rate']
+            new=dict(limits,ceiling=ceiling,deadline=deadline)
+            db.execute('CREATE TABLE IF NOT EXISTS execution_allocation_amendments(seq INTEGER PRIMARY KEY,at REAL NOT NULL,session_id TEXT NOT NULL,evidence TEXT NOT NULL,previous_control TEXT NOT NULL,new_control TEXT NOT NULL)')
+            db.execute('INSERT INTO execution_allocation_amendments(at,session_id,evidence,previous_control,new_control) VALUES (?,?,?,?,?)',(self.clock(),session_id,authorization,json.dumps(dict(old),sort_keys=True),json.dumps(new,sort_keys=True)))
+            db.execute('UPDATE control SET ceiling=?,deadline=? WHERE id=1',(ceiling,deadline))
+            db.execute('UPDATE execution_session_authorizations SET new_control=? WHERE id=?',(json.dumps(new,sort_keys=True),session_id))
+
     def resume_execution_allocation(self, session_id, authorization):
         """Explicitly resume stopped dispatch on the same unexpired allocation."""
         if not isinstance(authorization,str) or not 20<=len(authorization)<=1000:
@@ -179,7 +203,7 @@ class PreparedExecution:
                 r=a['runtime']
                 if set(r)!={'endpoint','model','provider','configuration_version','provenance'} or not all(isinstance(v,str) and v for v in r.values()):raise ValueError('Exact approved runtime configuration required')
                 endpoint(r['endpoint'])
-                if r['provider'] not in {'local-openai-compatible','ollama-openai-compatible','ollama-qwen2.5-7b','transformers-qwen3.5-4b','llamacpp-glm47-flash-q4km','vllm-devstral-small2-fp8','llamacpp-qwen3-coder-next-q5km','llamacpp-kolibri1-q5km','llamacpp-kolibri1-q5km-general','vllm-qwen38-27b-bf16-general','synthetic-acceptance'}:raise ValueError('No paid/cloud runtime authorized')
+                if r['provider'] not in {'local-openai-compatible','ollama-openai-compatible','ollama-qwen2.5-7b','transformers-qwen3.5-4b','llamacpp-glm47-flash-q4km','vllm-devstral-small2-fp8','llamacpp-qwen3-coder-next-q5km','llamacpp-kolibri1-q5km','llamacpp-kolibri1-q5km-general','vllm-qwen38-27b-bf16-general','vllm-gptoss120b-mxfp4-low','synthetic-acceptance'}:raise ValueError('No paid/cloud runtime authorized')
                 if r['provider']=='ollama-qwen2.5-7b' and r['model']!='qwen2.5:7b-instruct':raise ValueError('Qwen request profile cannot substitute another model')
                 if r['provider']=='transformers-qwen3.5-4b' and r['model']!='Qwen/Qwen3.5-4B':raise ValueError('Qwen3.5 request profile cannot substitute another model')
                 if r['provider']=='llamacpp-glm47-flash-q4km' and (r['model']!='GLM-4.7-Flash-Q4_K_M' or r['configuration_version']!='glm47-q4km-reasoning512-output1536-v1'):raise ValueError('GLM4.7 Flash profile cannot substitute model or configuration')
@@ -188,6 +212,7 @@ class PreparedExecution:
                 if r['provider']=='llamacpp-kolibri1-q5km' and (r['model'],r['configuration_version'])!=('Kolibri-1-Q5_K_M','kolibri1-q5km-low-16k-output2048-v1'):raise ValueError('Kolibri profile cannot substitute model or configuration')
                 if r['provider']=='llamacpp-kolibri1-q5km-general' and (r['model'],r['configuration_version'])!=('Kolibri-1-Q5_K_M','kolibri1-q5km-low-16k-output4096-general-v1'):raise ValueError('Kolibri general profile cannot substitute model or configuration')
                 if r['provider']=='vllm-qwen38-27b-bf16-general' and (r['model'],r['configuration_version'])!=('Qwen3.8-27B','qwen38-27b-bf16-low-16k-output4096-general-v1'):raise ValueError('Qwen3.8 general profile cannot substitute model or configuration')
+                if r['provider']=='vllm-gptoss120b-mxfp4-low' and (r['model'],r['configuration_version'])!=('openai/gpt-oss-120b','gptoss120b-mxfp4-low-16k-output4096-v1'):raise ValueError('GPT-OSS profile cannot substitute model or configuration')
                 task=db.execute('SELECT spec,state FROM tasks WHERE id=?',(a['task_id'],)).fetchone()
                 ctl=db.execute('SELECT * FROM task_controls WHERE task_id=?',(a['task_id'],)).fetchone()
                 if not task or task['state']!='queued' or not ctl or ctl['cancelled']:raise ValueError('An existing queued operator task is required')
@@ -330,6 +355,9 @@ class PreparedExecution:
                 payload.pop('reasoning_effort')
                 payload['chat_template_kwargs']={'reasoning_effort':'low','enable_thinking':True,'preserve_thinking':False}
                 payload.update(max_tokens=min(payload['max_tokens'],4096),temperature=1.0,top_p=0.95,top_k=20,min_p=0.0,presence_penalty=0.0,repetition_penalty=1.0,seed=102626)
+            if a['runtime']['provider']=='vllm-gptoss120b-mxfp4-low':
+                payload.pop('chat_template_kwargs')
+                payload.update(reasoning_effort='low',max_tokens=min(payload['max_tokens'],4096),temperature=1.0,top_p=1.0,seed=102626)
             with self.db() as db:
                 db.execute('INSERT INTO execution_chunks(task_id,request_id,at,kind,content) VALUES (?,?,?,?,?)',(a['task_id'],request_id,self.clock(),'request_payload',json.dumps(payload,sort_keys=True)))
             c.request('POST','/v1/chat/completions',body=json.dumps(payload).encode(),headers={'Content-Type':'application/json','X-Request-ID':request_id})

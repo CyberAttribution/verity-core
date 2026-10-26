@@ -42,7 +42,7 @@ def endpoints():
                     for _ in range(100):self.wfile.write(b': alive\n');self.wfile.flush();time.sleep(.05)
                     return
                 def send(x):self.wfile.write(('data: '+json.dumps(x)+'\n\n').encode());self.wfile.flush()
-                model='qwen2.5:7b-instruct' if name=='QwenProfile' else 'fixture-model'
+                model={'QwenProfile':'qwen2.5:7b-instruct','Qwen35Profile':'Qwen/Qwen3.5-4B'}.get(name,'fixture-model')
                 send(dict(id='server-'+name,model=model,choices=[dict(delta={'reasoning_content':'fixture reasoning'})]))
                 send(dict(model=model,choices=[dict(delta={'content':'Result '+name},finish_reason='stop')],usage={'completion_tokens':3}))
                 self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
@@ -179,6 +179,39 @@ def test_explicit_qwen_profile_and_retained_refusal(tmp_path,endpoints):
 def test_qwen_profile_cannot_strip_glm_reasoning_settings(tmp_path,endpoints):
     with pytest.raises(ValueError,match='cannot substitute'):
         prepared(tmp_path,endpoints[0],[('A1',0,())],runtime_profile=dict(provider='ollama-qwen2.5-7b',model=MODEL))
+
+
+def test_qwen35_profile_uses_supported_non_thinking_template(tmp_path,endpoints):
+    urls,calls=endpoints
+    c,_=prepared(tmp_path,urls,[('Qwen35Profile',0,())],runtime_profile=dict(provider='transformers-qwen3.5-4b',model='Qwen/Qwen3.5-4B'))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        run_loop(str(c.path),lambda *x:pool.submit(_execute,*x),poll_seconds=.02)
+    assert states(c)=={'Qwen35Profile':'completed'}
+    assert len(calls)==1 and 'reasoning_effort' not in calls[0]['payload']
+    assert calls[0]['payload']['chat_template_kwargs']=={'enable_thinking':False}
+    assert calls[0]['payload']['max_tokens']==384
+
+
+def test_qwen35_profile_refuses_model_substitution(tmp_path,endpoints):
+    with pytest.raises(ValueError,match='cannot substitute'):
+        prepared(tmp_path,endpoints[0],[('A1',0,())],runtime_profile=dict(provider='transformers-qwen3.5-4b',model=MODEL))
+
+
+def test_explicit_new_allocation_keeps_ledger_and_prior_limits(tmp_path):
+    c=Coordinator(tmp_path/'queue.db');now=time.time()
+    c.configure(rate=0,start=now-100,ceiling=1,margin=0,deadline=now+10)
+    args=dict(session_id='newallocation',authorization='Operator explicitly permits a distinct allocation, bounded to five dollars',rate=1.99,start=now-10,ceiling=5,margin=1,deadline=now+300)
+    with pytest.raises(RuntimeError):c.authorize_execution_session(**args)
+    with c.db() as db:db.execute('UPDATE control SET deadline=?',(now-1,))
+    c.register_worker('test',os.getpid())
+    with pytest.raises(RuntimeError):c.authorize_execution_session(**args)
+    c.unregister_worker('test');c.authorize_execution_session(**args)
+    with c.db() as db:
+        row=db.execute('SELECT * FROM execution_session_authorizations').fetchone()
+        assert json.loads(row['previous_control'])['ceiling']==1
+        assert json.loads(row['new_control'])['ceiling']==5
+    assert c.snapshot()['control']['mode']=='paused'
+    with pytest.raises(RuntimeError):c.authorize_execution_session(**args)
 
 
 @pytest.mark.parametrize('change,reason',[

@@ -1,0 +1,123 @@
+{
+  "devstral": {
+    "repository": "mistralai/Devstral-Small-2-24B-Instruct-2512",
+    "revision": "55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128",
+    "total_bytes": 25809991692,
+    "files": [
+      {
+        "name": "CHAT_SYSTEM_PROMPT.txt",
+        "bytes": 2367,
+        "sha256": "35e9942fc2a95dca58e4ce6484515f16a798f718aad0ce0b2e83ba0887f53b29"
+      },
+      {
+        "name": "README.md",
+        "bytes": 61545,
+        "sha256": "e1aa7a24bc4845a11cf8defacd723a67fe5cc551ca9311e0276933d9176f55d7"
+      },
+      {
+        "name": "chat_template.jinja",
+        "bytes": 11362,
+        "sha256": "a0c0ed8a45c2c75c85fd756316a10419b90eb4f3dbe64d00f5c0b8ad4de5209a"
+      },
+      {
+        "name": "config.json",
+        "bytes": 1822,
+        "sha256": "8d570ae877badd9ff5442afdc726385aba07f5757ba875a7491bde9549457e72"
+      },
+      {
+        "name": "consolidated-00001-of-00002.safetensors",
+        "bytes": 19839869982,
+        "sha256": "dfa96c3ccb824ac308eeeaa86fd1ce01aca4e3311e1aaa27a498ec3b7302e165"
+      },
+      {
+        "name": "consolidated-00002-of-00002.safetensors",
+        "bytes": 5953165906,
+        "sha256": "b783163b5ee6fb9595fde29d6072e81be8fcc24ea576d09ecc3dc7611ababb97"
+      },
+      {
+        "name": "consolidated.safetensors.index.json",
+        "bytes": 101411,
+        "sha256": "ae098214199fb7fe4948768c0a640f0cea32d1effb827c09b0ae1314b02ef714"
+      },
+      {
+        "name": "generation_config.json",
+        "bytes": 175,
+        "sha256": "c5ee59a086c5504838db2a66cafdf04d10aac11cb021dd4e92a15946645c2dda"
+      },
+      {
+        "name": "params.json",
+        "bytes": 1185,
+        "sha256": "1618da0d6f897e074ff7ec4b1047b5d2e8a1a4aa1fab41e26fc88f3b5b94d2aa"
+      },
+      {
+        "name": "processor_config.json",
+        "bytes": 976,
+        "sha256": "ece2373c2ae391bce18785a1810543bc6173a1f28b6767cffab2c35dbea5f002"
+      },
+      {
+        "name": "tekken.json",
+        "bytes": 16753784,
+        "sha256": "600bb27946565481ecf51ba8aee252e49b9a68507866080ac9c30185bb312843"
+      },
+      {
+        "name": "tokenizer_config.json",
+        "bytes": 21177,
+        "sha256": "4a05af595aa11c3436d3b68a616219ae99b303426f708a12b31bc9ce32530728"
+      }
+    ]
+  },
+  "qwen": {
+    "repository": "Qwen/Qwen3-Coder-Next-GGUF",
+    "revision": "b82fb7382639d97b38fa7672e526c760c2fb358e",
+    "total_bytes": 56710372768,
+    "files": [
+      {
+        "name": "Qwen3-Coder-Next-Q5_K_M/Qwen3-Coder-Next-Q5_K_M-00001-of-00004.gguf",
+        "bytes": 17813589920,
+        "sha256": "d68162877891c4ba309c8601a69721ecfc7be2091ad99e8175a078ae59decdd3"
+      },
+      {
+        "name": "Qwen3-Coder-Next-Q5_K_M/Qwen3-Coder-Next-Q5_K_M-00002-of-00004.gguf",
+        "bytes": 17479501728,
+        "sha256": "3da1a3fda1061009126eb48c7098221653ab63e0a266d3b6d04f5eac3ae9aa74"
+      },
+      {
+        "name": "Qwen3-Coder-Next-Q5_K_M/Qwen3-Coder-Next-Q5_K_M-00003-of-00004.gguf",
+        "bytes": 17226413600,
+        "sha256": "df60c7a55c6e118d4984a829b74df6b9e863dcea749ee7dc25ab5e72913624e1"
+      },
+      {
+        "name": "Qwen3-Coder-Next-Q5_K_M/Qwen3-Coder-Next-Q5_K_M-00004-of-00004.gguf",
+        "bytes": 4190867520,
+        "sha256": "777ac63a6f94272934996b1cfd7e5619c6804e8580ec4e00311d2a465e298c6a"
+      }
+    ]
+  },
+  "kolibri": {
+    "repository": "bartowski/Kolibri-1-GGUF",
+    "revision": "ffd6001f205725f0c4af4ff93e33c04f0f8ad9f9",
+    "total_bytes": 60297408576,
+    "files": [
+      {
+        "name": "Kolibri-1-Q5_K_M/Kolibri-1-Q5_K_M-00001-of-00002.gguf",
+        "bytes": 39899568832,
+        "sha256": "13bfe90137f0cd5bead9e52abb22660402c99aaf88979357e761f4626b464a38"
+      },
+      {
+        "name": "Kolibri-1-Q5_K_M/Kolibri-1-Q5_K_M-00002-of-00002.gguf",
+        "bytes": 20397839744,
+        "sha256": "5ec14bd166da217a2c8efce028c20282a6c9eaef8ac233e79ec51347dfc029c4"
+      }
+    ],
+    "embedded_template_sha256": "9ba35d4bd6baa26b66aa75d03a922dfee98b16bb1fa37481b195d247267b0f97",
+    "verification": "Publisher hashes pinned; on-host full-byte verification pending at this source checkpoint"
+  },
+  "runtime": {
+    "llamacpp_commit": "74b104c9ba5717116b7e65e0cd35397778653304",
+    "archive_sha256": "618c17e4e4ccc11953f21452ca34e4786a1554dc405e98a2c4d53d7c2ed5b415",
+    "cuda_image": "sha256:ebef3c171eeef0298e4eb2e4be843105edf3b8b0ac45e0b43acee358e8046867",
+    "vllm_amd64_image": "sha256:082ca6f035279109041ffd3fe0695cb568b29bc580b35c4f297a66a08b216c1b",
+    "vllm_version": "0.29.0",
+    "vllm_commit": "98dff2a81d747d1dba01a47f939f48c3526d4206"
+  }
+}

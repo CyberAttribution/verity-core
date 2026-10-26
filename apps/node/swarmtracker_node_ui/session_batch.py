@@ -29,6 +29,26 @@ def endpoint(value):
 
 
 class PreparedExecution:
+    def resume_execution_allocation(self, session_id, authorization):
+        """Explicitly resume stopped dispatch on the same unexpired allocation."""
+        if not isinstance(authorization,str) or not 20<=len(authorization)<=1000:
+            raise ValueError('Explicit same-allocation continuation authority required')
+        if self.worker_status()['state']!='absent':raise RuntimeError('Quiesce worker before continuation')
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            old=db.execute('SELECT * FROM control WHERE id=1').fetchone()
+            bound=db.execute('SELECT new_control FROM execution_session_authorizations WHERE id=?',(session_id,)).fetchone()
+            if not old or old['mode']!='stopped' or not bound:raise RuntimeError('Named stopped allocation required')
+            limits=json.loads(bound['new_control'])
+            if any(old[k]!=limits[k] for k in ('rate','start','ceiling','margin','deadline')) or old['deadline']<=self.clock():
+                raise RuntimeError('Original unexpired allocation limits must remain unchanged')
+            if self._budget(old)>=old['ceiling']-old['margin']:raise RuntimeError('Preservation margin reached')
+            if db.execute("SELECT 1 FROM tasks WHERE state IN ('submitted','acknowledged')").fetchone():
+                raise RuntimeError('Reconcile active submissions before continuation')
+            db.execute('CREATE TABLE IF NOT EXISTS execution_allocation_continuations(seq INTEGER PRIMARY KEY,at REAL NOT NULL,session_id TEXT NOT NULL,evidence TEXT NOT NULL,previous_control TEXT NOT NULL)')
+            db.execute('INSERT INTO execution_allocation_continuations(at,session_id,evidence,previous_control) VALUES (?,?,?,?)',(self.clock(),session_id,authorization,json.dumps(dict(old),sort_keys=True)))
+            db.execute("UPDATE control SET mode='paused' WHERE id=1")
+
     def authorize_execution_session(self, *, session_id, authorization, rate, start, ceiling, margin, deadline, preserve_prior_tasks=None):
         """Explicit new allocation authority in the same ledger; never an automatic top-up."""
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}',session_id) or not isinstance(authorization,str) or not 20<=len(authorization)<=1000:
@@ -159,12 +179,13 @@ class PreparedExecution:
                 r=a['runtime']
                 if set(r)!={'endpoint','model','provider','configuration_version','provenance'} or not all(isinstance(v,str) and v for v in r.values()):raise ValueError('Exact approved runtime configuration required')
                 endpoint(r['endpoint'])
-                if r['provider'] not in {'local-openai-compatible','ollama-openai-compatible','ollama-qwen2.5-7b','transformers-qwen3.5-4b','llamacpp-glm47-flash-q4km','vllm-devstral-small2-fp8','llamacpp-qwen3-coder-next-q5km','synthetic-acceptance'}:raise ValueError('No paid/cloud runtime authorized')
+                if r['provider'] not in {'local-openai-compatible','ollama-openai-compatible','ollama-qwen2.5-7b','transformers-qwen3.5-4b','llamacpp-glm47-flash-q4km','vllm-devstral-small2-fp8','llamacpp-qwen3-coder-next-q5km','llamacpp-kolibri1-q5km','synthetic-acceptance'}:raise ValueError('No paid/cloud runtime authorized')
                 if r['provider']=='ollama-qwen2.5-7b' and r['model']!='qwen2.5:7b-instruct':raise ValueError('Qwen request profile cannot substitute another model')
                 if r['provider']=='transformers-qwen3.5-4b' and r['model']!='Qwen/Qwen3.5-4B':raise ValueError('Qwen3.5 request profile cannot substitute another model')
                 if r['provider']=='llamacpp-glm47-flash-q4km' and (r['model']!='GLM-4.7-Flash-Q4_K_M' or r['configuration_version']!='glm47-q4km-reasoning512-output1536-v1'):raise ValueError('GLM4.7 Flash profile cannot substitute model or configuration')
                 coding_profiles={'vllm-devstral-small2-fp8':('mistralai/Devstral-Small-2-24B-Instruct-2512','devstral-fp8-16k-output2048-v1'),'llamacpp-qwen3-coder-next-q5km':('Qwen3-Coder-Next-Q5_K_M','qwen-coder-next-q5km-16k-output2048-v1')}
                 if r['provider'] in coding_profiles and (r['model'],r['configuration_version'])!=coding_profiles[r['provider']]:raise ValueError('Coding profile cannot substitute model or configuration')
+                if r['provider']=='llamacpp-kolibri1-q5km' and (r['model'],r['configuration_version'])!=('Kolibri-1-Q5_K_M','kolibri1-q5km-low-16k-output2048-v1'):raise ValueError('Kolibri profile cannot substitute model or configuration')
                 task=db.execute('SELECT spec,state FROM tasks WHERE id=?',(a['task_id'],)).fetchone()
                 ctl=db.execute('SELECT * FROM task_controls WHERE task_id=?',(a['task_id'],)).fetchone()
                 if not task or task['state']!='queued' or not ctl or ctl['cancelled']:raise ValueError('An existing queued operator task is required')
@@ -294,6 +315,11 @@ class PreparedExecution:
                 payload['max_tokens']=min(payload['max_tokens'],2048)
                 if a['runtime']['provider']=='vllm-devstral-small2-fp8':payload.update(temperature=0.15,top_p=1.0,seed=102626)
                 else:payload.update(temperature=1.0,top_p=0.95,top_k=40,min_p=0.0,seed=102626)
+            if a['runtime']['provider']=='llamacpp-kolibri1-q5km':
+                payload.pop('reasoning_effort');payload.pop('chat_template_kwargs')
+                # Low effort is pinned in the server's supported template kwargs
+                # and verified with its rendered template before dispatch.
+                payload.update(max_tokens=min(payload['max_tokens'],2048),temperature=0.6,top_p=0.95,top_k=40,min_p=0.0,seed=102626)
             with self.db() as db:
                 db.execute('INSERT INTO execution_chunks(task_id,request_id,at,kind,content) VALUES (?,?,?,?,?)',(a['task_id'],request_id,self.clock(),'request_payload',json.dumps(payload,sort_keys=True)))
             c.request('POST','/v1/chat/completions',body=json.dumps(payload).encode(),headers={'Content-Type':'application/json','X-Request-ID':request_id})

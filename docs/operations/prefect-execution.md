@@ -139,3 +139,36 @@ acceptance holds and host ownership. It does not cancel in-flight inference or
 terminal-stop the session. Wait for an absent coordinator and no uncertain
 attempts before the explicit handover/checkpoint. The ordinary pause behavior
 remains available without this option.
+
+## GLM4.7 Flash GGUF and reviewed local patches (October26)
+
+The distinct `llamacpp-glm47-flash-q4km` profile accepts only
+`GLM-4.7-Flash-Q4_K_M` with configuration
+`glm47-q4km-reasoning512-output1536-v1`. It omits the historical GLM5.3 effort
+fields; this template reports no reasoning-effort support. Reasoning is bound
+and observed at server startup. See the October26 session for exact identities,
+negative quality results and observed limits; alias/config strings alone do not
+prove actual runtime state.
+
+Explicit new-allocation renewal can preserve an exact named inactive prior
+queued/unresolved set. It snapshots those rows, retains their states/IDs and
+revokes dispatch authority. Submitted/acknowledged work still refuses renewal;
+uncertainty is not reconciled or replayed by renewal. Ordinary configure cannot
+expand a ceiling. This also permits explicit renewal from stopped/expired state.
+
+The read-only inference adapter does not apply returned code.
+`tools/apply_prepared_patch.py` is a separate operator-governed path for an exact
+reviewed proposal and prebound contract in the same ledger. Its `--prefect`
+option requires the existing loopback self-hosted API and disables retries and
+result persistence. Contracts contain an isolated clean worktree/commit,
+permitted file hashes, existing finite pytest targets, prepared Python, timeout,
+artifact directory and named acceptor. Keep contracts, approvals, model output
+and evidence private. A model cannot choose shell commands, install dependencies
+or accept its own result. Explicit coordinator corrections retain both source
+attribution and the original rejected model proposal. A single JSON code fence
+may be removed for parsing; raw response identity remains retained.
+
+This path establishes bounded local application/test receipts, not unattended
+model coding, a hostile-worker OS boundary, automatic merge, authenticated human
+approval or customer-facing queue packaging. Review tests/code before granting
+execution authority, and separately accept the applied result after tests.

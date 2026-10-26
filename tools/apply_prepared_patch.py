@@ -112,4 +112,17 @@ if __name__=='__main__':
     import argparse
     p=argparse.ArgumentParser(description=__doc__)
     for key in ['db','task','contract','contract-sha256','reviewed-proposal-sha256']:p.add_argument('--'+key,required=True)
-    a=p.parse_args();print(json.dumps(execute_patch(a.db,a.task,a.contract,a.contract_sha256,a.reviewed_proposal_sha256),indent=2))
+    p.add_argument('--operator-proposal');p.add_argument('--correction-authorization-file');p.add_argument('--prefect',action='store_true')
+    a=p.parse_args()
+    kwargs=dict(operator_proposal_path=a.operator_proposal,correction_authorization=Path(a.correction_authorization_file).read_text() if a.correction_authorization_file else None)
+    def run():
+        receipt=execute_patch(a.db,a.task,a.contract,a.contract_sha256,a.reviewed_proposal_sha256,**kwargs)
+        if a.prefect:
+            from prefect.context import get_run_context
+            receipt['prefect_flow_run_id']=str(get_run_context().flow_run.id)
+        return receipt
+    if a.prefect:
+        if os.environ.get('PREFECT_API_URL')!='http://127.0.0.1:4200/api':raise ValueError('Existing self-hosted loopback Prefect API required')
+        from prefect import flow
+        run=flow(name='verity-reviewed-patch',retries=0,persist_result=False,log_prints=False)(run)
+    print(json.dumps(run(),indent=2))

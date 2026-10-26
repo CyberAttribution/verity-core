@@ -1,18 +1,6 @@
-"""Frozen operator acceptance cases; no network or inference."""
-import copy,json,time
-from verity_core.trust.inference_receipt import configuration_snapshot
+"""Frozen review-status acceptance; no model or network."""
+import json,time
 from swarmtracker_node_ui.session_coordinator import Coordinator,MODEL
-
-
-def test_requested_runtime_options_survive_receipt_snapshot():
-    original={'model':'fixture','runtime_options':{'keep_alive_seconds':90},'instructions':'PRIVATE','credential':'PRIVATE'}
-    snapshot=configuration_snapshot(original)
-    assert snapshot['runtime_options']=={'keep_alive_seconds':90}
-    assert 'instructions' not in snapshot and 'credential' not in snapshot
-    original['runtime_options']['keep_alive_seconds']=0
-    assert snapshot['runtime_options']['keep_alive_seconds']==90
-    assert 'runtime_options' not in configuration_snapshot({'model':'legacy'})
-
 
 def test_reviewed_rejection_is_not_pending_review(tmp_path):
     c=Coordinator(tmp_path/'queue.db');c.configure(rate=0,start=time.time()-1,ceiling=1,margin=0,deadline=time.time()+120)

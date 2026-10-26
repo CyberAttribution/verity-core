@@ -1,0 +1,121 @@
+{
+  "glm47_requests": 16,
+  "glm47_normal_stops": 16,
+  "retained_qwen35_complete": 5,
+  "retained_qwen35_original_accepted": 3,
+  "retained_qwen35_rejections": [
+    {
+      "task_id": "Q35FeatureDimensions",
+      "classification": [
+        "factual_or_reasoning_error"
+      ],
+      "original_reason": "Rejected: Correct dimensions but false Boolean:8949 fits9216 MLP intermediate width and exceeds2560 residual width."
+    },
+    {
+      "task_id": "Q35EvidenceClasses",
+      "classification": [
+        "unsupported_claim",
+        "authorization_scoring_scope_qualification"
+      ],
+      "original_reason": "Rejected: Correct cautious labels are followed by unsupported claim that the observed baseline relies on unverified steering hypotheses/trial claims. Configuration absence also cannot decide actual ledger authorization."
+    }
+  ],
+  "qwen35_qualification": "Q35EvidenceClasses correctly said authorization not established from supplied metadata; do not interpret that as denying existing ledger authority. Its separate unsupported claim that the baseline relies on unverified hypotheses remains a rejection reason. Original scores preserved.",
+  "classified_rejections": [
+    {
+      "task_id": "G47Identity",
+      "classification": [
+        "output_format",
+        "bounded_length_requirement",
+        "reasoning_spill_into_final"
+      ],
+      "original_reason": "Rejected: All requested numeric fields correct, but final content contains leaked drafting/checklist material and a literal closing think tag, violating the short bounded factual response. Full final content is scored; no cherry-picked trailing answer. Observed final word count=142."
+    },
+    {
+      "task_id": "G47FeatureDimensions",
+      "classification": [
+        "factual_or_reasoning_error"
+      ],
+      "original_reason": "Rejected: 2560 and9216 correct; false Boolean is wrong because8949 fits9216 intermediate width and exceeds2560 residual width."
+    },
+    {
+      "task_id": "G47E04",
+      "classification": [
+        "factual_or_reasoning_error",
+        "output_format"
+      ],
+      "original_reason": "Rejected: independent_origins_for_date must be integer2, not Booleantrue; code fences also violate frozen raw JSON output contract."
+    },
+    {
+      "task_id": "G47E06",
+      "classification": [
+        "output_format"
+      ],
+      "original_reason": "Rejected: BF16 is semantically equivalent to bfloat16; observedfloat16 and independently-verifiednull correct. Fenced final violates explicit no-markdown/valid-JSON output contract. No factual dtype error claimed."
+    },
+    {
+      "task_id": "G47E08",
+      "classification": [
+        "output_format"
+      ],
+      "original_reason": "Rejected: 10seconds, false acceptance-release and serial1 all correct. Fenced final violates explicit no-markdown/valid-JSON output contract."
+    },
+    {
+      "task_id": "G47E09",
+      "classification": [
+        "reasoning_error",
+        "output_format",
+        "line_identifier_type_underspecified"
+      ],
+      "original_reason": "Rejected: Correction drops <= boundary but omits not uncertain, so uncertain below ceiling would still dispatch. defective_line must identify line2. Code fences also violate explicit output contract."
+    },
+    {
+      "task_id": "G47E10",
+      "classification": [
+        "reasoning_error",
+        "missing_boolean_requirement",
+        "output_format",
+        "line_identifier_type_underspecified"
+      ],
+      "original_reason": "Rejected: Correction still releases completed work and returns string labels instead of Boolean release results. Code fences also violate explicit output contract."
+    },
+    {
+      "task_id": "G47IdleRepair",
+      "classification": [
+        "implementation_error"
+      ],
+      "original_reason": "Rejected: Rejected: proposed expression never inspects stopped control mode, so reproduced stopped case still reports100 seconds. Fenced JSON retained. No patch was applied and no implementation acceptance is claimed."
+    },
+    {
+      "task_id": "G47IdleRepair2",
+      "classification": [
+        "missing_executable_replacement"
+      ],
+      "original_reason": "Rejected: Rejected: second proposal omits required new replacement text, so it is not an executable patch. No changes were applied. Coordinator will implement the already reproduced one-expression fix under explicit attribution, retaining both model failures."
+    },
+    {
+      "task_id": "G47DetachedAnchor",
+      "classification": [
+        "reasoning_error"
+      ],
+      "original_reason": "Three of four values wrong: stopped_active must null, paused/running quiet must10; held successor must not release."
+    },
+    {
+      "task_id": "G47DetachedBoundary",
+      "classification": [
+        "unsupported_claim",
+        "missing_requirement"
+      ],
+      "original_reason": "Incorrectly calls the patch worktree read-only; omits retained execution identity/non-replay requirement. Same-user boundary qualification correct, but frozen criteria not met."
+    }
+  ],
+  "correction": {
+    "id": "AUDIT-C06",
+    "scope": "Earlier GLM E09/E10 defective_line",
+    "original": "Line2 expected; original recorded rejection also mentions schema",
+    "audited": "Prompt did not specify integer type for defective_line. A unique source expression or string line number can identify the line. Do not add numeric-type failure. Genuine E09 missing uncertain predicate and E10 completed-release/wrong Boolean requirements remain; raw-JSON fences remain explicit failures.",
+    "reason": "Read actual purpose/output contract rather than impose answer-key representation afterward.",
+    "new_scores": "No changed totals; original records retained, component qualification appended."
+  },
+  "limits": "Separate previous allocation, different model/runtime/settings; do not combine totals into rankings. Readiness had a reconciled pre-execution refusal before successful inference; original refusal evidence preserved, not an uncertain-request retry. Original Qwen35 wire capture not newly verified."
+}

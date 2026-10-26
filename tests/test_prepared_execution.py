@@ -43,7 +43,7 @@ def endpoints():
                     for _ in range(100):self.wfile.write(b': alive\n');self.wfile.flush();time.sleep(.05)
                     return
                 def send(x):self.wfile.write(('data: '+json.dumps(x)+'\n\n').encode());self.wfile.flush()
-                model={'QwenProfile':'qwen2.5:7b-instruct','Qwen35Profile':'Qwen/Qwen3.5-4B','GLMFlash':'GLM-4.7-Flash-Q4_K_M','DevstralProfile':'mistralai/Devstral-Small-2-24B-Instruct-2512','QwenCoderProfile':'Qwen3-Coder-Next-Q5_K_M','KolibriProfile':'Kolibri-1-Q5_K_M'}.get(name,'fixture-model')
+                model={'QwenProfile':'qwen2.5:7b-instruct','Qwen35Profile':'Qwen/Qwen3.5-4B','GLMFlash':'GLM-4.7-Flash-Q4_K_M','DevstralProfile':'mistralai/Devstral-Small-2-24B-Instruct-2512','QwenCoderProfile':'Qwen3-Coder-Next-Q5_K_M','KolibriProfile':'Kolibri-1-Q5_K_M','KolibriGeneralProfile':'Kolibri-1-Q5_K_M'}.get(name,'fixture-model')
                 send(dict(id='server-'+name,model=model,choices=[dict(delta={'reasoning_content':'fixture reasoning'})]))
                 send(dict(model=model,choices=[dict(delta={'content':'Result '+name},finish_reason='stop')],usage={'completion_tokens':3}))
                 self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
@@ -64,9 +64,11 @@ def prepared(tmp_path, endpoints, names, *, max_seconds=3, runtime_profile=None)
     c=Coordinator(tmp_path/'queue.db');c.configure(rate=0,start=time.time()-1,ceiling=1,margin=0,deadline=time.time()+30)
     assignments=[]
     for name,lane,deps in names:
-        spec=task(name,deps);c.create_operator_task(spec)
+        spec=task(name,deps)
+        if (runtime_profile or {}).get('provider')=='llamacpp-kolibri1-q5km-general':spec['model_settings']['max_tokens']=4096
+        c.create_operator_task(spec)
         assignments.append(dict(task_id=name,agent_id=f'lane{lane}',session_id='synthetic-session',task_hash=c._spec_hash(spec),
-            runtime=dict(endpoint=endpoints[lane],model=(runtime_profile or {}).get('model','fixture-model'),provider=(runtime_profile or {}).get('provider','synthetic-acceptance'),configuration_version=('glm47-q4km-reasoning512-output1536-v1' if (runtime_profile or {}).get('provider')=='llamacpp-glm47-flash-q4km' else {'vllm-devstral-small2-fp8':'devstral-fp8-16k-output2048-v1','llamacpp-qwen3-coder-next-q5km':'qwen-coder-next-q5km-16k-output2048-v1','llamacpp-kolibri1-q5km':'kolibri1-q5km-low-16k-output2048-v1'}.get((runtime_profile or {}).get('provider'),'fixture-v1')),provenance='two synthetic loopback acceptance endpoints'),
+            runtime=dict(endpoint=endpoints[lane],model=(runtime_profile or {}).get('model','fixture-model'),provider=(runtime_profile or {}).get('provider','synthetic-acceptance'),configuration_version=('glm47-q4km-reasoning512-output1536-v1' if (runtime_profile or {}).get('provider')=='llamacpp-glm47-flash-q4km' else {'vllm-devstral-small2-fp8':'devstral-fp8-16k-output2048-v1','llamacpp-qwen3-coder-next-q5km':'qwen-coder-next-q5km-16k-output2048-v1','llamacpp-kolibri1-q5km':'kolibri1-q5km-low-16k-output2048-v1','llamacpp-kolibri1-q5km-general':'kolibri1-q5km-low-16k-output4096-general-v1'}.get((runtime_profile or {}).get('provider'),'fixture-v1')),provenance='two synthetic loopback acceptance endpoints'),
             source_repo=str(repo),source_commit=rev,input_path=str(p),input_sha256=hashlib.sha256(p.read_bytes()).hexdigest(),
             context_version='fixture-context-v1',configuration_version='fixture-configuration-v1',purpose=spec['purpose'],expires_at=time.time()+25,
             max_seconds=max_seconds,acceptance_responsibility='Separate fixture evaluator; no product or research acceptance'))
@@ -356,12 +358,12 @@ def test_stopped_session_does_not_report_allocation_idle_seconds(tmp_path,endpoi
     assert c.execution_status()['idle_seconds']==expected
 
 
-@pytest.mark.parametrize('name,provider,model', [('DevstralProfile','vllm-devstral-small2-fp8','mistralai/Devstral-Small-2-24B-Instruct-2512'),('QwenCoderProfile','llamacpp-qwen3-coder-next-q5km','Qwen3-Coder-Next-Q5_K_M'),('KolibriProfile','llamacpp-kolibri1-q5km','Kolibri-1-Q5_K_M')])
+@pytest.mark.parametrize('name,provider,model', [('DevstralProfile','vllm-devstral-small2-fp8','mistralai/Devstral-Small-2-24B-Instruct-2512'),('QwenCoderProfile','llamacpp-qwen3-coder-next-q5km','Qwen3-Coder-Next-Q5_K_M'),('KolibriProfile','llamacpp-kolibri1-q5km','Kolibri-1-Q5_K_M'),('KolibriGeneralProfile','llamacpp-kolibri1-q5km-general','Kolibri-1-Q5_K_M')])
 def test_coding_profiles_do_not_send_foreign_reasoning_controls(tmp_path,endpoints,name,provider,model):
     urls,calls=endpoints;c,b=prepared(tmp_path,urls,[(name,0,())],runtime_profile=dict(provider=provider,model=model))
     owner='coding-test';c.register_worker(owner,os.getpid());c.run_prepared(owner,name,digest(b['assignments'][0]));c.unregister_worker(owner)
     payload=calls[0]['payload']
-    assert payload['model']==model and payload['max_tokens']==2048
+    assert payload['model']==model and payload['max_tokens']==(4096 if provider.endswith('-general') else 2048)
     assert 'reasoning_effort' not in payload and 'chat_template_kwargs' not in payload
     assert c.snapshot()['tasks'][0]['state']=='completed'
     if provider.startswith('vllm'):assert payload['temperature']==0.15 and 'top_k' not in payload

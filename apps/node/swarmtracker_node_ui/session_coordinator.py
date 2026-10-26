@@ -143,7 +143,7 @@ class Coordinator(PreparedExecution):
             if not isinstance(spec[key], str) or not spec[key].strip():
                 raise ValueError("Missing task contract")
         settings = spec["model_settings"]
-        if settings != {"model": MODEL, "reasoning_effort": "low", "chat_template_kwargs": {"reasoning_effort": "low"}, "max_tokens": 2048}:
+        if settings not in [{"model": MODEL, "reasoning_effort": "low", "chat_template_kwargs": {"reasoning_effort": "low"}, "max_tokens": limit} for limit in (2048,4096)]:
             raise ValueError("Unapproved model settings")
         encoded = json.dumps(spec, sort_keys=True, allow_nan=False)
         if len(encoded) > 16000:

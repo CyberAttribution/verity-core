@@ -16,7 +16,7 @@ def fixture(tmp_path):
     c.create_operator_task(spec)
     contract=dict(task_id='Patch',worktree=str(root),starting_commit=commit,permitted_files={'tools/fixture.py':sha(f.read_bytes())},tests=['tests/test_behavior.py'],python=sys.executable,max_seconds=30,artifact_directory=str(tmp_path/'artifacts'),acceptor='Independent operator')
     cp=tmp_path/'contract.json';cp.write_text(json.dumps(contract));h=sha(cp.read_bytes());source=tmp_path/'packet.txt';source.write_text('Execution contract SHA256: '+h)
-    a=dict(input_path=str(source),input_sha256=sha(source.read_bytes()))
+    a=dict(input_path=str(source),input_sha256=sha(source.read_bytes()),expires_at=time.time()+90)
     proposal=json.dumps({'changes':[{'file':'tools/fixture.py','old':'return state in ("completed", "independently_verified")','new':'return state == "independently_verified"'}]})
     with c.db() as db:
         db.execute("UPDATE tasks SET state='completed',request_id='request1',finish_reason='stop',response=? WHERE id='Patch'",(json.dumps(dict(content=proposal)),))
@@ -37,14 +37,18 @@ def test_actual_patch_and_tests_retain_receipt_without_self_acceptance(tmp_path)
     with pytest.raises(ValueError):execute_patch(c.path,'Patch',cp,h,sha(proposal.encode()))
 
 
-@pytest.mark.parametrize('change',['review','contract','source','pause','outside','traversal'])
+@pytest.mark.parametrize('change',['review','contract','source','pause','outside','traversal','expiry'])
 def test_contract_review_and_path_gates_prevent_mutation(tmp_path,change):
     c,cp,h,proposal,root=fixture(tmp_path);original=(root/'tools/fixture.py').read_bytes();ph=sha(proposal.encode())
     if change=='review':ph='0'*64
     if change=='contract':h='0'*64
     if change=='source':(root/'tools/fixture.py').write_text('changed')
     if change=='pause':c.control('paused')
-    if change in {'outside','traversal'}:
+    if change=='expiry':
+        with c.db() as db:
+            a=json.loads(db.execute("SELECT spec FROM execution_assignments WHERE task_id='Patch'").fetchone()[0]);a['expires_at']=time.time()-1
+            db.execute("UPDATE execution_assignments SET spec=? WHERE task_id='Patch'",(json.dumps(a),))
+    if change in {'outside','traversal','expiry'}:
         p=json.loads(proposal);p['changes'][0]['file']='tools/other.py' if change=='outside' else 'tools/../../secret.py';proposal=json.dumps(p);ph=sha(proposal.encode())
         with c.db() as db:db.execute("UPDATE tasks SET response=? WHERE id='Patch'",(json.dumps(dict(content=proposal)),))
     with pytest.raises(ValueError):execute_patch(c.path,'Patch',cp,h,ph)

@@ -53,7 +53,11 @@ def execute_patch(db_path, task_id, contract_path, contract_sha256, reviewed_pro
         row=db.execute('SELECT * FROM tasks WHERE id=?',(task_id,)).fetchone()
         a=db.execute('SELECT spec FROM execution_assignments WHERE task_id=?',(task_id,)).fetchone()
         if not row or row['state']!='completed' or row['finish_reason']!='stop' or not a:raise ValueError('Completed bound proposal required')
-        if contract_sha256 not in c.bound_input(json.loads(a['spec'])):raise ValueError('Contract was not bound before model dispatch')
+        assignment=json.loads(a['spec'])
+        if c.clock()>=assignment['expires_at']:raise ValueError('Assignment authorization expired')
+        control=db.execute('SELECT * FROM control WHERE id=1').fetchone()
+        if c.dispatch_gate(dict(control) if control else None):raise ValueError('Session dispatch gates prevent code execution')
+        if contract_sha256 not in c.bound_input(assignment):raise ValueError('Contract was not bound before model dispatch')
         ctl=db.execute('SELECT * FROM task_controls WHERE task_id=?',(task_id,)).fetchone()
         if not ctl or ctl['paused'] or ctl['cancelled'] or ctl['cancellation_requested'] or ctl['authorization_hash']!=c._spec_hash(json.loads(row['spec'])):raise ValueError('Task authority changed')
         response=json.loads(row['response']);proposal_text=response['content']

@@ -74,3 +74,23 @@ def test_operator_correction_keeps_rejected_model_proposal_separate(tmp_path):
     assert receipt['state']=='tested' and receipt['proposal_origin']=='operator correction'
     assert (tmp_path/'artifacts/original-model-proposal.txt').read_text()=='invalid model suggestion'
     with c.db() as db:assert db.execute("SELECT evidence FROM tasks WHERE id='Patch'").fetchone()[0].startswith('Rejected:')
+
+
+@pytest.mark.parametrize('template,allowed',[('_prepared_execution.html',True),('other.html',False)])
+def test_only_named_prebound_review_template_is_supported(tmp_path,template,allowed):
+    c,cp,h,proposal,root=fixture(tmp_path)
+    name='apps/node/swarmtracker_node_ui/templates/'+template
+    page=root/name;page.parent.mkdir(parents=True);page.write_text('Pending review')
+    (root/'tests/test_behavior.py').write_text('from pathlib import Path\ndef test_visible_rejection():\n    assert Path('+repr(name)+').read_text() == "Review rejected"\n')
+    subprocess.run(['git','-C',str(root),'add','.'],check=True)
+    subprocess.run(['git','-C',str(root),'-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','prepared template fixture'],check=True)
+    contract=json.loads(cp.read_text());contract.update(starting_commit=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip(),permitted_files={name:sha(page.read_bytes())});cp.write_text(json.dumps(contract));h=sha(cp.read_bytes())
+    packet=tmp_path/'packet.txt';packet.write_text('Execution contract SHA256: '+h)
+    proposal=json.dumps({'changes':[{'file':name,'old':'Pending review','new':'Review rejected'}]})
+    with c.db() as db:
+        a=json.loads(db.execute("SELECT spec FROM execution_assignments WHERE task_id='Patch'").fetchone()[0]);a.update(input_path=str(packet),input_sha256=sha(packet.read_bytes()));db.execute("UPDATE execution_assignments SET spec=? WHERE task_id='Patch'",(json.dumps(a),));db.execute("UPDATE tasks SET response=? WHERE id='Patch'",(json.dumps(dict(content=proposal)),))
+    if allowed:
+        receipt=execute_patch(c.path,'Patch',cp,h,sha(proposal.encode()));assert receipt['state']=='tested' and page.read_text()=='Review rejected'
+    else:
+        with pytest.raises(ValueError):execute_patch(c.path,'Patch',cp,h,sha(proposal.encode()))
+        assert page.read_text()=='Pending review' and not (tmp_path/'artifacts').exists()

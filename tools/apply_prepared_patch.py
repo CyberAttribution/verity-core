@@ -39,7 +39,7 @@ def execute_patch(db_path, task_id, contract_path, contract_sha256, reviewed_pro
     if not isinstance(files,dict) or not 1<=len(files)<=3:raise ValueError('Finite file allowlist required')
     for name,h in files.items():
         p=Path(name)
-        if not re.fullmatch(r'(?:apps/node/swarmtracker_node_ui/|verity_core/trust/|tools/)[A-Za-z0-9_/]+\.py',name) or '..' in p.parts or not re.fullmatch('[a-f0-9]{64}',h):raise ValueError('Only prehashed source files allowed')
+        if not re.fullmatch(r'(?:(?:apps/node/swarmtracker_node_ui/|verity_core/trust/|tools/)[A-Za-z0-9_/]+\.py|apps/node/swarmtracker_node_ui/templates/_prepared_execution\.html)',name) or '..' in p.parts or not re.fullmatch('[a-f0-9]{64}',h):raise ValueError('Only prehashed source files allowed')
         if (root/p).is_symlink() or root.resolve() not in (root/p).resolve().parents:raise ValueError('Unsafe source path')
     for name in tests:
         if (root/name).is_symlink() or root.resolve() not in (root/name).resolve().parents or not (root/name).is_file():raise ValueError('Unsafe test path')

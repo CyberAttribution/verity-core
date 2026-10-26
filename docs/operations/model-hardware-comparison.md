@@ -9,6 +9,7 @@ capability baseline for later Tiiny experiments, not product/device acceptance.
 | Qwen3-Coder-Next officialQ5_K_M | 5/7, one repair plus separate UI follow-up | Not run | Structured evidence/governed proposals; one false review finding |
 | Kolibri1 BartowskiQ5_K_M | 5/7 after feedback, zero accepted repairs | 1/6 | Fast narrow extraction; planning/history/summary and trace-disclosure limits |
 | Qwen3.8-27B officialBF16 | Not run | 4/6 | Next cloud reference for Galene/planning/history; math and harmless-summary failures |
+| GPT-OSS120B officialMXFP4 | One separate repair actually applied/accepted, not seven-task aggregate | 2/6 | Reviewed patch/summary candidate; source/applicability/planning/history failures |
 
 Broader latency sums:61.75seconds Kolibri vs240.51seconds Qwen3.8; completion
 counts7958 vs4929 with different tokenizers/engines/precision/sampling. Kolibri's
@@ -26,3 +27,5 @@ and [hash manifest](../sessions/2026-10-26-model-comparison/pins.json).
 All Tiiny fit/runtime/conversion/accelerator/throughput claims remain untested.
 Carry exact inputs/artifacts forward; record any conversion/runtime difference
 and repeat acceptance on the actual target. No equal-memory equivalence claim.
+
+GPT-OSS amendment:89.677seconds/2375prompt/1526completion for same6tasks,4096output/no feedback; reasoningtoken splitunavailable(server0despiteemittedreasoning). NativeHarmonylowverified,H100OAITritonMXFP4,77505MiBready. Injectionfinalrefusalplusbenignsummarypass;nocanaryincapturedreasoningorfinal. Actualisolatedcoding34passedperhost+7M2behaviorchecks;equivalentalreadyintegrated,unmerged. [Qualifiedreport](../sessions/2026-10-26-gptoss120b-h100.md). NoCeres/nativegovernedtools/Tiinyacceptance.

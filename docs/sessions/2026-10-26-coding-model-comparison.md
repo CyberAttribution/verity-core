@@ -321,3 +321,7 @@ permissions from a retrieved document.
 The exact artifacts/inputs support later comparison. A different conversion or
 runtime must be recorded as a different setup and reevaluated; equal advertised
 memory does not establish identical behavior or throughput.
+
+## Later bounded GPT-OSS amendment
+
+The original four-model results above are preserved. The separately authorized GPT-OSS120BMXFP4 run completed8initialrequests: samebroader6tasks2accepted4rejected; actualisolatedcodingrepair34testspassedperhost plus7M2behaviorchecks,accepted/unmergedequivalent;readinessqualifiedpass. See [fullcandidate/category/runtime/spendingreport](2026-10-26-gptoss120b-h100.md). Sameallocation cumulative ceiling explicitly amendedto17USD,originalstart retained;GPUstopped22:53:19UTC,readyformanualtermination. NoTiiny/native-toolbridgeacceptance.

@@ -2,6 +2,31 @@
 
 This optional development integration uses the existing `Coordinator`, operator tasks, runtime registrations, attempt ledger and acceptance transitions. Prefect supplies a local process worker and a two-thread task executor. It does not choose authority, verify findings, apply patches, merge, provision compute, or retry uncertain inference. Customer distribution and the full B15.5–B15.7 interface remain unaccepted until their complete native matrix passes.
 
+## Explicit Qwen3.5 development profile and a new allocation
+
+The experimental `transformers-qwen3.5-4b` profile is bound only to
+`Qwen/Qwen3.5-4B`. It removes GLM's reasoning effort, sends
+`chat_template_kwargs: {enable_thinking: false}`, and caps the historical task
+contract's output allowance at 384 wire tokens. The old Ollama Qwen2.5 profile
+still refuses another model. Record both the retained task contract and actual
+wire payload; this profile does not establish customer connection migration.
+
+`authorize_execution_session` explicitly records a new allocation's limits in
+the same ledger. It requires a paused, expired prior session, an absent
+coordinator, no queued or uncertain prior tasks, a unique session identity and
+concrete authorization. It retains the previous control row and new limits in
+`execution_session_authorizations`. Ordinary `configure` still refuses a ceiling
+expansion. This operation is local operator authority, not provider billing
+verification or authenticated remote approval.
+
+The October 25 scoped run retained MacBook ownership. Its Prefect deployment
+used source `4df7665`; the launchd process services remained bound to the prior
+clean `f660309` installation and executed the separately pinned deployment.
+The disposable loopback wrapper in `tools/research/qwen35_loopback_server.py`
+is retained experimental infrastructure, including a deliberate lost-final-ack
+fixture. It is not a general customer integration. See the session report for
+actual identity, negative quality results and the blocked steering candidate.
+
 ## Isolated installation and owned services
 
 The preferred host is the M2. Create a separate venv using a compatible installed Python (3.13 was exercised), then install `requirements-prefect.txt`. Record `pip freeze --all`, `pip check`, Python/OS and the exact source commit. Prefect 3.8.8 uses Apache-2.0. The initial unconstrained FastAPI resolution failed server import; keep its failure log and the repaired dependency lock. Do not install this environment into the application or existing agent runtime.

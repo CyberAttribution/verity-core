@@ -21,7 +21,7 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def execute_patch(db_path, task_id, contract_path, contract_sha256, reviewed_proposal_sha256):
+def execute_patch(db_path, task_id, contract_path, contract_sha256, reviewed_proposal_sha256, *, operator_proposal_path=None, correction_authorization=None):
     raw=Path(contract_path).read_bytes()
     if len(raw)>65536 or sha(raw)!=contract_sha256:raise ValueError('Contract hash mismatch')
     contract=json.loads(raw)
@@ -60,7 +60,13 @@ def execute_patch(db_path, task_id, contract_path, contract_sha256, reviewed_pro
         if contract_sha256 not in c.bound_input(assignment):raise ValueError('Contract was not bound before model dispatch')
         ctl=db.execute('SELECT * FROM task_controls WHERE task_id=?',(task_id,)).fetchone()
         if not ctl or ctl['paused'] or ctl['cancelled'] or ctl['cancellation_requested'] or ctl['authorization_hash']!=c._spec_hash(json.loads(row['spec'])):raise ValueError('Task authority changed')
-        response=json.loads(row['response']);proposal_text=response['content']
+        response=json.loads(row['response']);model_proposal_text=response['content'];proposal_text=model_proposal_text
+        if operator_proposal_path is not None:
+            if not isinstance(correction_authorization,str) or not 20<=len(correction_authorization)<=1000:raise ValueError('Explicit operator correction authority required')
+            op=Path(operator_proposal_path)
+            if not op.is_absolute() or op.is_symlink() or op.stat().st_size>30000:raise ValueError('Bounded local operator proposal required')
+            proposal_text=op.read_text()
+        elif correction_authorization is not None:raise ValueError('Correction must identify its exact local proposal')
         if len(proposal_text)>30000 or sha(proposal_text.encode())!=reviewed_proposal_sha256:raise ValueError('Exact proposal requires independent operator review')
         normalized=proposal_text.strip()
         fenced=re.fullmatch(r'```(?:json)?[ \t]*\n(.*?)\n```',normalized,re.S)
@@ -76,14 +82,14 @@ def execute_patch(db_path, task_id, contract_path, contract_sha256, reviewed_pro
             pending[name]=text.replace(change['old'],change['new']);changed.add(name)
         db.execute('CREATE TABLE IF NOT EXISTS coding_executions(task_id TEXT PRIMARY KEY,execution_id TEXT UNIQUE NOT NULL,contract_sha256 TEXT NOT NULL,proposal_sha256 TEXT NOT NULL,state TEXT NOT NULL,receipt TEXT NOT NULL)')
         execution_id=uuid.uuid4().hex
-        receipt=dict(execution_id=execution_id,task_id=task_id,request_id=row['request_id'],contract_sha256=contract_sha256,proposal_sha256=reviewed_proposal_sha256,started=time.time(),format_normalization='single JSON fence removed' if fenced else 'none',worktree=str(root),starting_commit=contract['starting_commit'],acceptor=contract['acceptor'])
+        receipt=dict(execution_id=execution_id,task_id=task_id,request_id=row['request_id'],contract_sha256=contract_sha256,proposal_sha256=reviewed_proposal_sha256,started=time.time(),proposal_origin='operator correction' if operator_proposal_path else 'model',model_proposal_sha256=sha(model_proposal_text.encode()),correction_authorization=correction_authorization,format_normalization='single JSON fence removed' if fenced else 'none',worktree=str(root),starting_commit=contract['starting_commit'],acceptor=contract['acceptor'])
         # Durable identity before any filesystem mutation. Failed/uncertain runs
         # are retained and cannot be blindly rerun under this task identity.
         db.execute('INSERT INTO coding_executions VALUES (?,?,?,?,?,?)',(task_id,execution_id,contract_sha256,reviewed_proposal_sha256,'started',json.dumps(receipt)))
     state='failed'
     try:
         artifacts.mkdir(parents=True,exist_ok=False)
-        (artifacts/'contract.json').write_bytes(raw);(artifacts/'proposal.json').write_text(proposal_text)
+        (artifacts/'contract.json').write_bytes(raw);(artifacts/'proposal.json').write_text(proposal_text);(artifacts/'original-model-proposal.txt').write_text(model_proposal_text)
         for name,text in pending.items():(root/name).write_text(text)
         (artifacts/'patch.diff').write_text(git('diff','--',*sorted(changed))+'\n')
         # Commands and interpreter come only from the prebound operator contract.

@@ -63,3 +63,14 @@ def test_single_json_fence_preserves_exact_reviewed_response_hash(tmp_path):
     receipt=execute_patch(c.path,'Patch',cp,h,sha(raw.encode()))
     assert receipt['state']=='tested' and receipt['format_normalization']=='single JSON fence removed'
     assert (tmp_path/'artifacts/proposal.json').read_text()==raw
+
+
+def test_operator_correction_keeps_rejected_model_proposal_separate(tmp_path):
+    c,cp,h,proposal,root=fixture(tmp_path)
+    with c.db() as db:db.execute("UPDATE tasks SET response=?,evidence='Rejected: wrong model patch' WHERE id='Patch'",(json.dumps(dict(content='invalid model suggestion')),))
+    op=tmp_path/'operator-proposal.json';op.write_text(proposal)
+    with pytest.raises(ValueError):execute_patch(c.path,'Patch',cp,h,sha(proposal.encode()),operator_proposal_path=str(op))
+    receipt=execute_patch(c.path,'Patch',cp,h,sha(proposal.encode()),operator_proposal_path=str(op),correction_authorization='Execution coordinator corrects patch within the original prebound behavior and file contract')
+    assert receipt['state']=='tested' and receipt['proposal_origin']=='operator correction'
+    assert (tmp_path/'artifacts/original-model-proposal.txt').read_text()=='invalid model suggestion'
+    with c.db() as db:assert db.execute("SELECT evidence FROM tasks WHERE id='Patch'").fetchone()[0].startswith('Rejected:')

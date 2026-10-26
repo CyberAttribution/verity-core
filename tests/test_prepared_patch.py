@@ -54,3 +54,12 @@ def test_contract_review_and_path_gates_prevent_mutation(tmp_path,change):
     with pytest.raises(ValueError):execute_patch(c.path,'Patch',cp,h,ph)
     assert (root/'tools/fixture.py').read_bytes()==(b'changed' if change=='source' else original)
     assert not (tmp_path/'artifacts').exists()
+
+
+def test_single_json_fence_preserves_exact_reviewed_response_hash(tmp_path):
+    c,cp,h,proposal,root=fixture(tmp_path)
+    raw='```json\n'+proposal+'\n```'
+    with c.db() as db:db.execute("UPDATE tasks SET response=? WHERE id='Patch'",(json.dumps(dict(content=raw)),))
+    receipt=execute_patch(c.path,'Patch',cp,h,sha(raw.encode()))
+    assert receipt['state']=='tested' and receipt['format_normalization']=='single JSON fence removed'
+    assert (tmp_path/'artifacts/proposal.json').read_text()==raw

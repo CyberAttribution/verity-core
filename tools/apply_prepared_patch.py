@@ -62,7 +62,10 @@ def execute_patch(db_path, task_id, contract_path, contract_sha256, reviewed_pro
         if not ctl or ctl['paused'] or ctl['cancelled'] or ctl['cancellation_requested'] or ctl['authorization_hash']!=c._spec_hash(json.loads(row['spec'])):raise ValueError('Task authority changed')
         response=json.loads(row['response']);proposal_text=response['content']
         if len(proposal_text)>30000 or sha(proposal_text.encode())!=reviewed_proposal_sha256:raise ValueError('Exact proposal requires independent operator review')
-        proposal=json.loads(proposal_text)
+        normalized=proposal_text.strip()
+        fenced=re.fullmatch(r'```(?:json)?[ \t]*\n(.*?)\n```',normalized,re.S)
+        if fenced:normalized=fenced.group(1)
+        proposal=json.loads(normalized)
         if set(proposal)!={'changes'} or not isinstance(proposal['changes'],list) or not 1<=len(proposal['changes'])<=3:raise ValueError('Only finite literal replacements accepted')
         pending={};changed=set()
         for change in proposal['changes']:
@@ -73,7 +76,7 @@ def execute_patch(db_path, task_id, contract_path, contract_sha256, reviewed_pro
             pending[name]=text.replace(change['old'],change['new']);changed.add(name)
         db.execute('CREATE TABLE IF NOT EXISTS coding_executions(task_id TEXT PRIMARY KEY,execution_id TEXT UNIQUE NOT NULL,contract_sha256 TEXT NOT NULL,proposal_sha256 TEXT NOT NULL,state TEXT NOT NULL,receipt TEXT NOT NULL)')
         execution_id=uuid.uuid4().hex
-        receipt=dict(execution_id=execution_id,task_id=task_id,request_id=row['request_id'],contract_sha256=contract_sha256,proposal_sha256=reviewed_proposal_sha256,started=time.time(),worktree=str(root),starting_commit=contract['starting_commit'],acceptor=contract['acceptor'])
+        receipt=dict(execution_id=execution_id,task_id=task_id,request_id=row['request_id'],contract_sha256=contract_sha256,proposal_sha256=reviewed_proposal_sha256,started=time.time(),format_normalization='single JSON fence removed' if fenced else 'none',worktree=str(root),starting_commit=contract['starting_commit'],acceptor=contract['acceptor'])
         # Durable identity before any filesystem mutation. Failed/uncertain runs
         # are retained and cannot be blindly rerun under this task identity.
         db.execute('INSERT INTO coding_executions VALUES (?,?,?,?,?,?)',(task_id,execution_id,contract_sha256,reviewed_proposal_sha256,'started',json.dumps(receipt)))

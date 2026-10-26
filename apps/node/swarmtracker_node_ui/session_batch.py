@@ -66,6 +66,19 @@ class PreparedExecution:
             db.execute('INSERT INTO execution_session_authorizations VALUES (?,?,?,?,?)',(session_id,now,authorization,json.dumps(dict(old),sort_keys=True),json.dumps(limits,sort_keys=True)))
             db.execute("UPDATE control SET mode='paused',rate=?,start=?,ceiling=?,margin=?,deadline=? WHERE id=1",(rate,start,ceiling,margin,deadline))
 
+    def close_execution_allocation(self, authorization):
+        """Operator-attested provider termination; retain limits and pending attempts."""
+        if not isinstance(authorization,str) or not 20<=len(authorization)<=1000:raise ValueError('Explicit provider-termination evidence required')
+        if self.worker_status()['state']!='absent':raise RuntimeError('Quiesce worker before allocation closeout')
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            old=db.execute('SELECT * FROM control WHERE id=1').fetchone()
+            if not old or old['mode'] not in {'paused','stopped'}:raise RuntimeError('Pause dispatch before allocation closeout')
+            if db.execute("SELECT 1 FROM tasks WHERE state IN ('submitted','acknowledged')").fetchone():raise RuntimeError('Retain and reconcile active submissions before closeout')
+            db.execute('CREATE TABLE IF NOT EXISTS execution_allocation_closures(seq INTEGER PRIMARY KEY,at REAL NOT NULL,evidence TEXT NOT NULL,previous_control TEXT NOT NULL)')
+            db.execute('INSERT INTO execution_allocation_closures(at,evidence,previous_control) VALUES (?,?,?)',(self.clock(),authorization,json.dumps(dict(old),sort_keys=True)))
+            db.execute("UPDATE control SET mode='stopped',deadline=? WHERE id=1",(min(old['deadline'],self.clock()) if old['deadline'] is not None else self.clock(),))
+
     def prepare_execution_schema(self):
         with self.db() as db:
             db.executescript('''
@@ -146,10 +159,12 @@ class PreparedExecution:
                 r=a['runtime']
                 if set(r)!={'endpoint','model','provider','configuration_version','provenance'} or not all(isinstance(v,str) and v for v in r.values()):raise ValueError('Exact approved runtime configuration required')
                 endpoint(r['endpoint'])
-                if r['provider'] not in {'local-openai-compatible','ollama-openai-compatible','ollama-qwen2.5-7b','transformers-qwen3.5-4b','llamacpp-glm47-flash-q4km','synthetic-acceptance'}:raise ValueError('No paid/cloud runtime authorized')
+                if r['provider'] not in {'local-openai-compatible','ollama-openai-compatible','ollama-qwen2.5-7b','transformers-qwen3.5-4b','llamacpp-glm47-flash-q4km','vllm-devstral-small2-fp8','llamacpp-qwen3-coder-next-q5km','synthetic-acceptance'}:raise ValueError('No paid/cloud runtime authorized')
                 if r['provider']=='ollama-qwen2.5-7b' and r['model']!='qwen2.5:7b-instruct':raise ValueError('Qwen request profile cannot substitute another model')
                 if r['provider']=='transformers-qwen3.5-4b' and r['model']!='Qwen/Qwen3.5-4B':raise ValueError('Qwen3.5 request profile cannot substitute another model')
                 if r['provider']=='llamacpp-glm47-flash-q4km' and (r['model']!='GLM-4.7-Flash-Q4_K_M' or r['configuration_version']!='glm47-q4km-reasoning512-output1536-v1'):raise ValueError('GLM4.7 Flash profile cannot substitute model or configuration')
+                coding_profiles={'vllm-devstral-small2-fp8':('mistralai/Devstral-Small-2-24B-Instruct-2512','devstral-fp8-16k-output2048-v1'),'llamacpp-qwen3-coder-next-q5km':('Qwen3-Coder-Next-Q5_K_M','qwen-coder-next-q5km-16k-output2048-v1')}
+                if r['provider'] in coding_profiles and (r['model'],r['configuration_version'])!=coding_profiles[r['provider']]:raise ValueError('Coding profile cannot substitute model or configuration')
                 task=db.execute('SELECT spec,state FROM tasks WHERE id=?',(a['task_id'],)).fetchone()
                 ctl=db.execute('SELECT * FROM task_controls WHERE task_id=?',(a['task_id'],)).fetchone()
                 if not task or task['state']!='queued' or not ctl or ctl['cancelled']:raise ValueError('An existing queued operator task is required')
@@ -274,6 +289,11 @@ class PreparedExecution:
                 payload.update(max_tokens=min(payload['max_tokens'],1536),temperature=1.0,top_p=0.95,min_p=0.01,repeat_penalty=1.0,seed=102626)
                 # Reasoning is configured and evidenced at server startup. Do not
                 # send GLM5.3's historical effort fields to llama.cpp.
+            if a['runtime']['provider'] in {'vllm-devstral-small2-fp8','llamacpp-qwen3-coder-next-q5km'}:
+                payload.pop('reasoning_effort');payload.pop('chat_template_kwargs')
+                payload['max_tokens']=min(payload['max_tokens'],2048)
+                if a['runtime']['provider']=='vllm-devstral-small2-fp8':payload.update(temperature=0.15,top_p=1.0,seed=102626)
+                else:payload.update(temperature=1.0,top_p=0.95,top_k=40,min_p=0.0,seed=102626)
             with self.db() as db:
                 db.execute('INSERT INTO execution_chunks(task_id,request_id,at,kind,content) VALUES (?,?,?,?,?)',(a['task_id'],request_id,self.clock(),'request_payload',json.dumps(payload,sort_keys=True)))
             c.request('POST','/v1/chat/completions',body=json.dumps(payload).encode(),headers={'Content-Type':'application/json','X-Request-ID':request_id})

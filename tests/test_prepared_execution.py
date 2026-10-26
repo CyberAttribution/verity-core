@@ -43,7 +43,7 @@ def endpoints():
                     for _ in range(100):self.wfile.write(b': alive\n');self.wfile.flush();time.sleep(.05)
                     return
                 def send(x):self.wfile.write(('data: '+json.dumps(x)+'\n\n').encode());self.wfile.flush()
-                model={'QwenProfile':'qwen2.5:7b-instruct','Qwen35Profile':'Qwen/Qwen3.5-4B','GLMFlash':'GLM-4.7-Flash-Q4_K_M'}.get(name,'fixture-model')
+                model={'QwenProfile':'qwen2.5:7b-instruct','Qwen35Profile':'Qwen/Qwen3.5-4B','GLMFlash':'GLM-4.7-Flash-Q4_K_M','DevstralProfile':'mistralai/Devstral-Small-2-24B-Instruct-2512','QwenCoderProfile':'Qwen3-Coder-Next-Q5_K_M'}.get(name,'fixture-model')
                 send(dict(id='server-'+name,model=model,choices=[dict(delta={'reasoning_content':'fixture reasoning'})]))
                 send(dict(model=model,choices=[dict(delta={'content':'Result '+name},finish_reason='stop')],usage={'completion_tokens':3}))
                 self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
@@ -66,7 +66,7 @@ def prepared(tmp_path, endpoints, names, *, max_seconds=3, runtime_profile=None)
     for name,lane,deps in names:
         spec=task(name,deps);c.create_operator_task(spec)
         assignments.append(dict(task_id=name,agent_id=f'lane{lane}',session_id='synthetic-session',task_hash=c._spec_hash(spec),
-            runtime=dict(endpoint=endpoints[lane],model=(runtime_profile or {}).get('model','fixture-model'),provider=(runtime_profile or {}).get('provider','synthetic-acceptance'),configuration_version=('glm47-q4km-reasoning512-output1536-v1' if (runtime_profile or {}).get('provider')=='llamacpp-glm47-flash-q4km' else 'fixture-v1'),provenance='two synthetic loopback acceptance endpoints'),
+            runtime=dict(endpoint=endpoints[lane],model=(runtime_profile or {}).get('model','fixture-model'),provider=(runtime_profile or {}).get('provider','synthetic-acceptance'),configuration_version=('glm47-q4km-reasoning512-output1536-v1' if (runtime_profile or {}).get('provider')=='llamacpp-glm47-flash-q4km' else {'vllm-devstral-small2-fp8':'devstral-fp8-16k-output2048-v1','llamacpp-qwen3-coder-next-q5km':'qwen-coder-next-q5km-16k-output2048-v1'}.get((runtime_profile or {}).get('provider'),'fixture-v1')),provenance='two synthetic loopback acceptance endpoints'),
             source_repo=str(repo),source_commit=rev,input_path=str(p),input_sha256=hashlib.sha256(p.read_bytes()).hexdigest(),
             context_version='fixture-context-v1',configuration_version='fixture-configuration-v1',purpose=spec['purpose'],expires_at=time.time()+25,
             max_seconds=max_seconds,acceptance_responsibility='Separate fixture evaluator; no product or research acceptance'))
@@ -354,3 +354,26 @@ def test_stopped_session_does_not_report_allocation_idle_seconds(tmp_path,endpoi
         db.execute('UPDATE control SET mode=?',(mode,))
     assert c.execution_status()['worker']['state']=='absent'
     assert c.execution_status()['idle_seconds']==expected
+
+
+@pytest.mark.parametrize('name,provider,model', [('DevstralProfile','vllm-devstral-small2-fp8','mistralai/Devstral-Small-2-24B-Instruct-2512'),('QwenCoderProfile','llamacpp-qwen3-coder-next-q5km','Qwen3-Coder-Next-Q5_K_M')])
+def test_coding_profiles_do_not_send_foreign_reasoning_controls(tmp_path,endpoints,name,provider,model):
+    urls,calls=endpoints;c,b=prepared(tmp_path,urls,[(name,0,())],runtime_profile=dict(provider=provider,model=model))
+    owner='coding-test';c.register_worker(owner,os.getpid());c.run_prepared(owner,name,digest(b['assignments'][0]));c.unregister_worker(owner)
+    payload=calls[0]['payload']
+    assert payload['model']==model and payload['max_tokens']==2048
+    assert 'reasoning_effort' not in payload and 'chat_template_kwargs' not in payload
+    assert c.snapshot()['tasks'][0]['state']=='completed'
+    if provider.startswith('vllm'):assert payload['temperature']==0.15 and 'top_k' not in payload
+    else:assert payload['top_k']==40 and payload['min_p']==0
+
+
+def test_explicit_terminated_allocation_closeout_retains_old_budget_and_lost_attempt(tmp_path):
+    c=Coordinator(tmp_path/'queue.db',clock=lambda:1000);c.configure(rate=3.29,start=900,ceiling=15,margin=2,deadline=2000)
+    c.create_operator_task(task('Lost'));c.create_operator_task(task('Held'))
+    with c.db() as db:db.execute("UPDATE tasks SET state='unresolved',request_id='lost-id',attempts=1 WHERE id='Lost'")
+    c.close_execution_allocation('Operator reports previous provider allocation manually terminated')
+    with c.db() as db:
+        old=json.loads(db.execute('SELECT previous_control FROM execution_allocation_closures').fetchone()[0]);assert old['deadline']==2000 and old['start']==900 and old['ceiling']==15
+    c.authorize_execution_session(session_id='new',authorization='Distinct new allocation authorized by operator with cumulativeUSD15',rate=3.29,start=999,ceiling=15,margin=2,deadline=2000,preserve_prior_tasks=['Lost','Held'])
+    with c.db() as db:assert tuple(db.execute("SELECT state,request_id,attempts FROM tasks WHERE id='Lost'").fetchone())==('unresolved','lost-id',1)

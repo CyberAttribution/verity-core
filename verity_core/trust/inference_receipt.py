@@ -58,7 +58,7 @@ def configuration_snapshot(configuration):
               'resource_id','resource_version','resource_hash','executor_id','machine_id','machine_version','machine_hash',
               'adapter_kind','runtime_version','service_identity','identity_status','daily_request_limit',
               'session_request_limit','require_fresh_connection_observation','transport_summary','fallback_id','fallback_version',
-              'fallback_model','fallback_revision','provenance','primary_connection_id','selected_connection_id','selection_reason','routing_enabled'}
+              'fallback_model','fallback_revision','provenance','primary_connection_id','selected_connection_id','selection_reason','routing_enabled','runtime_options'}
     return {k:copy.deepcopy(v) for k,v in configuration.items() if k in metadata}
 
 

@@ -17,11 +17,15 @@ Focused verification: 75 tests passed in 68.07 seconds, including the new
 blocking-handoff regression and changed-owner control. A subsequently added
 background-heartbeat-failure control passed separately (1 passed, 46 deselected,
 6.14 seconds), checking that no successor dispatch or heartbeat thread remains.
-The full regression and actual Prefect deployment of this repair are pending.
+Full regression against implementation commit 482618c9180f9b7ab1c15049c3a9bedc0c9e0398:
+1,395 passed, 4 skipped, 1 existing Starlette/httpx deprecation warning, 137.40
+seconds. Actual Prefect deployment acceptance of this repair remains pending.
 
 This is a coordinator implementation. The bounded model assistance request
 exhausted its output allowance without a final proposal; it was not applied or
-accepted. A separate review of this actual patch remains required.
+accepted. The separate review of the actual patch also exhausted its bounded
+output allowance without a final answer. Independent review remains incomplete;
+neither a model stop reason nor passing tests is substituted for that acceptance.
 
 The observed earlier live pre-dispatch failure had zero submissions and was
 reconciled separately. Saved snapshots show a quick checkpoint and a long

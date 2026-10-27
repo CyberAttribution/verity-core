@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 import time
 import uuid
+from typing import Optional
 
 sys.path[:0]=[str(Path(__file__).resolve().parents[1]),str(Path(__file__).resolve().parents[1]/'apps/node')]
 from swarmtracker_node_ui.session_coordinator import Coordinator
@@ -81,7 +82,7 @@ def make_flow():
     from prefect.task_runners import ThreadPoolTaskRunner
     dispatch=task(name='verity-governed-attempt',retries=0,cache_policy=NO_CACHE,persist_result=False,log_prints=False)(_execute)
     @flow(name='verity-prepared-batch',retries=0,task_runner=ThreadPoolTaskRunner(max_workers=2),persist_result=False,log_prints=False)
-    def prepared(db_path:str,poll_seconds:float=1,stop_when_exhausted:bool=True,quiesce_on_pause:bool=False,tool_plan:str=None,max_active:int=1):
+    def prepared(db_path:str,poll_seconds:float=1,stop_when_exhausted:bool=True,quiesce_on_pause:bool=False,tool_plan:Optional[str]=None,max_active:int=1):
         return run_loop(db_path,dispatch.submit,poll_seconds=poll_seconds,stop_when_exhausted=stop_when_exhausted,quiesce_on_pause=quiesce_on_pause,tool_plan=tool_plan,max_active=max_active)
     return prepared
 

@@ -59,13 +59,13 @@ def endpoints():
     for s in servers:s.shutdown();s.server_close()
 
 
-def prepared(tmp_path, endpoints, names, *, max_seconds=3, runtime_profile=None):
+def prepared(tmp_path, endpoints, names, *, max_seconds=3, runtime_profile=None, lifetime_seconds=30):
     repo=tmp_path/'source';repo.mkdir();(repo/'fixture.txt').write_text('Immutable source fixture')
     for argv in [['init','-q'],['add','.'],['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture']]:
         subprocess.run(['git','-C',str(repo),*argv],check=True)
     rev=subprocess.check_output(['git','-C',str(repo),'rev-parse','HEAD'],text=True).strip()
     p=tmp_path/'input.txt';p.write_text('Source fact: this is a synthetic fixture, not research.')
-    c=Coordinator(tmp_path/'queue.db');c.configure(rate=0,start=time.time()-1,ceiling=1,margin=0,deadline=time.time()+30)
+    c=Coordinator(tmp_path/'queue.db');c.configure(rate=0,start=time.time()-1,ceiling=1,margin=0,deadline=time.time()+lifetime_seconds)
     assignments=[]
     for name,lane,deps in names:
         spec=task(name,deps)
@@ -74,7 +74,7 @@ def prepared(tmp_path, endpoints, names, *, max_seconds=3, runtime_profile=None)
         assignments.append(dict(task_id=name,agent_id=f'lane{lane}',session_id='synthetic-session',task_hash=c._spec_hash(spec),
             runtime=dict(endpoint=endpoints[lane],model=(runtime_profile or {}).get('model','fixture-model'),provider=(runtime_profile or {}).get('provider','synthetic-acceptance'),configuration_version=('glm47-q4km-reasoning512-output1536-v1' if (runtime_profile or {}).get('provider')=='llamacpp-glm47-flash-q4km' else {'vllm-devstral-small2-fp8':'devstral-fp8-16k-output2048-v1','llamacpp-qwen3-coder-next-q5km':'qwen-coder-next-q5km-16k-output2048-v1','llamacpp-kolibri1-q5km':'kolibri1-q5km-low-16k-output2048-v1','llamacpp-kolibri1-q5km-general':'kolibri1-q5km-low-16k-output4096-general-v1','vllm-qwen38-27b-bf16-general':'qwen38-27b-bf16-low-16k-output4096-general-v1','vllm-gptoss120b-mxfp4-low':'gptoss120b-mxfp4-low-16k-output4096-v1'}.get((runtime_profile or {}).get('provider'),'fixture-v1')),provenance='two synthetic loopback acceptance endpoints'),
             source_repo=str(repo),source_commit=rev,input_path=str(p),input_sha256=hashlib.sha256(p.read_bytes()).hexdigest(),
-            context_version='fixture-context-v1',configuration_version='fixture-configuration-v1',purpose=spec['purpose'],expires_at=time.time()+25,
+            context_version='fixture-context-v1',configuration_version='fixture-configuration-v1',purpose=spec['purpose'],expires_at=time.time()+lifetime_seconds-5,
             max_seconds=max_seconds,acceptance_responsibility='Separate fixture evaluator; no product or research acceptance'))
     batch=dict(id='fixture',authorization='Operator authorizes bounded local synthetic acceptance only',assignments=assignments)
     c.load_prepared_batch(batch);c.control('running');return c,batch
@@ -91,22 +91,22 @@ def wait(predicate,seconds=8):
 def states(c):return {x['id']:x['state'] for x in c.snapshot()['tasks']}
 
 
-def test_checkpoint_delay_does_not_submit_with_expired_worker_heartbeat(tmp_path,endpoints,monkeypatch):
-    """Model elapsed checkpoint work by aging its lease, without sleeping31s."""
+def test_blocking_executor_handoff_keeps_worker_lease_fresh(tmp_path,endpoints):
+    """An executor can start work before a slow submit() returns to the loop."""
+    from concurrent.futures import Future
     urls,calls=endpoints
-    c,_=prepared(tmp_path,urls,[('LeaseFirst',0,()),('LeaseNext',0,())])
-    original=Coordinator.execution_checkpoint
-    aged=[]
-    def delayed(self,directory):
-        receipt=original(self,directory)
-        if not aged:
-            with self.db() as db:
-                db.execute('UPDATE worker_process SET heartbeat=? WHERE id=1',(self.clock()-31,))
-            aged.append(True)
-        return receipt
-    monkeypatch.setattr(Coordinator,'execution_checkpoint',delayed)
+    c,_=prepared(tmp_path,urls,[('LeaseFirst',0,()),('LeaseNext',0,())],lifetime_seconds=120)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        result=run_loop(str(c.path),lambda *args:pool.submit(_execute,*args),poll_seconds=.01,max_active=1)
+        def delayed_submit(*args):
+            if args[3]!='LeaseNext':return pool.submit(_execute,*args)
+            # Real elapsed time beyond the existing30s worker lease. Do not
+            # backdate authority or weaken the lease to make the test pass.
+            time.sleep(31)
+            future=Future()
+            try:future.set_result(_execute(*args))
+            except Exception as exc:future.set_exception(exc)
+            return future
+        result=run_loop(str(c.path),delayed_submit,poll_seconds=.01,max_active=1)
     assert result['reason'].startswith('queue exhausted')
     assert [x['name'] for x in calls]==['LeaseFirst','LeaseNext']
     assert states(c)=={'LeaseFirst':'completed','LeaseNext':'completed'}

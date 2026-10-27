@@ -1,16 +1,15 @@
 {
-  "source_commit": "b3f4fc9b13a8d86a7a62947c027becacb355a179",
+  "source_commit": "90eeaf2ebdc3f651a0134715e7a248cbec9380a9",
   "returncode": 0,
-  "elapsed_seconds": 89.74048471450806,
-  "python": "/Users/spike/Documents/ChatGPT/ST_SOFTWARE_DAILY_DEV/verity-private/session-20261026/glm47/test-venv/bin/python",
-  "bundle_sha256": "890fae8d3c548b50b8a6ae3d6aeec30910b925d35d3224d251bec4feca2e89d9",
-  "source_restore": "git fetch exact HEAD and fsck passed",
+  "elapsed_seconds": 98.88056707382202,
+  "installed_prefect_sdk_parameter_validation": "None and private path both accepted; no flow execution, queue opened or model contact",
+  "sdk_returncode": 0,
   "full_passed": 1392,
-  "skipped": 3,
+  "skipped": 4,
   "warnings": 1,
   "warning": "Existing Starlette/httpx deprecation",
   "m2_focused_passed": 73,
-  "m2_focused_log_sha256": "3b0cda29dd4d1f1062d3e9502ea21e573311f320f2be85cc9df733731d5d22d0",
-  "coverage_revision": "b3f4fc9b13a8d86a7a62947c027becacb355a179",
-  "independent_checks": "Other Mac source restore/fsck and full regression; M2 restored/hashed live MacBook backups; no independent human reviewer claimed"
+  "optional_sdk_test": "pytest environment lacks optional Prefect; installed Prefect SDK separately validated both None/private path parameters successfully",
+  "source_after_this": "Final documentation-only checkpoint; implementation tested90eeaf2",
+  "m2_focused_sha256": "fdafcf25e4d54139503fe9a8e8db4ac3406e21096113803ffac5560975ad162c"
 }

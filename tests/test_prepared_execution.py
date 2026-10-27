@@ -91,6 +91,50 @@ def wait(predicate,seconds=8):
 def states(c):return {x['id']:x['state'] for x in c.snapshot()['tasks']}
 
 
+def test_checkpoint_delay_does_not_submit_with_expired_worker_heartbeat(tmp_path,endpoints,monkeypatch):
+    """Model elapsed checkpoint work by aging its lease, without sleeping31s."""
+    urls,calls=endpoints
+    c,_=prepared(tmp_path,urls,[('LeaseFirst',0,()),('LeaseNext',0,())])
+    original=Coordinator.execution_checkpoint
+    aged=[]
+    def delayed(self,directory):
+        receipt=original(self,directory)
+        if not aged:
+            with self.db() as db:
+                db.execute('UPDATE worker_process SET heartbeat=? WHERE id=1',(self.clock()-31,))
+            aged.append(True)
+        return receipt
+    monkeypatch.setattr(Coordinator,'execution_checkpoint',delayed)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        result=run_loop(str(c.path),lambda *args:pool.submit(_execute,*args),poll_seconds=.01,max_active=1)
+    assert result['reason'].startswith('queue exhausted')
+    assert [x['name'] for x in calls]==['LeaseFirst','LeaseNext']
+    assert states(c)=={'LeaseFirst':'completed','LeaseNext':'completed'}
+    assert all(x['attempts']==1 for x in c.snapshot()['tasks'])
+    assert c.worker_status()['state']=='absent'
+
+
+def test_checkpoint_boundary_does_not_steal_changed_worker_ownership(tmp_path,endpoints,monkeypatch):
+    urls,calls=endpoints
+    c,_=prepared(tmp_path,urls,[('LeaseFirst',0,()),('LeaseNext',0,())])
+    original=Coordinator.execution_checkpoint
+    changed=[]
+    def replaced(self,directory):
+        receipt=original(self,directory)
+        if not changed:
+            with self.db() as db:
+                db.execute("UPDATE worker_process SET token='different-owner' WHERE id=1")
+            changed.append(True)
+        return receipt
+    monkeypatch.setattr(Coordinator,'execution_checkpoint',replaced)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        with pytest.raises(RuntimeError,match='Worker ownership lost'):
+            run_loop(str(c.path),lambda *args:pool.submit(_execute,*args),poll_seconds=.01,max_active=1)
+    assert [x['name'] for x in calls]==['LeaseFirst']
+    assert c.worker_status()['token']=='different-owner'
+    assert next(x for x in c.snapshot()['tasks'] if x['id']=='LeaseNext')['attempts']==0
+
+
 def test_two_lanes_automatic_successors_and_independent_dependency(tmp_path,endpoints):
     urls,calls=endpoints
     c,b=prepared(tmp_path,urls,[('A1',0,()),('B1',1,()),('A2',0,()),('B2',1,()),('Dependent',0,('A1',))])

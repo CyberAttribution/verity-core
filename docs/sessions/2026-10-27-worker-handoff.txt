@@ -1,0 +1,29 @@
+Worker lease maintenance during blocking executor handoff
+
+The Prefect adapter previously refreshed its supervisor heartbeat only from
+the dispatch loop. A submit() call that blocked beyond the existing 30-second
+lease could start an assignment after its supervisor appeared stale. The new
+regression reproduces this with a real 31-second handoff, without extending
+the lease or backdating authority.
+
+A supervisor-lifetime heartbeat thread now updates only its existing token.
+It never registers or reacquires ownership. Heartbeat errors propagate to the
+dispatch loop; cleanup stops and joins the thread before unregistering. Model
+submission, authorization, source, budget, deadline and uncertain-attempt
+checks remain in the existing governed dispatcher. No automatic replay or
+acceptance is added.
+
+Focused verification: 75 tests passed in 68.07 seconds, including the new
+blocking-handoff regression and changed-owner control. A subsequently added
+background-heartbeat-failure control passed separately (1 passed, 46 deselected,
+6.14 seconds), checking that no successor dispatch or heartbeat thread remains.
+The full regression and actual Prefect deployment of this repair are pending.
+
+This is a coordinator implementation. The bounded model assistance request
+exhausted its output allowance without a final proposal; it was not applied or
+accepted. A separate review of this actual patch remains required.
+
+The observed earlier live pre-dispatch failure had zero submissions and was
+reconciled separately. Saved snapshots show a quick checkpoint and a long
+handoff interval but do not establish the exact live root cause. This repair
+addresses the independently reproduced lease-expiry mechanism.

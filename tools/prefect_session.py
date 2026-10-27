@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import threading
 import time
 import uuid
 from typing import Optional
@@ -37,8 +38,21 @@ def run_loop(db_path, submit, *, poll_seconds=1, stop_when_exhausted=True, quies
     if type(max_active) is not int or max_active not in {1,2}:raise ValueError("One or two explicit lanes required")
     c=Coordinator(db_path);owner=uuid.uuid4().hex;c.claim_execution_host()
     c.register_worker(owner,os.getpid());active={}
+    # Executor submission may block before returning its future. Keep the
+    # existing exclusive lease alive independently, without reacquiring it.
+    heartbeat_stop=threading.Event();heartbeat_errors=[]
+    def keep_worker_alive():
+        heartbeat_coordinator=Coordinator(db_path)
+        while not heartbeat_stop.wait(5):
+            try:heartbeat_coordinator.worker_heartbeat(owner)
+            except Exception as exc:
+                heartbeat_errors.append(exc)
+                return
+    heartbeat_thread=threading.Thread(target=keep_worker_alive,name='verity-worker-heartbeat',daemon=True)
+    heartbeat_thread.start()
     try:
         while True:
+            if heartbeat_errors:raise heartbeat_errors[0]
             c.worker_heartbeat(owner);c.recover_stale()
             for lane,(future,task_id) in list(active.items()):
                 # PrefectConcurrentFuture exposes its wrapped executor future;
@@ -63,11 +77,16 @@ def run_loop(db_path, submit, *, poll_seconds=1, stop_when_exhausted=True, quies
             if not gate:
                 for a in status['assignments']:
                     if len(active)<max_active and a['ready'] and a['agent_id'] not in active:
+                        if heartbeat_errors:raise heartbeat_errors[0]
+                        c.worker_heartbeat(owner)
                         active[a['agent_id']]=(submit(db_path,owner,c._instance_id,a['task_id'],a['hash'],**({'tool_plan':tool_plan} if tool_plan else {})),a['task_id'])
+                        if heartbeat_errors:raise heartbeat_errors[0]
             if not active and status['queue_depth']==0 and stop_when_exhausted:
                 return {'reason':'queue exhausted; acceptance remains separate','status':status}
             time.sleep(poll_seconds)
     finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join()
         # On a supervisor crash, its children may have submitted remotely. The
         # persisted attempts stay uncertain; nothing is requeued here.
         c.unregister_worker(owner)

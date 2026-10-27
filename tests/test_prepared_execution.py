@@ -135,6 +135,29 @@ def test_checkpoint_boundary_does_not_steal_changed_worker_ownership(tmp_path,en
     assert next(x for x in c.snapshot()['tasks'] if x['id']=='LeaseNext')['attempts']==0
 
 
+def test_background_heartbeat_failure_stops_successor_dispatch(tmp_path,endpoints,monkeypatch):
+    import threading
+    urls,calls=endpoints
+    c,_=prepared(tmp_path,urls,[('LeaseFirst',0,()),('LeaseNext',0,())],lifetime_seconds=120)
+    original=Coordinator.worker_heartbeat
+    def heartbeat(self,owner):
+        if threading.current_thread().name=='verity-worker-heartbeat':
+            raise RuntimeError('Worker ownership lost')
+        return original(self,owner)
+    monkeypatch.setattr(Coordinator,'worker_heartbeat',heartbeat)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        def blocked_submit(*args):
+            future=pool.submit(_execute,*args)
+            time.sleep(5.2)
+            return future
+        with pytest.raises(RuntimeError,match='Worker ownership lost'):
+            run_loop(str(c.path),blocked_submit,poll_seconds=.01,max_active=1)
+    assert [x['name'] for x in calls]==['LeaseFirst']
+    assert next(x for x in c.snapshot()['tasks'] if x['id']=='LeaseNext')['attempts']==0
+    assert c.worker_status()['state']=='absent'
+    assert not any(t.name=='verity-worker-heartbeat' and t.is_alive() for t in threading.enumerate())
+
+
 def test_two_lanes_automatic_successors_and_independent_dependency(tmp_path,endpoints):
     urls,calls=endpoints
     c,b=prepared(tmp_path,urls,[('A1',0,()),('B1',1,()),('A2',0,()),('B2',1,()),('Dependent',0,('A1',))])

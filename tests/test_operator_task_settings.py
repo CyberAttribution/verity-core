@@ -1,6 +1,7 @@
 """Operator controls must work for every already-supported bounded task profile."""
 import copy
 import json
+import time
 import pytest
 from apps.node.swarmtracker_node_ui.session_coordinator import Coordinator, MODEL
 
@@ -52,3 +53,34 @@ def test_unsupported_edit_refused_without_mutation(tmp_path,change):
     else:changed['model_settings']['reasoning_effort']='medium'
     with pytest.raises(ValueError):c.edit_operator_task('Editable',changed,pause=True)
     assert (row(c,'tasks'),row(c,'task_controls'))==before
+
+
+def test_edit_preserves_uncertain_attempt_history_receipt_and_dependency_hold(tmp_path):
+    calls=[]
+    def local_fixture(spec,request_id):
+        calls.append(request_id)
+        return dict(request_id=request_id,content='Retained synthetic history response',finish_reason='stop',usage={'completion_tokens':1})
+    c=Coordinator(tmp_path/'queue.db',adapter=local_fixture)
+    c.configure(rate=0,start=time.time()-1,ceiling=25,margin=5);c.control('running')
+    historical={**task(2048),'id':'History'};c.enqueue(historical)
+    assert c.run_one('fixture')=='History'
+    uncertain={**task(2048),'id':'Uncertain'};c.enqueue(uncertain)
+    claimed=c.claim('fixture');assert claimed['spec']['id']=='Uncertain'
+    with c.db() as db:db.execute('update control set heartbeat=0')
+    assert c.recover_stale()
+    dependent={**task(2048),'id':'Dependent','dependencies':['History']};c.enqueue(dependent)
+    editable=task(4096);c.create_operator_task(editable)
+    c.authorize_operator_task('Editable','Operator inspected the supported queued source contract')
+    def retained():
+        with c.db() as db:
+            return {name:dict(db.execute('select * from tasks where id=?',(name,)).fetchone()) for name in ['History','Uncertain','Dependent']}
+    before=retained()
+    assert before['History']['state']=='completed' and before['History']['response']
+    assert before['Uncertain']['state']=='unresolved' and before['Uncertain']['attempts']==1
+    assert before['Uncertain']['request_id']==claimed['request_id']
+    c.edit_operator_task('Editable',editable,pause=True)
+    with pytest.raises(ValueError):c.edit_operator_task('Uncertain',uncertain,pause=False)
+    assert c.run_one('observer') is None  # History is completed, not independently accepted; Editable is paused.
+    assert retained()==before
+    assert len(calls)==1  # No uncertain replay, dependent dispatch or automatic acceptance.
+    assert row(c,'tasks')['attempts']==0 and row(c,'tasks')['request_id'] is None

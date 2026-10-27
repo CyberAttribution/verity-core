@@ -1,0 +1,170 @@
+{
+  "kolibri": {
+    "repository": "bartowski/Kolibri-1-GGUF",
+    "revision": "ffd6001f205725f0c4af4ff93e33c04f0f8ad9f9",
+    "files": [
+      {
+        "name": "Kolibri-1-Q5_K_M/Kolibri-1-Q5_K_M-00001-of-00002.gguf",
+        "bytes": 39899568832,
+        "sha256": "13bfe90137f0cd5bead9e52abb22660402c99aaf88979357e761f4626b464a38"
+      },
+      {
+        "name": "Kolibri-1-Q5_K_M/Kolibri-1-Q5_K_M-00002-of-00002.gguf",
+        "bytes": 20397839744,
+        "sha256": "5ec14bd166da217a2c8efce028c20282a6c9eaef8ac233e79ec51347dfc029c4"
+      }
+    ],
+    "runtime_commit": "74b104c9ba5717116b7e65e0cd35397778653304",
+    "runtime_image": "nvidia/cuda@sha256:ebef3c171eeef0298e4eb2e4be843105edf3b8b0ac45e0b43acee358e8046867",
+    "runtime_url": "https://github.com/ggml-org/llama.cpp/releases/download/b11900/llama-b11900-bin-ubuntu-cuda-12.8-x64.tar.gz",
+    "runtime_archive_sha256": "618c17e4e4ccc11953f21452ca34e4786a1554dc405e98a2c4d53d7c2ed5b415",
+    "template_sha256": "9ba35d4bd6baa26b66aa75d03a922dfee98b16bb1fa37481b195d247267b0f97"
+  },
+  "gptoss": {
+    "repository": "openai/gpt-oss-120b",
+    "revision": "b5c939de8f754692c1647ca79fbf85e8c1e70f8a",
+    "runtime_image": "vllm/vllm-openai@sha256:082ca6f035279109041ffd3fe0695cb568b29bc580b35c4f297a66a08b216c1b",
+    "files": [
+      {
+        "name": "LICENSE",
+        "bytes": 11357,
+        "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
+      },
+      {
+        "name": "README.md",
+        "bytes": 7111,
+        "sha256": "92b0408cf5dce04e4c5e4e5f2be0361da710d3650baefd7d7519badd1c687919"
+      },
+      {
+        "name": "chat_template.jinja",
+        "bytes": 16738,
+        "sha256": "a4c9919cbbd4acdd51ccffe22da049264b1b73e59055fa58811a99efbd7c8146"
+      },
+      {
+        "name": "config.json",
+        "bytes": 2089,
+        "sha256": "933aeb666a3fd851133ddd7686414f369bc564c4185fb5704416550879f10566"
+      },
+      {
+        "name": "generation_config.json",
+        "bytes": 177,
+        "sha256": "f9970ada892d2d1f72e3ed0a6535ccebadd11897318794ca671d8c7014c957da"
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "bytes": 54511,
+        "sha256": "ede2655fdc05008561983b6e0829c600727c28d591e071077377059f03a6c00e"
+      },
+      {
+        "name": "special_tokens_map.json",
+        "bytes": 98,
+        "sha256": "dd5e191d20c12d2fee1da5bae14ca1db0f5f4215300af691f23cdee97120a293"
+      },
+      {
+        "name": "tokenizer.json",
+        "bytes": 27868174,
+        "sha256": "0614fe83cadab421296e664e1f48f4261fa8fef6e03e63bb75c20f38e37d07d3"
+      },
+      {
+        "name": "tokenizer_config.json",
+        "bytes": 4200,
+        "sha256": "9279e942392b742d633c7adbb89ebe002c98399db8926a7af5125c726f404070"
+      },
+      {
+        "name": "model-00000-of-00014.safetensors",
+        "bytes": 4625017896,
+        "sha256": "695218884684c611fe08a74751ee443f971e9bd9bc062edba822da3fe45969b7"
+      },
+      {
+        "name": "model-00001-of-00014.safetensors",
+        "bytes": 4115586736,
+        "sha256": "a881aa5f561b26a22b14a8262aa61849ace349ffd73d74769e030ac90a1fcf8a"
+      },
+      {
+        "name": "model-00002-of-00014.safetensors",
+        "bytes": 4625017888,
+        "sha256": "022478dd04398c5bdb545a5be0a6437ecc2eb53d1dbd29edafcfff4b3ddf0a41"
+      },
+      {
+        "name": "model-00003-of-00014.safetensors",
+        "bytes": 4115586752,
+        "sha256": "47aee9e7b9d5bedb215042c01ccededd9bd9c30b0dddea862dc2506b9d6c74de"
+      },
+      {
+        "name": "model-00004-of-00014.safetensors",
+        "bytes": 4625017896,
+        "sha256": "f6c2752acda607b1d5ca52df9e75c1b9b2761e6875ff10c9bd6ddac473c0262e"
+      },
+      {
+        "name": "model-00005-of-00014.safetensors",
+        "bytes": 4115586696,
+        "sha256": "0c8dd401544c31cb93b8459eee7da20ea2a07626a59455d7d92b85257df9b46c"
+      },
+      {
+        "name": "model-00006-of-00014.safetensors",
+        "bytes": 4625017856,
+        "sha256": "28d839f2e027985a8b14e45f2323798862eddb7770ee9800ea6b7c803abee489"
+      },
+      {
+        "name": "model-00007-of-00014.safetensors",
+        "bytes": 4060267176,
+        "sha256": "c8958c5f183c04f6ea959cfd90562b5128124154b2bbf979b8a22b9405b30ed8"
+      },
+      {
+        "name": "model-00008-of-00014.safetensors",
+        "bytes": 4625017896,
+        "sha256": "bf1f2a88868ffc37d520dcf77d26f0e823710b5e682d473ff10f6974fa3b7517"
+      },
+      {
+        "name": "model-00009-of-00014.safetensors",
+        "bytes": 4170906304,
+        "sha256": "f72d34a4004241b45c332b61f8ffa124e9a913bc1ab442b66e717d3e94e741ce"
+      },
+      {
+        "name": "model-00010-of-00014.safetensors",
+        "bytes": 4625017896,
+        "sha256": "f48c867c2cb0a44bfc2f8768cb98e4aec9a350946fceacfebdcad5d32ad4a471"
+      },
+      {
+        "name": "model-00011-of-00014.safetensors",
+        "bytes": 4115586752,
+        "sha256": "a06851b2cfd35f48722f823bc1ab8f7bcb4a878a5b8e975f4d3544f230454eeb"
+      },
+      {
+        "name": "model-00012-of-00014.safetensors",
+        "bytes": 4064660808,
+        "sha256": "3af33667c307e20ae2a7648ea52653de46dd0171601ec5c696e47a2f5d5bf1e4"
+      },
+      {
+        "name": "model-00013-of-00014.safetensors",
+        "bytes": 4625017896,
+        "sha256": "bcbcb74b043e071d1e05471d500d74dcf661175e00878ed302ccdf1801a75aef"
+      },
+      {
+        "name": "model-00014-of-00014.safetensors",
+        "bytes": 4115586736,
+        "sha256": "54b1be1609696c307cc5ca117b1fa54feaddebffa04e9c2db117652a01964230"
+      }
+    ]
+  },
+  "qwen_bf16": {
+    "repository": "Qwen/Qwen3.8-27B",
+    "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+    "runtime_image": "vllm/vllm-openai@sha256:082ca6f035279109041ffd3fe0695cb568b29bc580b35c4f297a66a08b216c1b"
+  },
+  "qwen_fp8": {
+    "repository": "Qwen/Qwen3.8-27B-FP8",
+    "revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
+    "runtime_image": "vllm/vllm-openai@sha256:082ca6f035279109041ffd3fe0695cb568b29bc580b35c4f297a66a08b216c1b"
+  },
+  "common": {
+    "text_cases": 22,
+    "suite": "everyday-qwen-paired-v1.0.2",
+    "context": 16384,
+    "max_output_tokens": 4096,
+    "request_deadline_seconds": 300,
+    "active_requests": 1,
+    "seed": 102626,
+    "scoring_and_raw_outputs": "Private; not in this source checkpoint"
+  }
+}

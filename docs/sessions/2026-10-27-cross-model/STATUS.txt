@@ -1,0 +1,60 @@
+October 27 cross-model qualification and open operator-control reproduction
+
+This branch contains a failing regression and documentation, not a shipped fix.
+Runtime source remains unchanged from 11f6ac8. The running coordinator was not
+replaced by the separately implemented worker-lease repair (686ea3e), whose
+independent review and repaired Prefect deployment acceptance remain incomplete.
+
+The common comparison uses the same 22 frozen text cases across Qwen3.8-27B
+BF16, official FP8, Kolibri-1 Q5_K_M and official GPT-OSS-120B MXFP4. All 88 text
+responses completed. Readiness is separate: three quality failures remain
+recorded with explicit diagnostic authorization; GPT-OSS passed. Qwen's two
+native cases per configuration have separate actual bounded executor evidence.
+Kolibri/GPT-OSS native cases remain integration-blocked, not model failures.
+The unchanged dispatcher does not forward their supported native schemas.
+
+All four configurations supplied two original disposable fixture patches that
+passed frozen behavioral checks after separate exact-proposal review. These
+are not eight product defects fixed or proof of reliable general coding.
+Recovery/source-dependence/stale-observation weaknesses remain open. Model text
+must never authorize uncertain replay, clear an uncertain attempt, adopt a
+foreign receipt, accept a prerequisite, or promote a response into verified
+effect. No OS containment, live-vessel, Ceres or Tiiny qualification is claimed.
+
+Private scoring, original judgments, explicit audit corrections, streams,
+executor receipts and actual infrastructure identities remain in the private
+recovery set. No evaluation answers or customer evidence are published here.
+
+Observed H100 timings do not isolate quantization: model families, engines,
+templates, sampling, cache allocations and output lengths differ. All use 16K
+context, 4096 output allowance, 300-second deadline, one active request and the
+same seed. vLLM uses eager execution; Kolibri uses the retained prebuilt
+llama.cpp b11900 binary and exact historical OpenMP dependency. Allocated VRAM
+includes cache. GPT-OSS's reported zero reasoning-token split is not reliable
+evidence of no reasoning when reasoning text is captured.
+
+OPEN reproduced defect:
+enqueue accepts exact bounded 2048- and 4096-token task profiles, but
+edit_operator_task accepts only 2048. Pausing an unchanged queued 4096-token
+task raises ValueError("Unsupported adapter contract"). The actual held native
+task used for reproduction had zero attempts and no request identity. The
+failed transaction left all task/control rows unchanged; historical uncertain
+work was preserved without replay.
+
+Frozen acceptance: tests/test_operator_task_settings.py, 3 failures / 3 passes
+on unmodified runtime code. Covers supported-profile pause/resume and restart,
+approval invalidation after changed scope, unsupported profile refusal without
+mutation, preserved history receipt/uncertain attempt/dependency holds, and no
+automatic dispatch or acceptance.
+
+One separately authorized Kolibri source proposal was attempted after the
+comparison was adjudicated/checkpointed. It reached the 4096-token limit with
+no final proposal. No bounded code executor was invoked, no patch was applied,
+and no repair was accepted. No retry or limit increase followed. Preserve this
+failure separately from the successful simple fixture repairs.
+
+Next steps: implement a separately reviewed consistency repair using the
+existing bounded profile policy, run the frozen controls and appropriate
+regressions, inspect actual operator behavior before deployment, and preserve
+all uncertainty/identity/approval/receipt guards. Do not bypass the failing
+regression or merge this branch as a completed fix.

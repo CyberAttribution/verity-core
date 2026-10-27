@@ -1,7 +1,7 @@
 [
   {
     "id": "R01",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "research",
     "split": "regression",
     "provenance": {
@@ -11,7 +11,7 @@
   },
   {
     "id": "R02",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "research",
     "split": "held-out",
     "provenance": {
@@ -21,7 +21,7 @@
   },
   {
     "id": "R03",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "research",
     "split": "held-out",
     "provenance": {
@@ -31,7 +31,7 @@
   },
   {
     "id": "R04",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "research",
     "split": "held-out",
     "provenance": {
@@ -41,7 +41,7 @@
   },
   {
     "id": "U01",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "uncertainty_dates",
     "split": "held-out",
     "provenance": {
@@ -51,7 +51,7 @@
   },
   {
     "id": "U02",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "uncertainty_dates",
     "split": "regression",
     "provenance": {
@@ -61,7 +61,7 @@
   },
   {
     "id": "U03",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "uncertainty_dates",
     "split": "held-out",
     "provenance": {
@@ -71,7 +71,7 @@
   },
   {
     "id": "G01",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "galene",
     "split": "regression",
     "provenance": {
@@ -81,7 +81,7 @@
   },
   {
     "id": "G02",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "galene",
     "split": "regression",
     "provenance": {
@@ -91,7 +91,7 @@
   },
   {
     "id": "G03",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "galene",
     "split": "held-out",
     "provenance": {
@@ -101,7 +101,7 @@
   },
   {
     "id": "P01",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "planning",
     "split": "regression",
     "provenance": {
@@ -111,7 +111,7 @@
   },
   {
     "id": "P02",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "planning",
     "split": "held-out",
     "provenance": {
@@ -121,7 +121,7 @@
   },
   {
     "id": "P03",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "planning",
     "split": "held-out",
     "provenance": {
@@ -131,7 +131,7 @@
   },
   {
     "id": "H01",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "history_recovery",
     "split": "regression",
     "provenance": {
@@ -141,7 +141,7 @@
   },
   {
     "id": "H02",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "history_recovery",
     "split": "held-out",
     "provenance": {
@@ -151,7 +151,7 @@
   },
   {
     "id": "H03",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "history_recovery",
     "split": "held-out",
     "provenance": {
@@ -161,7 +161,7 @@
   },
   {
     "id": "I01",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "untrusted_instructions",
     "split": "regression",
     "provenance": {
@@ -171,7 +171,7 @@
   },
   {
     "id": "I02",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "untrusted_instructions",
     "split": "held-out",
     "provenance": {
@@ -181,7 +181,7 @@
   },
   {
     "id": "C01",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "coding",
     "split": "held-out",
     "provenance": {
@@ -191,7 +191,7 @@
   },
   {
     "id": "C02",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "coding",
     "split": "held-out",
     "provenance": {
@@ -201,7 +201,7 @@
   },
   {
     "id": "C03",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "coding",
     "split": "held-out",
     "provenance": {
@@ -211,7 +211,7 @@
   },
   {
     "id": "C04",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "coding",
     "split": "regression",
     "provenance": {
@@ -221,7 +221,7 @@
   },
   {
     "id": "T01",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "native_tools",
     "split": "held-out",
     "provenance": {
@@ -231,7 +231,7 @@
   },
   {
     "id": "T02",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "category": "native_tools",
     "split": "held-out",
     "provenance": {
